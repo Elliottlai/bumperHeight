@@ -1,0 +1,100 @@
+﻿using Machine.Core.Enums;
+using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Machine.Core.Interfaces
+{
+    
+    public interface IAxisArgs : IComponent
+    {
+        /// <summary>
+        /// 卡片型式
+        /// </summary>
+        AxisCardType Type { get; }
+
+        /// <summary>
+        /// 卡片ID
+        /// </summary>
+       // int CardID { set; get; }
+
+        /// <summary>
+        /// 軸ID
+        /// </summary>
+        int AxisID { set; get; }
+
+        /// <summary>
+        /// 歸位模式
+        /// </summary>
+        int HomeMode { set; get; }
+
+        /// <summary>
+        /// 歸位速度(mm/s)
+        /// </summary>
+        double HomeSpeed { set; get; }
+
+        /// <summary>
+        /// 歸位啟動速度(mm/s)
+        /// </summary>
+        double HomeStartSpeed { set; get; }
+
+        /// <summary>
+        /// 歸位加速度 秒為單位
+        /// </summary>
+        double HomeAcc { set; get; }
+
+        /// <summary>
+        /// 歸位減速度 秒為單位
+        /// </summary>
+        double HomeDec { set; get; }
+
+        /// <summary>
+        /// 歸位緩衝距離 (mm)
+        /// </summary>
+        double HomeBuffer { set; get; }
+
+        /// <summary>
+        /// 運行速度
+        /// </summary>
+        double OperationSpeed { set; get; }
+
+        /// <summary>
+        /// 運行初速度
+        /// </summary>
+        double OperationStartSpeed { set; get; }
+
+        /// <summary>
+        /// 運行加速度
+        /// </summary>
+        double OperationAcc { set; get; }
+
+        /// <summary>
+        /// 運行減速度
+        /// </summary>
+        double OperationDec { set; get; }
+
+        /// <summary>
+        /// 解析度 mm/pulse
+        /// </summary>
+        double Scale { set; get; }
+
+        /// <summary>
+        /// 誤差範圍
+        /// </summary>
+        double Tolerance { set; get; }
+
+        /// <summary>
+        /// 加減速度曲線
+        /// </summary>
+        CurveType Curve { set; get; }
+
+        double SoftwareNLimit { set; get; }
+        double SoftwarePLimit { set; get; }
+
+
+    }
+}

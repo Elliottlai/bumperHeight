@@ -1,0 +1,41 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Machine.Core.Interfaces;
+
+namespace Machine.Core
+{
+    public class DataStorage
+    {
+        static object[] data = new object[10000];
+
+
+        static public object GetData(IDigitalInput input)
+        {
+        
+            
+            if (data[input.Bit] == null)
+                data[input.Bit] = Activator.CreateInstance( input.StatusType ); 
+            return data[input.Bit];
+        }
+        static public object GetData(IDigitalOutput input)
+        {
+            if (data[input.Bit] == null)
+                data[input.Bit] = Activator.CreateInstance(input.StatusType);
+            return data[input.Bit];
+        }
+        static public void SetData(IDigitalOutput output, object o)
+        {
+            if (data[output.Bit] == null)
+                data[output.Bit] = Activator.CreateInstance(output.StatusType);
+            data[output.Bit] = o;
+        }
+        static public void InitData(int id ,object o)
+        {
+ 
+         
+        }
+    }
+}

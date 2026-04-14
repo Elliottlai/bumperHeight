@@ -1,0 +1,10 @@
+﻿namespace Machine.Core.Interfaces
+{
+    public interface IDigitalOutput : IDigitalOutputArgs
+    {
+        object GetStatus();
+
+        void SetStatus(object Data);
+
+    }
+}

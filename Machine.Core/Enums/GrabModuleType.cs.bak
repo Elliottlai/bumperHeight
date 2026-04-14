@@ -1,0 +1,20 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Machine.Core.Enums
+{
+    public enum GrabModuleType
+    {
+        Simulation = 0,
+        Dasal_1,//Xtium-CLHS PX8 + Piranha XL
+        Dasal_2,//Xtium-CL_MX4_1 + Genie Nano CL
+        Arena,
+        Dasal_OCR,
+        Matrox,
+
+    }
+}

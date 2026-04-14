@@ -1,0 +1,19 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Machine.Core.Enums
+{
+    public enum IOCardType
+    {
+        Net = 999,
+        Simulation = 0,
+        AdvantechAxisCard,
+        AdvantechIOCard,
+        DataStorage,
+        AdlinkEthercat,
+        ModbusTcpIOCard
+    }
+}

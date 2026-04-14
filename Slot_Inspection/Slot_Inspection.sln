@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36930.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Slot_Inspection", "Slot_Inspection.csproj", "{4351DFA3-1AAF-402D-969E-7E98AD687FF2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Machine.Core", "..\Machine.Core\Machine.Core.csproj", "{E322828A-0A35-9013-AE48-C0CA3779DA79}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4351DFA3-1AAF-402D-969E-7E98AD687FF2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4351DFA3-1AAF-402D-969E-7E98AD687FF2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4351DFA3-1AAF-402D-969E-7E98AD687FF2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4351DFA3-1AAF-402D-969E-7E98AD687FF2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E322828A-0A35-9013-AE48-C0CA3779DA79}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E322828A-0A35-9013-AE48-C0CA3779DA79}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E322828A-0A35-9013-AE48-C0CA3779DA79}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E322828A-0A35-9013-AE48-C0CA3779DA79}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6F2A408E-3161-4632-978E-A468ED4EA708}
+	EndGlobalSection
+EndGlobal
