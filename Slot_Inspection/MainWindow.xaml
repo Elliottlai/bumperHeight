@@ -114,7 +114,16 @@
                         </Border>
 
                         <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1">
-                            <TextBox Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}" FontSize="34" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" BorderThickness="0"/>
+                            <TextBox Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}"
+                                     FontSize="34"
+                                     HorizontalContentAlignment="Center"
+                                     VerticalContentAlignment="Center"
+                                     BorderThickness="0">
+                                <TextBox.InputBindings>
+                                    <!-- Enter 鍵觸發條碼確認（手動輸入或讀碼器自動填入後確認） -->
+                                    <KeyBinding Key="Return" Command="{Binding ConfirmBarcodeCommand}"/>
+                                </TextBox.InputBindings>
+                            </TextBox>
                         </Border>
 
                         <UniformGrid Grid.Column="2" Columns="7" HorizontalAlignment="Stretch" Margin="2,0,0,0">
@@ -373,7 +382,19 @@
 
             <!-- Footer -->
             <Border Grid.Row="3" Background="#2E86C1" Margin="12,0,12,12">
-                <TextBlock Text="Synpower" Foreground="White" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,16,0" FontSize="24"/>
+                <DockPanel Margin="16,0">
+                    <TextBlock DockPanel.Dock="Right"
+                               Text="Synpower"
+                               Foreground="White"
+                               HorizontalAlignment="Right"
+                               VerticalAlignment="Center"
+                               FontSize="24"/>
+                    <TextBlock Text="{Binding StatusMessage}"
+                               Foreground="White"
+                               VerticalAlignment="Center"
+                               FontSize="14"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
             </Border>
         </Grid>
     </Viewbox>
