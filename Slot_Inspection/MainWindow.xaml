@@ -36,9 +36,16 @@
             <Border BorderBrush="#333" BorderThickness="0,0,1,1" Height="74" Background="Black">
                 <Grid>
                     <Image Source="{Binding ImageSource}" Stretch="UniformToFill"/>
-                    <TextBlock Text="IMG" Foreground="#88FFFFFF" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ImgPlaceholder" Text="IMG" Foreground="#88FFFFFF" FontSize="11"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="Collapsed"/>
                 </Grid>
             </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding ImageSource}" Value="{x:Null}">
+                    <Setter TargetName="ImgPlaceholder" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
 
         <DataTemplate x:Key="SlotValueTemplate">
@@ -214,7 +221,7 @@
                         <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotNameTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -222,7 +229,7 @@
                         <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotImageTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -230,7 +237,7 @@
                         <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotValueTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -330,7 +337,7 @@
                         <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotNameTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -338,7 +345,7 @@
                         <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotImageTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
@@ -346,7 +353,7 @@
                         <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotValueTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
+                                    <UniformGrid Columns="12"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>

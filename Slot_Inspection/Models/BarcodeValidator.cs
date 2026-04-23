@@ -21,7 +21,7 @@ public sealed class BarcodeValidationResult
 public static class BarcodeValidator
 {
     // ── 條碼規則（待確認：依實際格式調整）──
-    public const int RequiredLength = 18; // 固定長度，要改只改這裡
+    public const int RequiredLength = 1; // 固定長度，要改只改這裡
 
     /// <summary>
     /// 驗證條碼格式是否合法
