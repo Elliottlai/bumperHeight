@@ -1,24 +1,33 @@
-﻿using System.Text;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+﻿using System.Windows;
+using BarcodeReader.Interfaces;
+using BarcodeReader.Services;
+using BarcodeReader.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace BarcodeReader
+namespace BarcodeReader;
+
+public partial class MainWindow : Window
 {
-    /// <summary>
-    /// Interaction logic for MainWindow.xaml
-    /// </summary>
-    public partial class MainWindow : Window
+    private readonly MainViewModel _viewModel;
+
+    public MainWindow()
     {
-        public MainWindow()
-        {
-            InitializeComponent();
-        }
+        InitializeComponent();
+
+        // IImageRenderer 需要 UI 控件，在 View 層建立後注入 ViewModel
+        var renderer = new WpfImageRenderer(ImageDisplay);
+        _viewModel = new MainViewModel(
+            App.Services.GetRequiredService<IDeviceEnumerator>(),
+            App.Services.GetRequiredService<ICodeReaderDevice>(),
+            App.Services.GetRequiredService<IBarcodeResultParser>(),
+            App.Services.GetRequiredService<ICameraParameters>(),
+            renderer);
+
+        DataContext = _viewModel;
+    }
+
+    private void Window_Closed(object sender, EventArgs e)
+    {
+        _viewModel.Dispose();
     }
 }
