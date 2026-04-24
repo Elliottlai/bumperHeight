@@ -167,9 +167,16 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
         ArgumentOutOfRangeException.ThrowIfNegative(index);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, MaxPoints);
 
+        // ★ FX Force 命令格式：E7/E8 + "0" + hex(bit_index) + "5E"
+        // bit_index 與 _yData 陣列 index 一致（十六進制）
+        // Y0  = index 0  → "E7005E"   Y7  = index 7  → "E7075E"
+        // Y10 = index 8  → "E7085E"   Y11 = index 9  → "E7095E"
+        // Y12 = index 10 → "E70A5E"
+        string addrHex = $"0{index:X}"; // "00"~"0F"
+
         string data = value
-            ? $"E70{index:X}5E" + (char)3
-            : $"E80{index:X}5E" + (char)3;
+            ? $"E7{addrHex}5E" + (char)3
+            : $"E8{addrHex}5E" + (char)3;
 
         byte[] frame = BuildFrame(data);
         Log($"▶ SetY({index},{value}): {ToHex(frame)}");
@@ -366,6 +373,7 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
         }
     }
 
+    /// <summary>解析 Y 回覆（6 hex chars = 3 bytes）</summary>
     private bool TryParseYResponse(int offset, int length)
     {
         try
@@ -373,13 +381,19 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
             string hex = Encoding.ASCII.GetString(
                 _receiveBuffer.GetRange(offset, length).ToArray());
 
+            // "AABBCC" → 0x00AABBCC (int32)
+            // little-endian bytes: [CC, BB, AA, 00]
+            // bytes[2] = AA = 第1 byte → Y0~Y7
+            // bytes[1] = BB = 第2 byte → Y10~Y17  ← 原本錯用 bytes[3]
+            // bytes[0] = CC = 第3 byte → Y20~Y27
             int dataInfo = Convert.ToInt32(hex, 16);
             byte[] bytes = BitConverter.GetBytes(dataInfo);
 
             for (int i = 0; i < 8; i++)
-                _yData[i] = (bytes[2] & (1 << i)) > 0;
+                _yData[i] = (bytes[2] & (1 << i)) > 0;        // Y0~Y7
+
             for (int i = 0; i < 4; i++)
-                _yData[8 + i] = (bytes[3] & (1 << i)) > 0;
+                _yData[8 + i] = (bytes[1] & (1 << i)) > 0;   // Y10~Y13 ← 改 bytes[3]→bytes[1]
 
             _readYAnswered = true;
             return true;
@@ -442,12 +456,23 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
             {
                 _transport.Send(BuildReadYAnswer());
             }
-            else if (command.Length == 6 && command[0] == 'E' && command.EndsWith("5E"))
+            else if (command.Length == 6
+                     && (command[1] == '7' || command[1] == '8')
+                     && command.EndsWith("5E"))
             {
-                int yIndex = int.Parse(command.AsSpan(3, 1), System.Globalization.NumberStyles.HexNumber);
-                bool on = command[1] == '7';
-                _yData[yIndex] = on;
-                _transport.Send([0x06]);
+                // ★ 位址是 2 位數八進制字串，如 "00"~"07", "10"~"12"
+                // 需轉回 0-based index：octalAddr=10 → index=8
+                if (int.TryParse(command.AsSpan(2, 2), out int octalAddr))
+                {
+                    int yIndex = (octalAddr / 10) * 8 + (octalAddr % 10);
+                    bool on = command[1] == '7';
+
+                    if (yIndex >= 0 && yIndex < MaxPoints)
+                    {
+                        _yData[yIndex] = on;
+                        _transport.Send([0x06]);
+                    }
+                }
             }
 
             _receiveBuffer.RemoveRange(0, frameEnd);
