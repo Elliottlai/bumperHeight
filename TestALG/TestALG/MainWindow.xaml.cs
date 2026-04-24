@@ -82,10 +82,18 @@ namespace TestALG
                 _imagePath = dlg.FileName;
                 ImagePathTextBox.Text = _imagePath;
 
-                // 約定：JSON 放在執行檔目錄下的 config 資料夾，檔名與影像同名。
+                // 約定：JSON 放在執行檔目錄下的 config 資料夾，
+                // 檔名取「副檔名前最後一個底線 '_' 後的字串」。
                 string imageNameWithoutExt = System.IO.Path.GetFileNameWithoutExtension(_imagePath);
+                string jsonKey = imageNameWithoutExt;
+                int lastUnderscoreIndex = imageNameWithoutExt.LastIndexOf('_');
+                if (lastUnderscoreIndex >= 0 && lastUnderscoreIndex < imageNameWithoutExt.Length - 1)
+                {
+                    jsonKey = imageNameWithoutExt.Substring(lastUnderscoreIndex + 1).Trim();
+                }
+
                 string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-                _parametersJsonPath = System.IO.Path.Combine(exeDir, "config", imageNameWithoutExt + ".json");
+                _parametersJsonPath = System.IO.Path.Combine(exeDir, "config", jsonKey + ".json");
                 ParametersJsonPathTextBox.Text = _parametersJsonPath;
 
                 _lastProcessingResult = null;
