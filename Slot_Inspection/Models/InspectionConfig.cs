@@ -5,9 +5,14 @@ namespace Slot_Inspection.Models;
 /// </summary>
 public sealed class InspectionConfig
 {
-    // -- Light --
-    public int LightChannel { get; set; } = 1;
-    public int LightIntensity { get; set; } = 50;
+    // -- Light (Left camera, CH1) --
+    public int LightChannelLeft { get; set; } = 1;
+    public int LightIntensityLeft { get; set; } = 50;
+
+    // -- Light (Right camera, CH2) --
+    public int LightChannelRight { get; set; } = 2;
+    public int LightIntensityRight { get; set; } = 50;
+
     public int LightStabilizeMs { get; set; } = 50;
 
     // -- Camera --

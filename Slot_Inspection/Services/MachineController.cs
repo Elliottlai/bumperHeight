@@ -48,7 +48,9 @@ public sealed class MachineController : IDisposable
     private SimImageLoader GetSimImageLoader()
         => _simImageLoader ??= new SimImageLoader(_config.SimImageFolderPath);
 
-    private static readonly NamedKey _cameraKey = NamedKeyCamera.AreaCameraTop;
+    // -- Two cameras: Left & Right side of bumper --
+    private static readonly NamedKey _cameraKeyLeft  = NamedKeyCamera.AreaCameraTop;
+    private static readonly NamedKey _cameraKeyRight = NamedKeyCamera.AreaCameraSide;
 
     // =========================================
     //  S00
@@ -66,7 +68,9 @@ public sealed class MachineController : IDisposable
             string[] steps =
             [
                 "Config", "IO Module", "OPT Light",
-                "4-Axis Servo", "4-Axis Home", "FLIR Camera", "Barcode Reader"
+                "4-Axis Servo", "4-Axis Home",
+                "Camera Left", "Camera Right",
+                "Barcode Reader"
             ];
             foreach (var step in steps)
             {
@@ -224,11 +228,13 @@ public sealed class MachineController : IDisposable
         {
             await Task.Delay(150, ct);
             var rng = new Random();
-            double simValue = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
-            bool simNg = rng.NextDouble() < 0.05;
+            double simL     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simR     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simValue = (simL + simR) / 2.0;
+            bool simNg = simValue < _config.NgThresholdLow
+                      || simValue > _config.NgThresholdHigh;
             string slotLabel = $"{target}_S{slotIndex + 1}";
 
-            // Try loading from test image folder; fallback to generated color block
             var loader = GetSimImageLoader();
             System.Windows.Media.ImageSource? simImage = loader.HasImages
                 ? (loader.Next() ?? SimImageGenerator.Generate(slotLabel, simValue, simNg))
@@ -257,23 +263,34 @@ public sealed class MachineController : IDisposable
         if (!arrived)
             _logger.Warn($"[S03] {slotName} move timeout (positions not taught yet)");
 
-        // STEP 2: Light on
-        _light!.SetValue(_config.LightChannel, _config.LightIntensity);
+        // STEP 2: Both lights ON simultaneously
+        _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
+        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
         await Task.Delay(_config.LightStabilizeMs, ct);
 
-        // STEP 3: Camera capture
-        _cameraManager!.CameraStart(_cameraKey);
+        // STEP 3: Both cameras trigger simultaneously
+        _cameraManager!.CameraStart(_cameraKeyLeft);
+        _cameraManager.CameraStart(_cameraKeyRight);
         await Task.Delay(_config.CaptureWaitMs, ct);
-        var image = _cameraManager.GetCameraImage(_cameraKey);
 
-        if (image == null)
+        // STEP 4: Get both images
+        var imageLeft  = _cameraManager.GetCameraImage(_cameraKeyLeft);
+        var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
+
+        // STEP 5: Both lights OFF
+        _light.SetValue(_config.LightChannelLeft,  0);
+        _light.SetValue(_config.LightChannelRight, 0);
+
+        // Capture failure check
+        if (imageLeft == null || imageRight == null)
         {
-            _logger.Warn($"[S03] {slotName} capture failed, treat as NG");
-            _light.SetValue(_config.LightChannel, 0);
+            string failSide = imageLeft == null && imageRight == null ? "BOTH"
+                            : imageLeft == null ? "LEFT" : "RIGHT";
+            _logger.Warn($"[S03] {slotName} {failSide} capture failed, treat as NG");
             return (0, true, "", null);
         }
 
-        // STEP 4: Save image (optional)
+        // STEP 6: Save images
         string imagePath = "";
         if (_config.SaveImages)
         {
@@ -282,21 +299,27 @@ public sealed class MachineController : IDisposable
                 DateTime.Now.ToString("yyyyMMdd"),
                 barcode);
             Directory.CreateDirectory(dir);
-            imagePath = Path.Combine(dir, $"{slotName}.tif");
-            _cameraManager.SaveCameraImage(_cameraKey, imagePath, barcode, slotName);
+
+            string pathL = Path.Combine(dir, $"{slotName}_L.tif");
+            string pathR = Path.Combine(dir, $"{slotName}_R.tif");
+
+            _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
+            _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
+
+            imagePath = pathL;
         }
 
-        // STEP 5: Light off
-        _light.SetValue(_config.LightChannel, 0);
+        // STEP 7: Measure both images
+        double valueLeft  = ImageMeasurer.Measure(imageLeft,  $"{slotName}_L");
+        double valueRight = ImageMeasurer.Measure(imageRight, $"{slotName}_R");
+        double measuredValue = (valueLeft + valueRight) / 2.0;
 
-        // STEP 6: Image measurement (Stub: returns 0.50)
-        double measuredValue = ImageMeasurer.Measure(image, slotName);
+        _logger.Debug($"[S03] {slotName} L={valueLeft:F4} R={valueRight:F4} Avg={measuredValue:F4}");
 
-        // STEP 7: NG judgment
+        // STEP 8: NG judgment
         bool isNg = measuredValue < _config.NgThresholdLow
                  || measuredValue > _config.NgThresholdHigh;
 
-        _logger.Debug($"[S03] {slotName} done Value={measuredValue:F4} isNg={isNg}");
         return (measuredValue, isNg, imagePath, null);
         // TODO: convert HImage to BitmapSource for real mode display
     }
@@ -455,13 +478,24 @@ public sealed class MachineController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+
         if (!SimulationMode)
         {
+            // Stop and release cameras
+            try
+            {
+                _cameraManager?.CameraeStop(_cameraKeyLeft);
+                _cameraManager?.CameraeStop(_cameraKeyRight);
+            }
+            catch { }
+
             try { _light?.Dispose(); } catch { }
             try { _modbusClient?.Dispose(); } catch { }
+
             foreach (var axis in Axes.Values)
                 try { axis.MotStop(); axis.SetSVON(false); } catch { }
         }
+
         _logger.Info("MachineController Disposed");
     }
 }
