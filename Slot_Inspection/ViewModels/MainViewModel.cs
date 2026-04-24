@@ -237,8 +237,9 @@ public sealed class MainViewModel : ObservableObject
 
                 if (collection != null && report.SlotIndex < collection.Count)
                 {
-                    collection[report.SlotIndex].Value = report.Value;
-                    collection[report.SlotIndex].IsNg  = report.IsNg;
+                    collection[report.SlotIndex].Value       = report.Value;
+                    collection[report.SlotIndex].IsNg        = report.IsNg;
+                    collection[report.SlotIndex].ImageSource = report.Image;
                 }
 
                 StatusMessage = report.StatusText;
