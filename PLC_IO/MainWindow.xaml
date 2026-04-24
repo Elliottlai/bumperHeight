@@ -1,0 +1,181 @@
+﻿<Window x:Class="PLC_IO.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:PLC_IO.ViewModels"
+        mc:Ignorable="d"
+        Title="PLC I/O Monitor" Height="750" Width="620"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+    
+    <Window.DataContext>
+        <vm:MainViewModel />
+    </Window.DataContext>
+
+    <Window.Resources>
+        <!-- IO 燈號 -->
+        <Style x:Key="IoIndicator" TargetType="Ellipse">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Stroke" Value="#999" />
+            <Setter Property="StrokeThickness" Value="1.5" />
+            <Setter Property="Fill" Value="#555555" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="True">
+                    <Setter Property="Fill" Value="#00CC00" />
+                    <Setter Property="Stroke" Value="#009900" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- IO 卡片底色（依狀態變色） -->
+        <Style x:Key="IoCardStyle" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#DDD" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="Background" Value="Transparent" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="True">
+                    <Setter Property="Background" Value="#D4EDDA" />
+                    <Setter Property="BorderBrush" Value="#28A745" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Y 可點擊卡片（含 hover） -->
+        <Style x:Key="YCardStyle" TargetType="Border" BasedOn="{StaticResource IoCardStyle}">
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <!-- 保留父類 Status=True 觸發 -->
+                <DataTrigger Binding="{Binding Status}" Value="True">
+                    <Setter Property="Background" Value="#D4EDDA" />
+                    <Setter Property="BorderBrush" Value="#28A745" />
+                </DataTrigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E8E8E8" />
+                    <Setter Property="BorderBrush" Value="#AAA" />
+                </Trigger>
+                <!-- hover + ON 同時成立 -->
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Status}" Value="True" />
+                        <Condition Binding="{Binding IsMouseOver, RelativeSource={RelativeSource Self}}" Value="True" />
+                    </MultiDataTrigger.Conditions>
+                    <Setter Property="Background" Value="#B8DFCA" />
+                    <Setter Property="BorderBrush" Value="#1E7E34" />
+                </MultiDataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- ON/OFF 文字 -->
+        <Style x:Key="StatusText" TargetType="TextBlock">
+            <Setter Property="Text" Value="OFF" />
+            <Setter Property="Foreground" Value="#999" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="4,0,0,0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="True">
+                    <Setter Property="Text" Value="ON" />
+                    <Setter Property="Foreground" Value="#28A745" />
+                    <Setter Property="FontWeight" Value="Bold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 連線區 -->
+        <Border Grid.Row="0" Background="#F0F0F0" CornerRadius="4" Padding="10" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="COM" VerticalAlignment="Center" FontSize="14" />
+                <TextBox Text="{Binding ComPort, UpdateSourceTrigger=PropertyChanged}"
+                         Width="50" Margin="4,0,12,0" FontSize="14" VerticalContentAlignment="Center"
+                         IsEnabled="{Binding IsDisconnected}" />
+                <Button Content="連線" Command="{Binding ConnectCommand}"
+                        Width="70" Height="30" Margin="0,0,6,0" />
+                <Button Content="斷線" Command="{Binding DisconnectCommand}"
+                        Width="70" Height="30" />
+            </StackPanel>
+        </Border>
+
+        <!-- X 輸入區 -->
+        <GroupBox Grid.Row="1" Header="X 輸入 (13 點)" Margin="0,0,0,10" Padding="6">
+            <ItemsControl ItemsSource="{Binding XPoints}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource IoCardStyle}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse Style="{StaticResource IoIndicator}" Margin="0,0,6,0" />
+                                <TextBlock Text="{Binding Label}" FontSize="13"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource StatusText}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </GroupBox>
+
+        <!-- Y 輸出區 -->
+        <GroupBox Grid.Row="2" Header="Y 輸出 (11 點) — 點擊切換" Padding="6">
+            <ItemsControl ItemsSource="{Binding YPoints}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Style="{StaticResource YCardStyle}">
+                            <Border.InputBindings>
+                                <MouseBinding MouseAction="LeftClick"
+                                              Command="{Binding DataContext.ToggleYCommand,
+                                                        RelativeSource={RelativeSource AncestorType=Window}}"
+                                              CommandParameter="{Binding}" />
+                            </Border.InputBindings>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse Style="{StaticResource IoIndicator}" Margin="0,0,6,0" />
+                                <TextBlock Text="{Binding Label}" FontSize="13"
+                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Style="{StaticResource StatusText}" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </GroupBox>
+
+        <!-- 狀態列 -->
+        <Border Grid.Row="3" Background="#F0F0F0" CornerRadius="4" Padding="8" Margin="0,6,0,0">
+            <TextBlock Text="{Binding StatusText}" FontSize="12" FontFamily="Consolas" />
+        </Border>
+
+        <!-- ★ 診斷面板 -->
+        <GroupBox Grid.Row="4" Header="通訊診斷" Margin="0,6,0,0" Padding="4">
+            <TextBox Text="{Binding DiagText, Mode=OneWay}"
+                     IsReadOnly="True"
+                     FontFamily="Consolas" FontSize="11"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     TextWrapping="NoWrap"
+                     Background="#1E1E1E" Foreground="#DCDCDC"
+                     BorderThickness="0" />
+        </GroupBox>
+    </Grid>
+</Window>

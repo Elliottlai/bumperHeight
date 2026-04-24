@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Slot_Inspection", "Slot_Ins
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BarcodeReader", "BarcodeReader\BarcodeReader.csproj", "{E7DD46D0-9B2D-4EAC-9444-47AB750629E9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PLC_IO", "PLC_IO\PLC_IO.csproj", "{00C6ED48-05C2-4E59-935C-10169B1AA8EF}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -76,6 +78,24 @@ Global
 		{E7DD46D0-9B2D-4EAC-9444-47AB750629E9}.Release|x64.Build.0 = Release|x64
 		{E7DD46D0-9B2D-4EAC-9444-47AB750629E9}.Release|x86.ActiveCfg = Release|x86
 		{E7DD46D0-9B2D-4EAC-9444-47AB750629E9}.Release|x86.Build.0 = Release|x86
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|x64.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug|x86.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|Any CPU.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|Any CPU.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|x64.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|x64.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|x86.ActiveCfg = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Debug-Sim|x86.Build.0 = Debug|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|x64.ActiveCfg = Release|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|x64.Build.0 = Release|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|x86.ActiveCfg = Release|Any CPU
+		{00C6ED48-05C2-4E59-935C-10169B1AA8EF}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
