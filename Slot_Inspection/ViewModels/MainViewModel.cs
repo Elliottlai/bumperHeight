@@ -15,7 +15,6 @@ public sealed class MainViewModel : ObservableObject
     private bool _isRunning;
     private string _statusMessage = "正在啟動...";
     private bool _isInitialized;
-    private bool _isBarcodeConfirmed;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly MachineController _machine = new();
@@ -65,27 +64,14 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _isInitialized, value);
     }
 
-    /// <summary>條碼已通過驗證，START 按鈕才會亮</summary>
-    public bool IsBarcodeConfirmed
-    {
-        get => _isBarcodeConfirmed;
-        set => SetProperty(ref _isBarcodeConfirmed, value);
-    }
-
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
 
-    /// <summary>
-    /// S01：確認條碼 — 由 TextBox Enter 鍵或讀碼器觸發
-    /// </summary>
-    public ICommand ConfirmBarcodeCommand { get; }
-
     public MainViewModel()
     {
-        // START 必須：初始化完成 + 條碼已確認 + 尚未運行
-        StartCommand = new RelayCommand(OnStart, () => IsInitialized && IsBarcodeConfirmed && !IsRunning);
+        // START 只需：初始化完成 + 尚未運行（條碼由 START 後自動讀取）
+        StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning);
         StopCommand = new RelayCommand(OnStop, () => IsRunning);
-        ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode, () => IsInitialized && !IsRunning);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -121,8 +107,8 @@ public sealed class MainViewModel : ObservableObject
 
             if (result.AllPassed)
             {
-                // S00 完成 → 進入 S01 等待條碼
-                StatusMessage = "請掃描或輸入條碼（Enter 確認）";
+                // S00 完成 → 等待使用者按 START
+                StatusMessage = "初始化完成，請按 START 開始";
             }
             else
             {
@@ -147,54 +133,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     // ═══════════════════════════════════════
-    //  S01：條碼確認
-    // ═══════════════════════════════════════
-
-    private void OnConfirmBarcode()
-    {
-        var input = Barcode?.Trim() ?? "";
-
-        // 重複掃碼：與上次相同 → 視為一次，靜默接受
-        if (BarcodeValidator.IsDuplicate(input, _confirmedBarcode))
-        {
-            StatusMessage = $"條碼已確認：{input}（重複掃描，略過）";
-            System.Diagnostics.Debug.WriteLine($"[S01] 重複條碼，略過: {input}");
-            return;
-        }
-
-        // 驗證格式
-        var validation = BarcodeValidator.Validate(input);
-        if (!validation.IsValid)
-        {
-            StatusMessage = $"條碼錯誤：{validation.Message}";
-            IsBarcodeConfirmed = false;
-            System.Diagnostics.Debug.WriteLine($"[S01] 條碼驗證失敗: {validation.Message}");
-            CommandManager.InvalidateRequerySuggested();
-            return;
-        }
-
-        // 驗證通過
-        _confirmedBarcode = input;
-        IsBarcodeConfirmed = true;
-        StatusMessage = $"條碼確認：{input}，請按 START";
-        System.Diagnostics.Debug.WriteLine($"[S01] 條碼確認: {input}");
-        CommandManager.InvalidateRequerySuggested();
-    }
-
-    /// <summary>
-    /// 供讀碼器在背景收到條碼後呼叫（自動切回 UI 執行緒）
-    /// </summary>
-    public void ReceiveBarcodeFromReader(string barcode)
-    {
-        System.Windows.Application.Current.Dispatcher.Invoke(() =>
-        {
-            Barcode = barcode;
-            OnConfirmBarcode();
-        });
-    }
-
-    // ═══════════════════════════════════════
-    //  S03：START / STOP
+    //  START：完整自動流程
+    //  S01 感測器檢查 → 移動讀碼 → S02 放料 → S03 檢測 → S04 結果
     // ═══════════════════════════════════════
 
     private async void OnStart()
@@ -202,13 +142,51 @@ public sealed class MainViewModel : ObservableObject
         IsRunning = true;
         _cts = new CancellationTokenSource();
 
-        // 清空上一次的 Slot 資料
         ResetAllSlots();
+        Barcode = "";
+        _confirmedBarcode = "";
 
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
 
         try
         {
+            // ── S01a：檢查載台在席感測器（PLC X12/X13）──
+            StatusMessage = "檢查載台在席感測器...";
+            var carrierPos = await Task.Run(() => _machine.DetectCarrierPosition());
+
+            if (carrierPos == MachineController.CarrierPosition.None)
+            {
+                StatusMessage = "未偵測到載台，請確認載台位置後重新 START";
+                return;
+            }
+
+            StatusMessage = $"偵測到載台位置：{carrierPos}";
+
+            // ── S01b：移動到讀碼位置 → 自動讀碼 ──
+            string? code = await Task.Run(
+                () => _machine.MoveAndReadBarcodeAsync(carrierPos, statusProgress, _cts.Token));
+
+            if (string.IsNullOrEmpty(code))
+            {
+                StatusMessage = "讀碼失敗（NoRead），條碼軸回歸原點...";
+                await Task.Run(() => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
+                StatusMessage = "讀碼失敗，條碼軸已回原點，請按 START 重新開始";
+                return;
+            }
+
+            // 驗證條碼格式
+            var validation = BarcodeValidator.Validate(code);
+            if (!validation.IsValid)
+            {
+                StatusMessage = $"條碼格式錯誤：{validation.Message}";
+                return;
+            }
+
+            _confirmedBarcode = code;
+            Barcode = code;
+            StatusMessage = $"條碼確認：{code}";
+            System.Diagnostics.Debug.WriteLine($"[S01] 自動讀碼成功: {code}");
+
             // ── S02：等待放料就位 ──
             StatusMessage = "請放料...（等待感測器）";
             bool placed = await Task.Run(
@@ -217,13 +195,12 @@ public sealed class MainViewModel : ObservableObject
             if (!placed)
             {
                 StatusMessage = "放料超時，請重新操作";
-                return; // 不進入 S03
+                return;
             }
 
             // ── S03：開始檢測 ──
             StatusMessage = $"檢測中：{_confirmedBarcode}";
 
-            // 每個 Slot 完成就回報一次，自動回到 UI 執行緒
             var slotProgress = new Progress<SlotInspectionProgress>(report =>
             {
                 var collection = report.Target switch
@@ -275,12 +252,8 @@ public sealed class MainViewModel : ObservableObject
             IsRunning = false;
             _cts?.Dispose();
             _cts = null;
-
-            // 完成後重置條碼，等待下一件料
-            IsBarcodeConfirmed = false;
             _confirmedBarcode = "";
             Barcode = "";
-
             CommandManager.InvalidateRequerySuggested();
         }
     }

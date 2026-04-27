@@ -20,20 +20,13 @@ public sealed class BarcodeValidationResult
 /// </summary>
 public static class BarcodeValidator
 {
-    // ── 條碼規則（待確認：依實際格式調整）──
-    public const int RequiredLength = 1; // 固定長度，要改只改這裡
-
     /// <summary>
-    /// 驗證條碼格式是否合法
+    /// 驗證條碼格式是否合法（不限制長度）
     /// </summary>
     public static BarcodeValidationResult Validate(string? barcode)
     {
         if (string.IsNullOrWhiteSpace(barcode))
             return BarcodeValidationResult.Fail("條碼不可為空");
-
-        if (barcode.Length != RequiredLength)
-            return BarcodeValidationResult.Fail(
-                $"條碼長度錯誤（應為 {RequiredLength} 碼，實際 {barcode.Length} 碼）");
 
         return BarcodeValidationResult.Ok();
     }

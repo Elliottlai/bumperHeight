@@ -33,4 +33,19 @@ public sealed class InspectionConfig
     /// Images are cycled; if folder is empty or missing, colored block images are generated instead.
     /// </summary>
     public string SimImageFolderPath { get; set; } = @"D:\TestImages";
+
+    // -- Barcode reader axis positions (TODO: 依實際 teaching 結果調整) --
+    public (double X, double Y, double Z) BarcodePositionLeft { get; set; } = (100.0, 0.0, 50.0);
+    public (double X, double Y, double Z) BarcodePositionRight { get; set; } = (300.0, 0.0, 50.0);
+
+    /// <summary>
+    /// 依載台在席位置回傳讀碼器的軸座標。
+    /// Left 或 Both 預設先掃左邊。
+    /// </summary>
+    public (double X, double Y, double Z) GetBarcodePosition(
+        Services.MachineController.CarrierPosition position) => position switch
+    {
+        Services.MachineController.CarrierPosition.Right => BarcodePositionRight,
+        _ => BarcodePositionLeft,
+    };
 }
