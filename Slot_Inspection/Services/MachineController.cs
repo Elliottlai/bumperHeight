@@ -4,6 +4,8 @@ using Slot_Inspection.Models;
 using FoupInspecMachine.Manager;
 using NLog;
 using System.IO;
+using BarcodeReader.Interfaces;
+using BarcodeReader.Services;
 
 namespace Slot_Inspection.Services;
 

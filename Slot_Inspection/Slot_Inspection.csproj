@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BarcodeReader\BarcodeReader.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
   </ItemGroup>
 
