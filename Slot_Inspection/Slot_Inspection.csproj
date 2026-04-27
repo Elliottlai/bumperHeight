@@ -17,6 +17,13 @@
   <ItemGroup>
     <ProjectReference Include="..\BarcodeReader\BarcodeReader.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
+    <ProjectReference Include="..\PLC_IO\PLC_IO.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="MvCodeReaderSDK.Net">
+      <HintPath>..\BarcodeReader\Lib\MvCodeReaderSDK.Net.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>

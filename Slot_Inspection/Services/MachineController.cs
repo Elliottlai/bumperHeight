@@ -4,8 +4,13 @@ using Slot_Inspection.Models;
 using FoupInspecMachine.Manager;
 using NLog;
 using System.IO;
+using System.IO.Ports;
+using System.Runtime.InteropServices;
 using BarcodeReader.Interfaces;
 using BarcodeReader.Services;
+using MvCodeReaderSDKNet;
+using PLC_IO.Interfaces;
+using PLC_IO.Services;
 
 namespace Slot_Inspection.Services;
 
@@ -32,6 +37,10 @@ public sealed class MachineController : IDisposable
     private readonly string _moxaIp = "192.168.127.254";
     private readonly int _moxaPort = 4001;
 
+    // -- PLC (三菱 FX) 串口設定 --
+    private readonly string _plcComPort = "COM3";   // TODO: 改為實際 PLC 串口
+    private readonly int _plcBaudRate = 9600;       // TODO: 改為實際鮑率
+
     private readonly TimeSpan _axisHomeTimeout = TimeSpan.FromSeconds(60);
     private readonly TimeSpan _deviceConnectTimeout = TimeSpan.FromSeconds(10);
 
@@ -41,6 +50,9 @@ public sealed class MachineController : IDisposable
     private FoupInspecMachine.Models.OPT_Controller? _light;
     private CameraManager? _cameraManager;
     private ModbusClientRtuOverTcp? _modbusClient;
+    private ICodeReaderDevice? _barcodeDevice;    // 海康讀碼器 SDK 控制物件
+    private IBarcodeResultParser? _barcodeParser;  // 讀碼結果解析器
+    private IPlcCommunicator? _plc;               // 三菱 FX PLC 通訊
     private bool _disposed;
 
     private readonly InspectionConfig _config = new();
@@ -53,6 +65,142 @@ public sealed class MachineController : IDisposable
     // -- Two cameras: Left & Right side of bumper --
     private static readonly NamedKey _cameraKeyLeft  = NamedKeyCamera.AreaCameraTop;
     private static readonly NamedKey _cameraKeyRight = NamedKeyCamera.AreaCameraSide;
+
+    // =========================================
+    //  S01: Carrier detection + Barcode scan
+    // =========================================
+
+    /// <summary>載台在席感測器對應的 PLC X 點位</summary>
+    private const int CarrierLeftSensorIndex = 12;   // X12 = 左側在席
+    private const int CarrierRightSensorIndex = 13;  // X13 = 右側在席
+
+    /// <summary>載台在席偵測結果</summary>
+    public enum CarrierPosition { None, Left, Right, Both }
+
+    /// <summary>
+    /// S01a：讀取 PLC X12（左）/ X13（右）判斷載台在席位置。
+    /// FxPlcCommunicator 內部會週期性輪詢 PLC，GetX() 直接讀取最新快取值。
+    /// </summary>
+    public CarrierPosition DetectCarrierPosition()
+    {
+        if (SimulationMode)
+        {
+            _logger.Info("[S01] (Sim) Carrier detected: Left");
+            return CarrierPosition.Left;
+        }
+
+        if (_plc == null || !_plc.IsConnected)
+        {
+            _logger.Warn("[S01] PLC not connected");
+            return CarrierPosition.None;
+        }
+
+        // 直接讀取 PLC X 點位快取（由 FxPlcCommunicator 背景輪詢更新）
+        bool left  = _plc.GetX(CarrierLeftSensorIndex);   // X12
+        bool right = _plc.GetX(CarrierRightSensorIndex);  // X13
+
+        var position = (left, right) switch
+        {
+            (true, true)   => CarrierPosition.Both,
+            (true, false)  => CarrierPosition.Left,
+            (false, true)  => CarrierPosition.Right,
+            (false, false) => CarrierPosition.None,
+        };
+
+        _logger.Info($"[S01] PLC sensor: X12(Left)={left}, X13(Right)={right} → {position}");
+        return position;
+    }
+
+    /// <summary>
+    /// S01b：依載台位置移動軸到讀碼位置 → 軟體觸發讀碼器 → 回傳條碼字串。
+    /// 失敗回傳 null。
+    /// </summary>
+    public async Task<string?> MoveAndReadBarcodeAsync(
+        CarrierPosition position,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (SimulationMode)
+        {
+            progress?.Report("[Sim] Moving to barcode position...");
+            await Task.Delay(500, ct);
+            progress?.Report("[Sim] Reading barcode...");
+            await Task.Delay(300, ct);
+            string simCode = position == CarrierPosition.Right
+                ? "SIM-RIGHT-001"
+                : "SIM-LEFT-001";
+            _logger.Info($"[S01] (Sim) Barcode read: {simCode}");
+            return simCode;
+        }
+
+        // STEP 1: 從 InspectionConfig 取得對應的軸座標
+        var barcodePos = _config.GetBarcodePosition(position);
+        progress?.Report($"移動至讀碼位置（{position}）...");
+        _logger.Info($"[S01] Moving to barcode pos: {position} → X={barcodePos.X}, Y={barcodePos.Y}, Z={barcodePos.Z}");
+
+        Axes["AxisX"].MotMoveAbs(barcodePos.X);
+        Axes["AxisY"].MotMoveAbs(barcodePos.Y);
+        Axes["AxisZ"].MotMoveAbs(barcodePos.Z);
+
+        bool arrived = await WaitUntilAsync(
+            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            _config.MoveTimeout, ct);
+
+        if (!arrived)
+        {
+            _logger.Warn("[S01] Move to barcode position timeout");
+            progress?.Report("移動至讀碼位置逾時");
+            return null;
+        }
+
+        // STEP 2: 軟體觸發讀碼器取像 + 解析條碼
+        progress?.Report("讀碼中...");
+        return await ReadBarcodeAsync(ct);
+    }
+
+    /// <summary>
+    /// 觸發讀碼器取一幀影像，解析條碼後回傳字串。
+    /// 使用 MvCodeReaderSDK 的 Software Trigger 模式。
+    /// </summary>
+    private async Task<string?> ReadBarcodeAsync(CancellationToken ct = default)
+    {
+        if (_barcodeDevice == null || _barcodeParser == null)
+            return null;
+
+        return await Task.Run(() =>
+        {
+            // 發送軟體觸發命令，讓讀碼器拍一張照
+            _barcodeDevice.SetCommandValue("TriggerSoftware");
+
+            // 配置接收緩衝區
+            nint pData = 0;
+            nint pFrameInfo = Marshal.AllocHGlobal(
+                Marshal.SizeOf<MvCodeReader.MV_CODEREADER_IMAGE_OUT_INFO_EX2>());
+            try
+            {
+                // 等待讀碼器回傳影像（最長 5 秒）
+                int ret = _barcodeDevice.GetOneFrameTimeout(ref pData, pFrameInfo, 5000);
+                if (ret != 0)
+                {
+                    _logger.Warn($"Barcode read timeout: 0x{ret:X}");
+                    return null;
+                }
+
+                // 從影像中解析條碼
+                var results = _barcodeParser.Parse(pFrameInfo);
+                string? code = results.Count > 0 && results[0].Code != "NoRead"
+                    ? results[0].Code
+                    : null;
+
+                _logger.Info($"Barcode read: {code ?? "NoRead"}");
+                return code;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pFrameInfo);
+            }
+        }, ct);
+    }
 
     // =========================================
     //  S00
@@ -72,7 +220,7 @@ public sealed class MachineController : IDisposable
                 "Config", "IO Module", "OPT Light",
                 "4-Axis Servo", "4-Axis Home",
                 "Camera Left", "Camera Right",
-                "Barcode Reader"
+                "Barcode Reader", "PLC (FX)"
             ];
             foreach (var step in steps)
             {
@@ -109,9 +257,48 @@ public sealed class MachineController : IDisposable
         progress?.Report("Connecting barcode reader...");
         result.Add(InitBarcodeReader());
 
+        progress?.Report("Connecting PLC...");
+        result.Add(InitPlc());
+
         _logger.Info("===== S00 Init Done =====");
         _logger.Info(result.GetSummary());
         return result;
+    }
+
+    // =========================================
+    //  S01c: Barcode axis return to home
+    // =========================================
+
+    /// <summary>
+    /// 將條碼讀取相關軸（X/Y/Z）回歸原點，讓機台回到待機狀態。
+    /// </summary>
+    public async Task MoveBarcodeAxisHomeAsync(
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (SimulationMode)
+        {
+            progress?.Report("[Sim] 條碼軸回歸原點...");
+            await Task.Delay(500, ct);
+            _logger.Info("[S01c] (Sim) Barcode axis homed");
+            return;
+        }
+
+        progress?.Report("條碼軸回歸原點...");
+        _logger.Info("[S01c] Moving barcode axes to home");
+
+        Axes["AxisX"].Home();
+        Axes["AxisY"].Home();
+        Axes["AxisZ"].Home();
+
+        bool done = await WaitUntilAsync(
+            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            _axisHomeTimeout, ct);
+
+        if (!done)
+            _logger.Warn("[S01c] Barcode axis home timeout");
+        else
+            _logger.Info("[S01c] Barcode axes homed");
     }
 
     // =========================================
@@ -440,14 +627,89 @@ public sealed class MachineController : IDisposable
         const string name = "Barcode Reader";
         try
         {
-            using var socket = new System.Net.Sockets.TcpClient();
-            if (!socket.ConnectAsync(_barcodeIp, _barcodePort).Wait(_deviceConnectTimeout))
-                return DeviceInitResult.Fail(name, $"Connect {_barcodeIp}:{_barcodePort} timeout");
-            if (!socket.Connected)
-                return DeviceInitResult.Fail(name, $"Cannot connect {_barcodeIp}:{_barcodePort}");
-            _logger.Info($"{name}: OK ({_barcodeIp}:{_barcodePort})"); return DeviceInitResult.Ok(name);
+            // 1. 列舉所有 GigE 讀碼器裝置
+            var enumerator = new MvDeviceEnumerator();
+            var devices = enumerator.EnumerateDevices();
+
+            if (devices.Count == 0)
+                return DeviceInitResult.Fail(name, "No MvCodeReader device found");
+
+            // 2. 建立 SDK 控制物件與解析器
+            _barcodeDevice = new MvCodeReaderDevice();
+            _barcodeParser = new MvBarcodeResultParser();
+
+            // 3. 用第一台裝置建立 Handle
+            int ret = _barcodeDevice.CreateHandle(devices[0].RawDeviceInfo!);
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
+
+            // 4. 開啟裝置
+            ret = _barcodeDevice.OpenDevice();
+            if (ret != 0)
+            {
+                _barcodeDevice.DestroyHandle();
+                return DeviceInitResult.Fail(name, $"OpenDevice failed: 0x{ret:X}");
+            }
+
+            // 5. 設定為軟體觸發模式（由程式決定何時讀碼，而非連續觸發）
+            _barcodeDevice.SetEnumValue("TriggerMode",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_MODE.MV_CODEREADER_TRIGGER_MODE_ON);
+            _barcodeDevice.SetEnumValue("TriggerSource",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_SOURCE.MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
+
+            // 6. 開始取像（進入等待觸發狀態）
+            ret = _barcodeDevice.StartGrabbing();
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
+
+            _logger.Info($"{name}: OK ({devices[0].DisplayName})");
+            return DeviceInitResult.Ok(name);
         }
-        catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, ex.Message, ex); }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
+    }
+
+    /// <summary>
+    /// 初始化 PLC 通訊（三菱 FX 系列）。
+    /// 使用 PLC_IO 專案的 SerialBytesCommunicator（串口 Transport）
+    /// 搭配 FxPlcCommunicator（FX 協定解析）。
+    /// FxPlcCommunicator 會自動在背景輪詢 X/Y 點位，
+    /// 之後透過 GetX(index) 即可讀取最新值。
+    /// </summary>
+    private DeviceInitResult InitPlc()
+    {
+        const string name = "PLC (FX)";
+        try
+        {
+            // 建立串口 Transport → FX 協定通訊器
+            var transport = new SerialBytesCommunicator(
+                _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
+            _plc = new FxPlcCommunicator(transport);
+
+            // 等待 PLC 回應（DogValue 會隨每次成功通訊遞增）
+            long initialDog = _plc.DogValue;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.Elapsed < _deviceConnectTimeout)
+            {
+                if (_plc.DogValue != initialDog)
+                {
+                    _logger.Info($"{name}: OK ({_plcComPort}, DogValue={_plc.DogValue})");
+                    return DeviceInitResult.Ok(name);
+                }
+                Thread.Sleep(50);
+            }
+
+            return DeviceInitResult.Fail(name,
+                $"PLC no response on {_plcComPort} within {_deviceConnectTimeout.TotalSeconds}s");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
     }
 
     // =========================================
@@ -491,6 +753,8 @@ public sealed class MachineController : IDisposable
             }
             catch { }
 
+            try { _barcodeDevice?.Dispose(); } catch { }
+            try { _plc?.Dispose(); } catch { }
             try { _light?.Dispose(); } catch { }
             try { _modbusClient?.Dispose(); } catch { }
 
