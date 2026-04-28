@@ -98,11 +98,15 @@ public sealed class InspectionConfig
         if (string.IsNullOrWhiteSpace(name))
             return DefaultAlgJsonKey;
 
-        string key = name;
         int idx = name.LastIndexOf('_');
         if (idx >= 0 && idx < name.Length - 1)
-            key = name[(idx + 1)..].Trim();
+        {
+            string key = name[(idx + 1)..].Trim();
+            if (!string.IsNullOrWhiteSpace(key))
+                return key;
+        }
 
-        return string.IsNullOrWhiteSpace(key) ? DefaultAlgJsonKey : key;
+        // 檔名沒有底線 → 使用預設 JSON key
+        return DefaultAlgJsonKey;
     }
 }

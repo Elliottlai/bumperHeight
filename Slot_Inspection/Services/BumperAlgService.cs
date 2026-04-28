@@ -39,69 +39,58 @@ public sealed class BumperAlgService
         try
         {
             string jsonPath = Path.Combine(_configDir, jsonKey + ".json");
+            System.Diagnostics.Debug.WriteLine(
+                $"[BumperAlg] {slotName}: jsonKey={jsonKey}, jsonPath={jsonPath}, jsonExists={File.Exists(jsonPath)}");
+
             if (!File.Exists(jsonPath))
             {
-                _logger.Warn($"[BumperAlg] {slotName}: JSON 不存在 → {jsonPath}");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? JSON 不存在");
                 return BumperAlgResult.Fail($"JSON 不存在: {jsonKey}.json");
             }
 
             if (!File.Exists(imagePath))
             {
-                _logger.Warn($"[BumperAlg] {slotName}: 影像不存在 → {imagePath}");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? 影像不存在");
                 return BumperAlgResult.Fail($"影像不存在: {imagePath}");
             }
 
-            // ── 1. 讀取原圖作為底圖 ──
-            // 注意：DLL 回傳的 ProcessedImageData 有時是二值化/遮罩圖（顯示會是全白或非原圖）
-            // 因此我們以原始影像為底圖，再把輪廓與文字疊加在上面。
-            using Mat baseMat = CvInvoke.Imread(imagePath, Emgu.CV.CvEnum.ImreadModes.AnyColor);
-            if (baseMat == null || baseMat.IsEmpty)
-            {
-                _logger.Warn($"[BumperAlg] {slotName}: 無法讀取原圖 → {imagePath}");
-                return BumperAlgResult.Fail("無法讀取原圖");
-            }
-
-            // ── 2. 呼叫 DLL 主流程（只拿 result 的 AdditionalData） ──
             var processor = new ImageProcessor();
+            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: 呼叫 ProcessImage...");
             ProcessingResult result = processor.ProcessImage(imagePath, jsonPath, false);
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[BumperAlg] {slotName}: ProcessImage success={result.Success}, error={result.ErrorMessage ?? "null"}");
 
             if (!result.Success)
             {
-                _logger.Warn($"[BumperAlg] {slotName}: ProcessImage 失敗 → {result.ErrorMessage}");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ProcessImage 失敗");
                 return BumperAlgResult.Fail(result.ErrorMessage ?? "ProcessImage failed");
             }
 
-            // ── 3. 若有 Contour，執行瑕疵偵測 ──
-            ProcessingResult? defectResult = null;
-            var extras = result.AdditionalData as Dictionary<string, object>;
-            if (extras != null
-                && extras.TryGetValue("Contour", out var contourObj)
-                && contourObj is IList contourPoints
-                && contourPoints.Count >= 3)
+            using Mat baseMat = CvInvoke.Imread(imagePath, Emgu.CV.CvEnum.ImreadModes.AnyColor);
+            if (baseMat == null || baseMat.IsEmpty)
             {
-                var defectSettings = LoadDefectSettingsFromJson(jsonPath);
-                defectResult = processor.DetectDefectsInContour(
-                    imagePath, contourPoints, defectSettings, false);
-
-                if (defectResult?.Success == true)
-                    _logger.Debug($"[BumperAlg] {slotName}: DefectDetection OK");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? Imread 失敗");
+                return BumperAlgResult.Fail("無法讀取原圖");
             }
 
-            // ── 4. 在原圖上畫輪廓線 + 瑕疵文字 ──
+            // ── 在原圖上畫綠色輪廓線 ──
             using Mat overlay = baseMat.Clone();
-            DrawOverlay(overlay, result, defectResult, slotName);
+            var mainData = result.AdditionalData as Dictionary<string, object>;
+            int drawn = DrawContourFromData(overlay, mainData);
 
-            // ── 5. 判斷 NG ──
-            bool isNg = DetermineNg(defectResult ?? result);
+            System.Diagnostics.Debug.WriteLine(
+                $"[BumperAlg] {slotName}: ? 成功 size={baseMat.Width}x{baseMat.Height}, " +
+                $"additionalKeys={mainData?.Count ?? 0}, contourDrawn={drawn}");
+
+            bool isNg = DetermineNg(result);
             var bitmapSource = MatToBitmapSource(overlay);
             bitmapSource.Freeze();
-
-            _logger.Info($"[BumperAlg] {slotName}: 完成 IsNg={isNg}");
             return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, $"[BumperAlg] {slotName}: 例外");
+            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? 例外: {ex.Message}");
             return BumperAlgResult.Fail(ex.Message);
         }
     }

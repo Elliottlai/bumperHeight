@@ -421,6 +421,13 @@ public sealed class MachineController : IDisposable
             if (!string.IsNullOrEmpty(simPath))
             {
                 string jsonKey = _config.GetAlgJsonKeyFromImagePath(simPath);
+                string jsonFullPath = Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "Config", jsonKey + ".json");
+                _logger.Info($"[S03-Sim] {slotLabel} simPath={simPath}, jsonKey={jsonKey}, jsonExists={File.Exists(jsonFullPath)}");
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"[S03-Sim] slot={slotLabel}, simPath={simPath}, file={Path.GetFileName(simPath)}");
+
                 var algResult = await Task.Run(
                     () => _bumperAlg.Analyze(simPath, jsonKey, slotLabel), ct);
 
@@ -434,7 +441,19 @@ public sealed class MachineController : IDisposable
                 _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
             }
 
-            // fallback: still show generated simulation card if no image/analysis failed
+            // fallback: 直接顯示原圖（不再用 SimImageGenerator 假圖）
+            if (!string.IsNullOrEmpty(simPath) && File.Exists(simPath))
+            {
+                var fallbackImage = SimImageLoader.LoadFileAsBitmapSource(simPath);
+                if (fallbackImage != null)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[S03-Sim] {slotLabel} fallback: 顯示原圖 {Path.GetFileName(simPath)}");
+                    return (1.0, false, simPath, fallbackImage);
+                }
+            }
+
+            // 最終 fallback: 無圖可用時才用生成假圖
             var rng = new Random();
             double simL = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
             double simR = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);

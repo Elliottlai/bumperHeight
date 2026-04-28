@@ -73,6 +73,13 @@ public sealed class SimImageLoader
     /// <summary>Reset index (start from first image for new batch)</summary>
     public void Reset() => _index = 0;
 
+    /// <summary>
+    /// 公開靜態方法：載入指定路徑的圖片為 BitmapSource（已 Freeze）。
+    /// 供 MachineController fallback 使用。
+    /// </summary>
+    public static BitmapSource? LoadFileAsBitmapSource(string filePath)
+        => LoadFile(filePath);
+
     private static BitmapSource? LoadFile(string filePath)
     {
         try
