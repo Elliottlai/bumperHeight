@@ -11,6 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Emgu.CV" Version="4.9.0.5494" />
+    <PackageReference Include="Emgu.CV.runtime.windows" Version="4.9.0.5494" />
     <PackageReference Include="NLog" Version="6.1.2" />
   </ItemGroup>
 
@@ -21,9 +23,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="BumperFlat.ImageProcessing">
+      <HintPath>..\TestALG\TestALG\Lib\BumperFlat.ImageProcessing.dll</HintPath>
+    </Reference>
     <Reference Include="MvCodeReaderSDK.Net">
       <HintPath>..\BarcodeReader\Lib\MvCodeReaderSDK.Net.dll</HintPath>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Config\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,7 @@
 namespace Slot_Inspection.Models;
 
+using System.IO;
+
 /// <summary>
 /// Inspection parameters (light, exposure, NG threshold).
 /// </summary>
@@ -58,4 +60,49 @@ public sealed class InspectionConfig
 
     /// <summary>相機拍攝高度（Z 軸），所有 Slot 共用</summary>
     public double CameraHeightZ { get; set; } = 50.0;
+
+    // =========================================
+    //  BumperFlat 演算法 JSON 設定
+    // =========================================
+
+    /// <summary>
+    /// 演算法預設 JSON Key（對應 Config 資料夾下的 .json 檔名）。
+    /// 例如 "Parameter" → Config/Parameter.json
+    /// </summary>
+    public string DefaultAlgJsonKey { get; set; } = "Parameter";
+
+    /// <summary>
+    /// 依 Slot 位置取得對應的演算法 JSON Key。
+    /// 目前所有 Slot 共用同一組參數；
+    /// 若未來需要 per-slot 設定，可改回傳 $"{target}_S{slotIndex + 1}"。
+    /// </summary>
+    public string GetAlgJsonKey(
+        SlotInspectionProgress.TargetCollection target,
+        int slotIndex)
+    {
+        return DefaultAlgJsonKey;
+    }
+
+    /// <summary>
+    /// 根據影像檔名推導演算法 JSON key（比照 TestALG）：
+    /// 1) 先取檔名（無副檔名）
+    /// 2) 若含 '_'，取最後一個 '_' 後面的字串
+    /// 3) 回傳空值時 fallback DefaultAlgJsonKey
+    /// </summary>
+    public string GetAlgJsonKeyFromImagePath(string imagePath)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return DefaultAlgJsonKey;
+
+        string name = Path.GetFileNameWithoutExtension(imagePath) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+            return DefaultAlgJsonKey;
+
+        string key = name;
+        int idx = name.LastIndexOf('_');
+        if (idx >= 0 && idx < name.Length - 1)
+            key = name[(idx + 1)..].Trim();
+
+        return string.IsNullOrWhiteSpace(key) ? DefaultAlgJsonKey : key;
+    }
 }

@@ -57,6 +57,7 @@ public sealed class MachineController : IDisposable
     private bool _disposed;
 
     private readonly InspectionConfig _config = new();
+    private readonly BumperAlgService _bumperAlg = new();
 
     // -- Sim image loader (lazy init) --
     private SimImageLoader? _simImageLoader;
@@ -413,19 +414,35 @@ public sealed class MachineController : IDisposable
         if (SimulationMode)
         {
             await Task.Delay(150, ct);
-            var rng = new Random();
-            double simL     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
-            double simR     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
-            double simValue = (simL + simR) / 2.0;
-            bool simNg = simValue < _config.NgThresholdLow
-                      || simValue > _config.NgThresholdHigh;
             string slotLabel = $"{target}_S{slotIndex + 1}";
 
             var loader = GetSimImageLoader();
-            System.Windows.Media.ImageSource? simImage = loader.HasImages
-                ? (loader.Next() ?? SimImageGenerator.Generate(slotLabel, simValue, simNg))
-                : SimImageGenerator.Generate(slotLabel, simValue, simNg);
+            string? simPath = loader.NextPath();
+            if (!string.IsNullOrEmpty(simPath))
+            {
+                string jsonKey = _config.GetAlgJsonKeyFromImagePath(simPath);
+                var algResult = await Task.Run(
+                    () => _bumperAlg.Analyze(simPath, jsonKey, slotLabel), ct);
 
+                if (algResult.Success && algResult.Image != null)
+                {
+                    double simValueOk = algResult.IsNg ? 0.0 : 1.0;
+                    _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, isNg={algResult.IsNg}");
+                    return (simValueOk, algResult.IsNg, simPath, algResult.Image);
+                }
+
+                _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
+            }
+
+            // fallback: still show generated simulation card if no image/analysis failed
+            var rng = new Random();
+            double simL = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simR = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simValue = (simL + simR) / 2.0;
+            bool simNg = simValue < _config.NgThresholdLow
+                      || simValue > _config.NgThresholdHigh;
+
+            System.Windows.Media.ImageSource? simImage = SimImageGenerator.Generate(slotLabel, simValue, simNg);
             return (simValue, simNg, "", simImage);
         }
 
@@ -477,6 +494,7 @@ public sealed class MachineController : IDisposable
 
         // STEP 6: Save images
         string imagePath = "";
+        string pathL = "", pathR = "";
         if (_config.SaveImages)
         {
             string dir = Path.Combine(
@@ -485,8 +503,8 @@ public sealed class MachineController : IDisposable
                 barcode);
             Directory.CreateDirectory(dir);
 
-            string pathL = Path.Combine(dir, $"{slotName}_L.tif");
-            string pathR = Path.Combine(dir, $"{slotName}_R.tif");
+            pathL = Path.Combine(dir, $"{slotName}_L.tif");
+            pathR = Path.Combine(dir, $"{slotName}_R.tif");
 
             _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
             _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
@@ -494,19 +512,22 @@ public sealed class MachineController : IDisposable
             imagePath = pathL;
         }
 
-        // STEP 7: Measure both images
-        double valueLeft  = ImageMeasurer.Measure(imageLeft,  $"{slotName}_L");
-        double valueRight = ImageMeasurer.Measure(imageRight, $"{slotName}_R");
-        double measuredValue = (valueLeft + valueRight) / 2.0;
+        // STEP 7: 呼叫 BumperFlat 演算法分析（使用已存檔的 .tif 路徑）
+        string algJsonKey = _config.GetAlgJsonKey(target, slotIndex);
 
-        _logger.Debug($"[S03] {slotName} L={valueLeft:F4} R={valueRight:F4} Avg={measuredValue:F4}");
+        var algResultL = await Task.Run(() => _bumperAlg.Analyze(pathL, algJsonKey, $"{slotName}_L"), ct);
+        var algResultR = await Task.Run(() => _bumperAlg.Analyze(pathR, algJsonKey, $"{slotName}_R"), ct);
 
-        // STEP 8: NG judgment
-        bool isNg = measuredValue < _config.NgThresholdLow
-                 || measuredValue > _config.NgThresholdHigh;
+        _logger.Debug($"[S03] {slotName} ALG L={algResultL.Message} R={algResultR.Message}");
 
-        return (measuredValue, isNg, imagePath, null);
-        // TODO: convert HImage to BitmapSource for real mode display
+        // STEP 8: NG 判斷（左右任一 NG 即為 NG）
+        bool isNg = algResultL.IsNg || algResultR.IsNg;
+        double measuredValue = isNg ? 0.0 : 1.0;
+
+        // 優先顯示左側疊加結果影像
+        System.Windows.Media.ImageSource? displayImage = algResultL.Image ?? algResultR.Image;
+
+        return (measuredValue, isNg, imagePath, displayImage);
     }
 
     // =========================================
@@ -621,63 +642,6 @@ public sealed class MachineController : IDisposable
     private DeviceInitResult InitBarcodeReader()
     {
         const string name = "Barcode Reader";
-        try
-        {
-            // 1. 列舉所有 GigE 讀碼器裝置
-            var enumerator = new MvDeviceEnumerator();
-            var devices = enumerator.EnumerateDevices();
-
-            if (devices.Count == 0)
-                return DeviceInitResult.Fail(name, "No MvCodeReader device found");
-
-            // 2. 建立 SDK 控制物件與解析器
-            _barcodeDevice = new MvCodeReaderDevice();
-            _barcodeParser = new MvBarcodeResultParser();
-
-            // 3. 用第一台裝置建立 Handle
-            int ret = _barcodeDevice.CreateHandle(devices[0].RawDeviceInfo!);
-            if (ret != 0)
-                return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
-
-            // 4. 開啟裝置
-            ret = _barcodeDevice.OpenDevice();
-            if (ret != 0)
-            {
-                _barcodeDevice.DestroyHandle();
-                return DeviceInitResult.Fail(name, $"OpenDevice failed: 0x{ret:X}");
-            }
-
-            // 5. 設定為軟體觸發模式（由程式決定何時讀碼，而非連續觸發）
-            _barcodeDevice.SetEnumValue("TriggerMode",
-                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_MODE.MV_CODEREADER_TRIGGER_MODE_ON);
-            _barcodeDevice.SetEnumValue("TriggerSource",
-                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_SOURCE.MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
-
-            // 6. 開始取像（進入等待觸發狀態）
-            ret = _barcodeDevice.StartGrabbing();
-            if (ret != 0)
-                return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
-
-            _logger.Info($"{name}: OK ({devices[0].DisplayName})");
-            return DeviceInitResult.Ok(name);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, $"{name}: FAIL");
-            return DeviceInitResult.Fail(name, ex.Message, ex);
-        }
-    }
-
-    /// <summary>
-    /// 初始化 PLC 通訊（三菱 FX 系列）。
-    /// 使用 PLC_IO 專案的 SerialBytesCommunicator（串口 Transport）
-    /// 搭配 FxPlcCommunicator（FX 協定解析）。
-    /// FxPlcCommunicator 會自動在背景輪詢 X/Y 點位，
-    /// 之後透過 GetX(index) 即可讀取最新值。
-    /// </summary>
-    private DeviceInitResult InitPlc()
-    {
-        const string name = "PLC (FX)";
         try
         {
             // 1. 列舉所有 GigE 讀碼器裝置

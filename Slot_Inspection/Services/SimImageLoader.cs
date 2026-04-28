@@ -44,6 +44,19 @@ public sealed class SimImageLoader
     }
 
     /// <summary>
+    /// Get next image path (cycles).
+    /// Returns null if no images.
+    /// </summary>
+    public string? NextPath()
+    {
+        if (_files.Length == 0) return null;
+
+        string filePath = _files[_index];
+        _index = (_index + 1) % _files.Length;
+        return filePath;
+    }
+
+    /// <summary>
     /// Get next image (cycles). Frozen for cross-thread safety.
     /// Returns null if load fails.
     /// </summary>
