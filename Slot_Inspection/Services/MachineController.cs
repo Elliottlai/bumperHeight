@@ -28,7 +28,8 @@ public sealed class MachineController : IDisposable
     private const bool SimulationMode = false;
 #endif
 
-    private readonly string[] _axisNames = ["AxisX", "AxisY", "AxisZ", "AxisR"];
+    // X=讀碼軸, Y=載台軸, Z=相機高度軸（無 R 軸）
+    private readonly string[] _axisNames = ["AxisX", "AxisY", "AxisZ"];
     private readonly string[] _cameraNames = ["Camera1", "Camera2"];
 
     private readonly string _lightComPort = "COM7";
@@ -39,7 +40,7 @@ public sealed class MachineController : IDisposable
 
     // -- PLC (三菱 FX) 串口設定 --
     private readonly string _plcComPort = "COM3";   // TODO: 改為實際 PLC 串口
-    private readonly int _plcBaudRate = 9600;       // TODO: 改為實際鮑率
+    private readonly int _plcBaudRate = 115200;       // TODO: 改為實際鮑率
 
     private readonly TimeSpan _axisHomeTimeout = TimeSpan.FromSeconds(60);
     private readonly TimeSpan _deviceConnectTimeout = TimeSpan.FromSeconds(10);
@@ -133,17 +134,15 @@ public sealed class MachineController : IDisposable
             return simCode;
         }
 
-        // STEP 1: 從 InspectionConfig 取得對應的軸座標
-        var barcodePos = _config.GetBarcodePosition(position);
-        progress?.Report($"移動至讀碼位置（{position}）...");
-        _logger.Info($"[S01] Moving to barcode pos: {position} → X={barcodePos.X}, Y={barcodePos.Y}, Z={barcodePos.Z}");
+        // STEP 1: 只有 X 軸移動到讀碼位置
+        double targetX = _config.GetBarcodePositionX(position);
+        progress?.Report($"X 軸移動至讀碼位置（{position}）...");
+        _logger.Info($"[S01] Moving AxisX to barcode pos: {position} → X={targetX}");
 
-        Axes["AxisX"].MotMoveAbs(barcodePos.X);
-        Axes["AxisY"].MotMoveAbs(barcodePos.Y);
-        Axes["AxisZ"].MotMoveAbs(barcodePos.Z);
+        Axes["AxisX"].MotMoveAbs(targetX);
 
         bool arrived = await WaitUntilAsync(
-            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            () => Axes["AxisX"].Wait(),
             _config.MoveTimeout, ct);
 
         if (!arrived)
@@ -218,7 +217,7 @@ public sealed class MachineController : IDisposable
             string[] steps =
             [
                 "Config", "IO Module", "OPT Light",
-                "4-Axis Servo", "4-Axis Home",
+                "3-Axis Servo", "3-Axis Home",
                 "Camera Left", "Camera Right",
                 "Barcode Reader", "PLC (FX)"
             ];
@@ -284,15 +283,13 @@ public sealed class MachineController : IDisposable
             return;
         }
 
-        progress?.Report("條碼軸回歸原點...");
-        _logger.Info("[S01c] Moving barcode axes to home");
+        progress?.Report("讀碼軸(X)回歸原點...");
+        _logger.Info("[S01c] Moving AxisX to home");
 
         Axes["AxisX"].Home();
-        Axes["AxisY"].Home();
-        Axes["AxisZ"].Home();
 
         bool done = await WaitUntilAsync(
-            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            () => Axes["AxisX"].Wait(),
             _axisHomeTimeout, ct);
 
         if (!done)
@@ -439,18 +436,17 @@ public sealed class MachineController : IDisposable
         string slotName = $"{target}_Slot{slotIndex + 1}";
         _logger.Debug($"[S03] Start measuring {slotName}");
 
-        // STEP 1: Move axis to Slot position
+        // STEP 1: Y 軸移動載台到 Slot 位置，Z 軸調整相機高度
         var pos = SlotPositionTable.Get(target, slotIndex);
-        Axes["AxisX"].MotMoveAbs(pos.X);
         Axes["AxisY"].MotMoveAbs(pos.Y);
-        Axes["AxisZ"].MotMoveAbs(pos.Z);
+        Axes["AxisZ"].MotMoveAbs(_config.CameraHeightZ);
 
         bool arrived = await WaitUntilAsync(
-            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            () => Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
             _config.MoveTimeout, ct);
 
         if (!arrived)
-            _logger.Warn($"[S03] {slotName} move timeout (positions not taught yet)");
+            _logger.Warn($"[S03] {slotName} move timeout");
 
         // STEP 2: Both lights ON simultaneously
         _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);

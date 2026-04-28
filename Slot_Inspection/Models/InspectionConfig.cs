@@ -34,18 +34,28 @@ public sealed class InspectionConfig
     /// </summary>
     public string SimImageFolderPath { get; set; } = @"D:\TestImages";
 
-    // -- Barcode reader axis positions (TODO: 依實際 teaching 結果調整) --
-    public (double X, double Y, double Z) BarcodePositionLeft { get; set; } = (100.0, 0.0, 50.0);
-    public (double X, double Y, double Z) BarcodePositionRight { get; set; } = (300.0, 0.0, 50.0);
+    // =========================================
+    //  Barcode 讀碼軸設定（只有 X 軸移動）
+    //  TODO: 依實際 teaching 結果調整
+    // =========================================
 
-    /// <summary>
-    /// 依載台在席位置回傳讀碼器的軸座標。
-    /// Left 或 Both 預設先掃左邊。
-    /// </summary>
-    public (double X, double Y, double Z) GetBarcodePosition(
-        Services.MachineController.CarrierPosition position) => position switch
-    {
-        Services.MachineController.CarrierPosition.Right => BarcodePositionRight,
-        _ => BarcodePositionLeft,
-    };
+    /// <summary>掃左側條碼時，X 軸位置</summary>
+    public double BarcodePositionLeftX { get; set; } = 100.0;
+
+    /// <summary>掃右側條碼時，X 軸位置</summary>
+    public double BarcodePositionRightX { get; set; } = 300.0;
+
+    /// <summary>依載台在席位置回傳讀碼器的 X 軸座標</summary>
+    public double GetBarcodePositionX(Services.MachineController.CarrierPosition position)
+        => position == Services.MachineController.CarrierPosition.Right
+            ? BarcodePositionRightX
+            : BarcodePositionLeftX;
+
+    // =========================================
+    //  相機/光源高度設定（只有 Z 軸，所有 Slot 共用）
+    //  TODO: 依實際 teaching 結果調整
+    // =========================================
+
+    /// <summary>相機拍攝高度（Z 軸），所有 Slot 共用</summary>
+    public double CameraHeightZ { get; set; } = 50.0;
 }
