@@ -680,6 +680,63 @@ public sealed class MachineController : IDisposable
         const string name = "PLC (FX)";
         try
         {
+            // 1. 列舉所有 GigE 讀碼器裝置
+            var enumerator = new MvDeviceEnumerator();
+            var devices = enumerator.EnumerateDevices();
+
+            if (devices.Count == 0)
+                return DeviceInitResult.Fail(name, "No MvCodeReader device found");
+
+            // 2. 建立 SDK 控制物件與解析器
+            _barcodeDevice = new MvCodeReaderDevice();
+            _barcodeParser = new MvBarcodeResultParser();
+
+            // 3. 用第一台裝置建立 Handle
+            int ret = _barcodeDevice.CreateHandle(devices[0].RawDeviceInfo!);
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
+
+            // 4. 開啟裝置
+            ret = _barcodeDevice.OpenDevice();
+            if (ret != 0)
+            {
+                _barcodeDevice.DestroyHandle();
+                return DeviceInitResult.Fail(name, $"OpenDevice failed: 0x{ret:X}");
+            }
+
+            // 5. 設定為軟體觸發模式（由程式決定何時讀碼，而非連續觸發）
+            _barcodeDevice.SetEnumValue("TriggerMode",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_MODE.MV_CODEREADER_TRIGGER_MODE_ON);
+            _barcodeDevice.SetEnumValue("TriggerSource",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_SOURCE.MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
+
+            // 6. 開始取像（進入等待觸發狀態）
+            ret = _barcodeDevice.StartGrabbing();
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
+
+            _logger.Info($"{name}: OK ({devices[0].DisplayName})");
+            return DeviceInitResult.Ok(name);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
+    }
+
+    /// <summary>
+    /// 初始化 PLC 通訊（三菱 FX 系列）。
+    /// 使用 PLC_IO 專案的 SerialBytesCommunicator（串口 Transport）
+    /// 搭配 FxPlcCommunicator（FX 協定解析）。
+    /// FxPlcCommunicator 會自動在背景輪詢 X/Y 點位，
+    /// 之後透過 GetX(index) 即可讀取最新值。
+    /// </summary>
+    private DeviceInitResult InitPlc()
+    {
+        const string name = "PLC (FX)";
+        try
+        {
             // 建立串口 Transport → FX 協定通訊器
             var transport = new SerialBytesCommunicator(
                 _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
