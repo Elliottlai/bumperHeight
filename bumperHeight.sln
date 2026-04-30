@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PLC_IO", "PLC_IO\PLC_IO.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestALG", "TestALG\TestALG\TestALG.csproj", "{A5E5D561-5175-4F7D-B3AE-A532D76A00D7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DeltaAxis_RS485", "DeltaAxis_RS485\DeltaAxis_RS485.csproj", "{55B3522A-98DC-2118-CB13-8F17BA750172}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -116,6 +118,24 @@ Global
 		{A5E5D561-5175-4F7D-B3AE-A532D76A00D7}.Release|x64.Build.0 = Release|x64
 		{A5E5D561-5175-4F7D-B3AE-A532D76A00D7}.Release|x86.ActiveCfg = Release|Any CPU
 		{A5E5D561-5175-4F7D-B3AE-A532D76A00D7}.Release|x86.Build.0 = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|x64.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug|x86.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|Any CPU.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|Any CPU.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|x64.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|x64.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|x86.ActiveCfg = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Debug-Sim|x86.Build.0 = Debug|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|Any CPU.Build.0 = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|x64.ActiveCfg = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|x64.Build.0 = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|x86.ActiveCfg = Release|Any CPU
+		{55B3522A-98DC-2118-CB13-8F17BA750172}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

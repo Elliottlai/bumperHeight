@@ -1,0 +1,54 @@
+﻿<Window x:Class="DeltaAxis_RS485.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:DeltaAxis_RS485.ViewModels"
+        xmlns:v="clr-namespace:DeltaAxis_RS485.Views"
+        Title="Delta ASDA-B3 多軸控制" Height="580" Width="700">
+    <Window.DataContext>
+        <vm:MainViewModel />
+    </Window.DataContext>
+    <DockPanel>
+        <!-- 頂部工具列 -->
+        <ToolBar DockPanel.Dock="Top">
+            <Button Content="全部連線" Command="{Binding ConnectAllCommand}" />
+            <Button Content="全部斷線" Command="{Binding DisconnectAllCommand}" />
+        </ToolBar>
+
+        <!-- 底部狀態列 -->
+        <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock Text="{Binding SelectedAxis.StatusMessage, FallbackValue='就緒'}" />
+        </StatusBar>
+
+        <!-- 每軸一個 Tab -->
+        <TabControl ItemsSource="{Binding Axes}"
+                    SelectedItem="{Binding SelectedAxis}">
+            <TabControl.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Margin="0,0,4,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding HasAlarm}" Value="True">
+                                            <Setter Property="Fill" Value="Red" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="{Binding Config.Name}" />
+                    </StackPanel>
+                </DataTemplate>
+            </TabControl.ItemTemplate>
+            <TabControl.ContentTemplate>
+                <DataTemplate>
+                    <v:AxisControlView />
+                </DataTemplate>
+            </TabControl.ContentTemplate>
+        </TabControl>
+    </DockPanel>
+</Window>
