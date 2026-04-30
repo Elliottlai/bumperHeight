@@ -360,36 +360,61 @@ public sealed class MachineController : IDisposable
     {
         _logger.Info($"===== S03 Inspection Start | Barcode: {barcode} =====");
 
-        var zones = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
+        // Row1: AreaA_Row1 + AreaB_Row1 同時處理（13 slots）
+        // Row2: AreaA_Row2 + AreaB_Row2 同時處理（12 slots）
+        var rows = new (SlotInspectionProgress.TargetCollection AreaA,
+                        SlotInspectionProgress.TargetCollection AreaB,
+                        int Count)[]
         {
-            (SlotInspectionProgress.TargetCollection.AreaA_Row1, 13),
-            (SlotInspectionProgress.TargetCollection.AreaA_Row2, 12),
-            (SlotInspectionProgress.TargetCollection.AreaB_Row1, 13),
-            (SlotInspectionProgress.TargetCollection.AreaB_Row2, 12),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row1,
+             SlotInspectionProgress.TargetCollection.AreaB_Row1, 13),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row2,
+             SlotInspectionProgress.TargetCollection.AreaB_Row2, 12),
         };
 
-        foreach (var (target, count) in zones)
+        foreach (var (areaA, areaB, count) in rows)
         {
             for (int i = 0; i < count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var (value, isNg, imagePath, image) = await InspectOneSlotAsync(barcode, target, i, ct);
+                // 同時對 AreaA 和 AreaB 進行檢測
+                var taskA = InspectOneSlotAsync(barcode, areaA, i, ct);
+                var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
+                await Task.WhenAll(taskA, taskB);
 
-                string slotName = $"{target}_Slot{i + 1}";
-                InspectionResultWriter.WriteSlotResult(barcode, slotName, value, isNg, imagePath);
+                var (valueA, isNgA, imagePathA, imageA) = taskA.Result;
+                var (valueB, isNgB, imagePathB, imageB) = taskB.Result;
+
+                // 寫入結果
+                string slotNameA = $"{areaA}_Slot{i + 1}";
+                string slotNameB = $"{areaB}_Slot{i + 1}";
+                InspectionResultWriter.WriteSlotResult(barcode, slotNameA, valueA, isNgA, imagePathA);
+                InspectionResultWriter.WriteSlotResult(barcode, slotNameB, valueB, isNgB, imagePathB);
+
+                // 同時回報 AreaA 和 AreaB 的進度（UI 同時顯示兩張圖）
+                progress?.Report(new SlotInspectionProgress
+                {
+                    Target     = areaA,
+                    SlotIndex  = i,
+                    Value      = valueA,
+                    IsNg       = isNgA,
+                    StatusText = $"[{areaA}] Slot {i + 1}/{count} - {(isNgA ? "NG" : "OK")}",
+                    Image      = imageA
+                });
 
                 progress?.Report(new SlotInspectionProgress
                 {
-                    Target     = target,
+                    Target     = areaB,
                     SlotIndex  = i,
-                    Value      = value,
-                    IsNg       = isNg,
-                    StatusText = $"[{target}] Slot {i + 1}/{count} - {(isNg ? "NG" : "OK")}",
-                    Image      = image
+                    Value      = valueB,
+                    IsNg       = isNgB,
+                    StatusText = $"[{areaB}] Slot {i + 1}/{count} - {(isNgB ? "NG" : "OK")}",
+                    Image      = imageB
                 });
 
-                _logger.Debug($"[S03] {target}[{i}] Value={value:F2} IsNg={isNg}");
+                _logger.Debug($"[S03] {areaA}[{i}] Value={valueA:F2} IsNg={isNgA}");
+                _logger.Debug($"[S03] {areaB}[{i}] Value={valueB:F2} IsNg={isNgB}");
             }
         }
 
