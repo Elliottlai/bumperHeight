@@ -56,6 +56,84 @@
                 </StackPanel>
             </GroupBox>
 
+            <!-- 極限 / 原點 / 煞車 狀態與控制 -->
+            <GroupBox Header="極限 / 原點 / 煞車" Margin="0,0,0,10">
+                <StackPanel Margin="8">
+                    <!-- 狀態顯示 -->
+                    <UniformGrid Columns="4" Margin="0,0,0,8">
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsPositiveLimitActive}" Value="True">
+                                                <Setter Property="Fill" Value="Red" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="正極限 (CW)" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsNegativeLimitActive}" Value="True">
+                                                <Setter Property="Fill" Value="Red" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="負極限 (CCW)" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsHomeComplete}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="原點完成" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsBrakeReleasedState}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="煞車釋放" />
+                        </StackPanel>
+                    </UniformGrid>
+                    <!-- 動作按鈕 -->
+                    <WrapPanel>
+                        <Button Content="原點復歸" Command="{Binding HomingCommand}"
+                                Width="90" Margin="0,0,4,0" />
+                        <Button Content="煞車釋放" Command="{Binding BrakeReleaseCommand}"
+                                Width="90" Margin="0,0,4,0" />
+                        <Button Content="煞車鎖住" Command="{Binding BrakeLockCommand}"
+                                Width="90" Margin="0,0,4,0" />
+                    </WrapPanel>
+                </StackPanel>
+            </GroupBox>
+
             <!-- 運動參數 -->
             <GroupBox Header="運動參數" Margin="0,0,0,10">
                 <Grid Margin="8">
@@ -104,7 +182,7 @@
             </GroupBox>
 
             <!-- 定位控制 -->
-            <GroupBox Header="定位控制">
+            <GroupBox Header="定位控制" Margin="0,0,0,10">
                 <StackPanel Margin="8">
                     <WrapPanel Margin="0,0,0,8">
                         <TextBlock Text="位置 (mm): " />
@@ -115,7 +193,7 @@
                         <TextBlock Text="單圈 (PUU): " />
                         <TextBlock Text="{Binding SingleTurnPosition}" FontWeight="Bold" />
                     </WrapPanel>
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="目標 (mm):" VerticalAlignment="Center" Margin="0,0,6,0" />
                         <TextBox Text="{Binding TargetPositionMm, UpdateSourceTrigger=PropertyChanged}"
                                  Width="120" Margin="0,0,8,0" />
@@ -123,6 +201,521 @@
                                 Width="80" Margin="0,0,4,0" />
                         <Button Content="刷新位置" Command="{Binding RefreshStatusCommand}" Width="80" />
                     </StackPanel>
+                    <!-- Jog 增量移動 -->
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Jog:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold" />
+                        <Button Content="-10" Command="{Binding JogNegative10Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="-1" Command="{Binding JogNegative1Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="-0.1" Command="{Binding JogNegative01Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="-0.01" Command="{Binding JogNegative001Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="-0.003" Command="{Binding JogNegative003Command}"
+                                Width="50" Margin="0,0,6,0" />
+                        <Button Content="停止" Command="{Binding StopCommand}"
+                                Width="50" Margin="0,0,6,0" Background="OrangeRed" Foreground="White" FontWeight="Bold" />
+                        <Button Content="+0.003" Command="{Binding JogPositive003Command}"
+                                Width="50" Margin="0,0,2,0" />
+                        <Button Content="+0.01" Command="{Binding JogPositive001Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="+0.1" Command="{Binding JogPositive01Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="+1" Command="{Binding JogPositive1Command}"
+                                Width="44" Margin="0,0,2,0" />
+                        <Button Content="+10" Command="{Binding JogPositive10Command}"
+                                Width="44" />
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- 驅動器狀態 (P0.046) -->
+            <GroupBox Header="驅動器狀態 (P0.046)" Margin="0,0,0,10">
+                <UniformGrid Columns="4" Margin="8">
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSrdy}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="SRDY 伺服備妥" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsSon}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="SON 伺服啟動" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsZeroSpeed}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="ZSPD 零速度" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTargetSpeedReached}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="TSPD 速度到達" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTargetPositionReached}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="TPOS 位置到達" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsTorqueLimited}" Value="True">
+                                            <Setter Property="Fill" Value="Orange" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="TQL 扭矩限制" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAlarm}" Value="True">
+                                            <Setter Property="Fill" Value="Red" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="ALRM 警示" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBrakeReleased}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="BRKR 煞車釋放" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsHomeComplete}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="HOME 原點完成" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsOverloadWarning}" Value="True">
+                                            <Setter Property="Fill" Value="OrangeRed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="OLW 過負載預警" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Gray" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsWarning}" Value="True">
+                                            <Setter Property="Fill" Value="Yellow" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="WARN 警告" />
+                    </StackPanel>
+                </UniformGrid>
+            </GroupBox>
+
+            <!-- 絕對座標狀態 (P0.050) -->
+            <GroupBox Header="絕對座標狀態 (P0.050)" Margin="0,0,0,10">
+                <UniformGrid Columns="3" Margin="8">
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Red" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAbsolutePositionOk}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Bit0 絕對位置" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Red" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsBatteryVoltageOk}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Bit1 電池電壓" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Red" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAbsoluteRevolutionOk}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Bit2 絕對圈數" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Red" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPuuStatusOk}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Bit3 PUU 狀態" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="Red" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAbsoluteCoordinateOk}" Value="True">
+                                            <Setter Property="Fill" Value="LimeGreen" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+                        <TextBlock Text="Bit4 絕對座標" />
+                    </StackPanel>
+                </UniformGrid>
+            </GroupBox>
+
+            <!-- 監視變数映射 (P0.009~P0.012) -->
+            <GroupBox Header="監視變數 (Monitor Mapping)" Margin="0,0,0,10">
+                <Grid Margin="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="160" />
+                        <ColumnDefinition Width="140" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="26" />
+                        <RowDefinition Height="26" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="回授位置 (PUU):" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding FeedbackPositionPuu}" Grid.Row="0" Grid.Column="1"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+
+                    <TextBlock Text="警報碼 (Dec):" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding AlarmCodeDecimal}" Grid.Row="1" Grid.Column="1"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+
+                    <TextBlock Text="DI 整合狀態:" Grid.Row="0" Grid.Column="3" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding DiStatusIntegratedHex}" Grid.Row="0" Grid.Column="4"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+
+                    <TextBlock Text="DO 硬體狀態:" Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding DoStatusHardwareHex}" Grid.Row="1" Grid.Column="4"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+                </Grid>
+            </GroupBox>
+
+            <!-- DI 整合狀態 (MonitorCode 0x27) -->
+            <GroupBox Header="DI 整合狀態" Margin="0,0,0,10">
+                <StackPanel Margin="8">
+                    <TextBlock Text="{Binding DiStatusIntegratedHex}" FontFamily="Consolas" Margin="0,0,0,6" />
+                    <UniformGrid Columns="4" Margin="0">
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI1_ServoOn}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI1 伺服啟動" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI2_PulseClear}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI2 脈波清除" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI3_TorqueSel_Bit0}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI3 扭矩選擇Bit0" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI4_TorqueSel_Bit1}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI4 扭矩選擇Bit1" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI5_AlarmClear}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI5 異常清除" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI6_NegLimit}" Value="True">
+                                                <Setter Property="Fill" Value="Red" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI6 反轉禁止(B)" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI7_PosLimit}" Value="True">
+                                                <Setter Property="Fill" Value="Red" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI7 正轉禁止(B)" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI8_None}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI8 不作用" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI9_Home}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI9 復歸原點(B)" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI10_None}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI10 不作用" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI11_None}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI11 不作用" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI12_None}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI12 不作用" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                            <Ellipse Width="10" Height="10" Margin="0,0,4,0" VerticalAlignment="Center">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="Gray" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding DI13_None}" Value="True">
+                                                <Setter Property="Fill" Value="LimeGreen" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="DI13 不作用" />
+                        </StackPanel>
+                    </UniformGrid>
                 </StackPanel>
             </GroupBox>
         </StackPanel>

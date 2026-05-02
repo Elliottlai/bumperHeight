@@ -7,7 +7,7 @@ public class AxisConfig
 {
     public string Name { get; set; } = "Axis";
     public string PortName { get; set; } = "COM3";
-    public int BaudRate { get; set; } = 115200;
+    public int BaudRate { get; set; } = 38400;
     public byte SlaveId { get; set; } = 1;
     public MotionSettings Motion { get; set; } = new();
 }

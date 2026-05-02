@@ -12,6 +12,7 @@ namespace Machine.Core.Enums
         Simulation = 0,
         AdvantechAxisCard=1,
         AdlinkEthercat=2,
+        RS485
 
 
 

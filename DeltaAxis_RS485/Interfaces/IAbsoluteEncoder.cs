@@ -1,3 +1,5 @@
+using DeltaAxis_RS485.Models;
+
 namespace DeltaAxis_RS485.Interfaces;
 
 /// <summary>
@@ -5,8 +7,26 @@ namespace DeltaAxis_RS485.Interfaces;
 /// </summary>
 public interface IAbsoluteEncoder
 {
-    /// <summary>檢查 absolute 座標是否正常</summary>
+    /// <summary>檢查 absolute 座標是否全部正常 (P0.050 = 0)</summary>
     bool AbsOk();
+
+    /// <summary>讀取 P0.050 完整狀態旗標</summary>
+    AbsoluteStatusFlags ReadAbsoluteStatus();
+
+    /// <summary>檢查絕對位置是否正常 (P0.050 Bit0)</summary>
+    bool IsAbsolutePositionOk();
+
+    /// <summary>檢查電池電壓是否正常 (P0.050 Bit1)</summary>
+    bool IsBatteryVoltageOk();
+
+    /// <summary>檢查絕對圈數是否正常 (P0.050 Bit2)</summary>
+    bool IsAbsoluteRevolutionOk();
+
+    /// <summary>檢查 PUU 狀態是否正常 (P0.050 Bit3)</summary>
+    bool IsPuuStatusOk();
+
+    /// <summary>檢查絕對座標是否正常 (P0.050 Bit4)</summary>
+    bool IsAbsoluteCoordinateOk();
 
     /// <summary>重建 absolute origin（座標遺失時使用）</summary>
     void RebuildAbsoluteOrigin();

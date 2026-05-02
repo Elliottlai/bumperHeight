@@ -19,4 +19,7 @@ public interface IPrMotionController
 
     /// <summary>移動到指定位置 (mm)，整合換算、寫入、觸發、等待</summary>
     void MoveToPositionMm(double mm);
+
+    /// <summary>讀取目前位置 (mm)</summary>
+    double GetCurrentPositionMm();
 }

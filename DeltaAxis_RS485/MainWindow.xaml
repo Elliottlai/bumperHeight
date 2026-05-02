@@ -21,7 +21,7 @@
 
         <!-- 每軸一個 Tab -->
         <TabControl ItemsSource="{Binding Axes}"
-                    SelectedItem="{Binding SelectedAxis}">
+                    SelectedItem="{Binding SelectedAxis}" SelectionChanged="TabControl_SelectionChanged">
             <TabControl.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal">

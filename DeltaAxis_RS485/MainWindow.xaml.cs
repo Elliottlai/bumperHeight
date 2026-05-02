@@ -22,5 +22,10 @@ namespace DeltaAxis_RS485
             InitializeComponent();
             Closed += (_, _) => (DataContext as MainViewModel)?.Dispose();
         }
+
+        private void TabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+
+        }
     }
 }

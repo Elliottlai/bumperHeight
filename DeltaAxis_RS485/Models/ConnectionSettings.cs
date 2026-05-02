@@ -9,7 +9,7 @@ public class ConnectionSettings
     public string PortName { get; set; } = "COM3";
 
     /// <summary>鮑率，預設 115200</summary>
-    public int BaudRate { get; set; } = 115200;
+    public int BaudRate { get; set; } = 38400;
 
     /// <summary>Modbus 站號，預設 1</summary>
     public byte SlaveId { get; set; } = 1;

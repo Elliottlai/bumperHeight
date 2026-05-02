@@ -29,9 +29,10 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         // ============================
         var configs = new List<AxisConfig>
         {
-            new() { Name = "X¶b", PortName = "COM3", SlaveId = 1 },
-            new() { Name = "Y¶b", PortName = "COM4", SlaveId = 1 },
-            new() { Name = "Z¶b", PortName = "COM5", SlaveId = 1 },
+            new() { Name = "Y¶b", PortName = "COM12", SlaveId = 1 },
+            new() { Name = "X¶b", PortName = "COM13", SlaveId = 1 },
+            new() { Name = "ZL¶b", PortName = "COM14", SlaveId = 1 },
+            new() { Name = "ZR¶b", PortName = "COM15", SlaveId = 1 },
         };
 
         foreach (var cfg in configs)

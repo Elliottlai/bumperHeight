@@ -27,7 +27,7 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
             PortName = portName,
             BaudRate = baudRate,
             DataBits = 8,
-            StopBits = StopBits.One,
+            StopBits = StopBits.Two,
             Parity = Parity.None,
             ReadTimeout = 1000,
             WriteTimeout = 1000
@@ -161,20 +161,20 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         }
     }
 
-    /// <summary>寫入 32-bit 數值（佔兩個連續暫存器，Big-Endian）</summary>
+    /// <summary>寫入 32-bit 數值（佔兩個連續暫存器，Little-Endian: Low word 在低位址）</summary>
     public void WriteRegister32(ushort address, int value)
     {
         var values = new ushort[2];
-        values[0] = (ushort)((value >> 16) & 0xFFFF); // High word
-        values[1] = (ushort)(value & 0xFFFF);          // Low word
+        values[0] = (ushort)(value & 0xFFFF);          // Low word → 低位址
+        values[1] = (ushort)((value >> 16) & 0xFFFF);  // High word → 高位址
         WriteRegisters(address, values);
     }
 
-    /// <summary>讀取 32-bit 數值（佔兩個連續暫存器，Big-Endian）</summary>
+    /// <summary>讀取 32-bit 數值（佔兩個連續暫存器，Little-Endian: Low word 在低位址）</summary>
     public int ReadRegister32(ushort address)
     {
         var values = ReadRegisters(address, 2);
-        return (values[0] << 16) | values[1];
+        return (values[1] << 16) | values[0];
     }
 
     // ============================
