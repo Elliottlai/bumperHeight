@@ -46,6 +46,38 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
     private int _errCount;
     private DateTime _lastCommTime;
 
+    // ── 供 ViewModel 綁定的獨立屬性 ──
+
+    public string LastTxText { get { lock (_diagLock) return _lastTx; } }
+    public string LastRxText { get { lock (_diagLock) return _lastRx; } }
+    public int TxCount { get { lock (_diagLock) return _txCount; } }
+    public int RxCount { get { lock (_diagLock) return _rxCount; } }
+    public int ErrCount { get { lock (_diagLock) return _errCount; } }
+
+    public string CommAlive
+    {
+        get
+        {
+            lock (_diagLock)
+            {
+                var elapsed = DateTime.Now - _lastCommTime;
+                return elapsed.TotalSeconds < 1 ? "✓ 通訊中" : $"⚠ 無回應 {elapsed.TotalSeconds:F1}s";
+            }
+        }
+    }
+
+    public string ErrorLog
+    {
+        get
+        {
+            lock (_diagLock)
+            {
+                if (_errCount == 0) return "";
+                return string.Join("\n", _diagLog.TakeLast(10));
+            }
+        }
+    }
+
     /// <summary>是否作為 PLC 端（模擬模式）</summary>
     public bool AsPLC { get; set; }
 

@@ -32,6 +32,12 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public bool IsConnected { get => _isConnected; private set => SetField(ref _isConnected, value); }
 
     // ============================
+    //  運動中旗標
+    // ============================
+    private bool _isMoving;
+    public bool IsMoving { get => _isMoving; private set => SetField(ref _isMoving, value); }
+
+    // ============================
     //  運動參數
     // ============================
     private int _targetSpeed;
@@ -142,6 +148,9 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public string DiStatusIntegratedHex => $"0x{DiStatusIntegrated:X4}";
     public string DoStatusHardwareHex => $"0x{DoStatusHardware:X4}";
 
+
+    public string AlarmCodeHex => $"0x{AlarmCodeDecimal:X4}";
+
     // ============================
     //  Commands
     // ============================
@@ -184,30 +193,30 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         PuuPerMm = config.Motion.PuuPerMm;
         InPositionTimeout = config.Motion.InPositionTimeout;
 
-        ConnectCommand = new RelayCommand(DoConnect, () => !IsConnected);
-        DisconnectCommand = new RelayCommand(DoDisconnect, () => IsConnected);
-        ServoOnCommand = new RelayCommand(DoServoOn, () => IsConnected && !IsServoOn);
-        ServoOffCommand = new RelayCommand(DoServoOff, () => IsConnected && IsServoOn);
-        MoveToPositionCommand = new RelayCommand(DoMoveToPosition, () => IsConnected && IsServoOn);
-        HomingCommand = new RelayCommand(DoHoming, () => IsConnected && IsServoOn);
-        ClearAlarmCommand = new RelayCommand(DoClearAlarm, () => IsConnected);
-        ApplySettingsCommand = new RelayCommand(DoApplySettings, () => IsConnected);
-        RebuildAbsOriginCommand = new RelayCommand(DoRebuildAbsOrigin, () => IsConnected);
-        RefreshStatusCommand = new RelayCommand(DoRefreshStatus, () => IsConnected);
-        BrakeReleaseCommand = new RelayCommand(DoBrakeRelease, () => IsConnected);
-        BrakeLockCommand = new RelayCommand(DoBrakeLock, () => IsConnected);
+        ConnectCommand = new RelayCommand(DoConnect, () => !IsConnected && !IsMoving);
+        DisconnectCommand = new RelayCommand(DoDisconnect, () => IsConnected && !IsMoving);
+        ServoOnCommand = new RelayCommand(DoServoOn, () => IsConnected && !IsServoOn && !IsMoving);
+        ServoOffCommand = new RelayCommand(DoServoOff, () => IsConnected && IsServoOn && !IsMoving);
+        MoveToPositionCommand = new RelayCommand(DoMoveToPosition, () => IsConnected && IsServoOn && !IsMoving);
+        HomingCommand = new RelayCommand(DoHoming, () => IsConnected && IsServoOn && !IsMoving);
+        ClearAlarmCommand = new RelayCommand(DoClearAlarm, () => IsConnected && !IsMoving);
+        ApplySettingsCommand = new RelayCommand(DoApplySettings, () => IsConnected && !IsMoving);
+        RebuildAbsOriginCommand = new RelayCommand(DoRebuildAbsOrigin, () => IsConnected && !IsMoving);
+        RefreshStatusCommand = new RelayCommand(DoRefreshStatus, () => IsConnected && !IsMoving);
+        BrakeReleaseCommand = new RelayCommand(DoBrakeRelease, () => IsConnected && !IsMoving);
+        BrakeLockCommand = new RelayCommand(DoBrakeLock, () => IsConnected && !IsMoving);
 
         // Jog 增量移動指令
-        JogPositive0003Command = new RelayCommand(() => DoJog(0.003), () => IsConnected && IsServoOn);
-        JogNegative0003Command = new RelayCommand(() => DoJog(-0.003), () => IsConnected && IsServoOn);
-        JogPositive001Command = new RelayCommand(() => DoJog(0.01), () => IsConnected && IsServoOn);
-        JogNegative001Command = new RelayCommand(() => DoJog(-0.01), () => IsConnected && IsServoOn);
-        JogPositive01Command = new RelayCommand(() => DoJog(0.1), () => IsConnected && IsServoOn);
-        JogNegative01Command = new RelayCommand(() => DoJog(-0.1), () => IsConnected && IsServoOn);
-        JogPositive1Command = new RelayCommand(() => DoJog(1.0), () => IsConnected && IsServoOn);
-        JogNegative1Command = new RelayCommand(() => DoJog(-1.0), () => IsConnected && IsServoOn);
-        JogPositive10Command = new RelayCommand(() => DoJog(10.0), () => IsConnected && IsServoOn);
-        JogNegative10Command = new RelayCommand(() => DoJog(-10.0), () => IsConnected && IsServoOn);
+        JogPositive0003Command = new RelayCommand(() => DoJog(0.003), () => IsConnected && IsServoOn && !IsMoving);
+        JogNegative0003Command = new RelayCommand(() => DoJog(-0.003), () => IsConnected && IsServoOn && !IsMoving);
+        JogPositive001Command = new RelayCommand(() => DoJog(0.01), () => IsConnected && IsServoOn && !IsMoving);
+        JogNegative001Command = new RelayCommand(() => DoJog(-0.01), () => IsConnected && IsServoOn && !IsMoving);
+        JogPositive01Command = new RelayCommand(() => DoJog(0.1), () => IsConnected && IsServoOn && !IsMoving);
+        JogNegative01Command = new RelayCommand(() => DoJog(-0.1), () => IsConnected && IsServoOn && !IsMoving);
+        JogPositive1Command = new RelayCommand(() => DoJog(1.0), () => IsConnected && IsServoOn && !IsMoving);
+        JogNegative1Command = new RelayCommand(() => DoJog(-1.0), () => IsConnected && IsServoOn && !IsMoving);
+        JogPositive10Command = new RelayCommand(() => DoJog(10.0), () => IsConnected && IsServoOn && !IsMoving);
+        JogNegative10Command = new RelayCommand(() => DoJog(-10.0), () => IsConnected && IsServoOn && !IsMoving);
         StopCommand = new RelayCommand(DoStop, () => IsConnected);
     }
 
@@ -230,7 +239,6 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
                 try
                 {
                     DriverSnapshot snapshot;
-                    // 用 lock 確保不會和指令同時存取 serial port
                     lock (_modbusLock)
                     {
                         snapshot = _controller!.ReadSnapshot();
@@ -279,8 +287,24 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         DiStatusIntegrated = snapshot.DiStatusIntegrated;
         DoStatusHardware = snapshot.DoStatusHardware;
 
-        // DEBUG: 顯示 P0.046 原始值，確認 Bit1 (SON) 狀態
-        StatusMessage = $"P0.046=0x{(ushort)snapshot.DriverStatus:X4} SON={snapshot.IsServoOn}";
+        // 運動中偵測：當位置到達且零速度時自動清除 IsMoving
+        if (IsMoving && IsTargetPositionReached && IsZeroSpeed)
+        {
+            IsMoving = false;
+            StatusMessage = "到位完成";
+        }
+
+        // 運動中若發生警報，也自動清除 IsMoving
+        if (IsMoving && IsAlarm)
+        {
+            IsMoving = false;
+            StatusMessage = $"運動中斷 - 警報 0x{AlarmCodeDecimal:X4}";
+        }
+
+        if (!IsMoving)
+        {
+            StatusMessage = $"P0.046=0x{(ushort)snapshot.DriverStatus:X4} SON={snapshot.IsServoOn}";
+        }
 
         NotifyStatusProperties();
         OnPropertyChanged(nameof(DiStatusIntegratedHex));
@@ -382,6 +406,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
 
     private void DoServoOn() => RunSafe(() =>
     {
+        _controller!.ClearAlarm();
         _controller!.ServoOn();
         StatusMessage = "已激磁";
     });
@@ -410,11 +435,20 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         StatusMessage = "參數已寫入";
     });
 
-    private void DoMoveToPosition() => RunSafe(() =>
+    /// <summary>
+    /// 觸發移動（不阻塞等待到位），由 polling 偵測 TPOS+ZSPD 自動清除 IsMoving
+    /// </summary>
+    private void DoMoveToPosition()
     {
-        _controller!.MoveToPositionMm(TargetPositionMm);
-        StatusMessage = $"已移動至 {TargetPositionMm:F2} mm";
-    });
+        RunSafe(() =>
+        {
+            int puu = _controller!.MmToPuu(TargetPositionMm);
+            _controller.UpdatePr1TargetPosition(puu);
+            _controller.TriggerPr1();
+            IsMoving = true;
+            StatusMessage = $"移動中 → {TargetPositionMm:F2} mm";
+        });
+    }
 
     private void DoRebuildAbsOrigin() => RunSafe(() =>
     {
@@ -422,12 +456,16 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         StatusMessage = "Abs origin 已重建";
     });
 
-    private void DoHoming() => RunSafe(() =>
+    private void DoHoming()
     {
-        StatusMessage = "原點復歸中...";
-        _controller!.ExecuteHoming();
-        StatusMessage = "原點復歸完成";
-    });
+        RunSafe(() =>
+        {
+            // 觸發 Homing PR#0，不阻塞等待
+            _modbus!.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
+            IsMoving = true;
+            StatusMessage = "原點復歸中...";
+        });
+    }
 
     private void DoBrakeRelease() => RunSafe(() =>
     {
@@ -453,6 +491,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     private void DoStop() => RunSafe(() =>
     {
         _controller!.Stop();
+        IsMoving = false;
         StatusMessage = "已停止";
     });
 
@@ -480,6 +519,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex)
         {
             StatusMessage = $"錯誤: {ex.Message}";
+            IsMoving = false;
         }
 
         CommandManager.InvalidateRequerySuggested();
@@ -525,12 +565,21 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private void DoJog(double incrementMm) => RunSafe(() =>
+    /// <summary>
+    /// Jog 增量移動：只觸發 PR，不阻塞等待到位
+    /// </summary>
+    private void DoJog(double incrementMm)
     {
-        double target = CurrentPositionMm + incrementMm;
-        _controller!.MoveToPositionMm(target);
-        StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm → {target:F3} mm";
-    });
+        RunSafe(() =>
+        {
+            double target = CurrentPositionMm + incrementMm;
+            int puu = _controller!.MmToPuu(target);
+            _controller.UpdatePr1TargetPosition(puu);
+            _controller.TriggerPr1();
+            IsMoving = true;
+            StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm → {target:F3} mm";
+        });
+    }
 
 
 }

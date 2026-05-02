@@ -24,7 +24,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isConnected;
     private string _comPort = "3";
     private string _statusText = "未連線";
-    private string _diagText = "";
+    private string _txText = "";
+    private string _rxText = "";
+    private string _commAlive = "";
+    private string _errorLog = "";
 
     // ── 公開屬性 ──
 
@@ -51,11 +54,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set { _statusText = value; OnPropertyChanged(); }
     }
 
-    /// <summary>診斷記錄（顯示在 UI 底部）</summary>
-    public string DiagText
+    /// <summary>最後發送命令</summary>
+    public string TxText
     {
-        get => _diagText;
-        private set { _diagText = value; OnPropertyChanged(); }
+        get => _txText;
+        private set { if (_txText != value) { _txText = value; OnPropertyChanged(); } }
+    }
+
+    /// <summary>最後接收回覆</summary>
+    public string RxText
+    {
+        get => _rxText;
+        private set { if (_rxText != value) { _rxText = value; OnPropertyChanged(); } }
+    }
+
+    /// <summary>通訊狀態</summary>
+    public string CommAlive
+    {
+        get => _commAlive;
+        private set { if (_commAlive != value) { _commAlive = value; OnPropertyChanged(); } }
+    }
+
+    /// <summary>錯誤記錄</summary>
+    public string ErrorLog
+    {
+        get => _errorLog;
+        private set { if (_errorLog != value) { _errorLog = value; OnPropertyChanged(); } }
     }
 
     // ── 命令 ──
@@ -115,7 +139,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         IsConnected = false;
         StatusText = "已斷線";
-        DiagText = "";
+        TxText = "";
+        RxText = "";
+        CommAlive = "";
+        ErrorLog = "";
 
         foreach (var x in XPoints) x.Status = false;
         foreach (var y in YPoints) y.Status = false;
@@ -127,17 +154,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (_plc is null || !_plc.IsConnected) return;
 
-        for (int i = 0; i < XCount; i++)
-            XPoints[i].Status = _plc.GetX(i);
+        try
+        {
+            for (int i = 0; i < XCount; i++)
+                XPoints[i].Status = _plc.GetX(i);
 
-        for (int i = 0; i < YCount; i++)
-            YPoints[i].Status = _plc.GetY(i);
+            for (int i = 0; i < YCount; i++)
+                YPoints[i].Status = _plc.GetY(i);
 
-        var status = $"COM{ComPort} | Dog:{_plc.DogValue} | {_plc.GetStatusSummary()}";
-        var diag = _plc.GetDiagSummary();
+            var status = $"COM{ComPort} | Dog:{_plc.DogValue} | {_plc.GetStatusSummary()}";
+            if (StatusText != status) StatusText = status;
 
-        if (StatusText != status) StatusText = status;
-        if (DiagText != diag) DiagText = diag;
+            // 只在內容變化時才更新 UI
+            TxText = _plc.LastTxText;
+            RxText = _plc.LastRxText;
+            CommAlive = $"[{_plc.CommAlive}]  TX:{_plc.TxCount}  RX:{_plc.RxCount}  ERR:{_plc.ErrCount}";
+            ErrorLog = _plc.ErrorLog;
+        }
+        catch (Exception ex)
+        {
+            Disconnect();
+            StatusText = $"通訊中斷: {ex.Message}";
+        }
     }
 
     // ── Y 輸出切換 ──

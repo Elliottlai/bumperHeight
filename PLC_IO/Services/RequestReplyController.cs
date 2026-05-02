@@ -13,6 +13,7 @@ public sealed class RequestReplyController<T> : IDisposable
     private readonly Thread _messageLoopThread;
     private readonly CancellationTokenSource _cts = new();
 
+    private volatile bool _stopping;
     private int _cycleInterval = 5;
     private int _timeoutMs = 200;
 
@@ -54,7 +55,7 @@ public sealed class RequestReplyController<T> : IDisposable
         long commandSendTicks = 0;
         bool answerGot = true;
 
-        while (!_cts.Token.IsCancellationRequested)
+        while (!_stopping)
         {
             // 佇列有命令且前一個已回覆 → 送出下一個
             if (_commandQueue.Count > 0 && answerGot)
@@ -93,6 +94,8 @@ public sealed class RequestReplyController<T> : IDisposable
 
     public void Dispose()
     {
+        _stopping = true;
+        _messageLoopThread.Join(1000);
         _cts.Cancel();
         _cts.Dispose();
     }

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:DeltaAxis_RS485.ViewModels"
         xmlns:v="clr-namespace:DeltaAxis_RS485.Views"
-        Title="Delta ASDA-B3 多軸控制" Height="580" Width="700">
+        Title="Delta ASDA-B3 多軸控制" Height="800" Width="1200">
     <Window.DataContext>
         <vm:MainViewModel />
     </Window.DataContext>

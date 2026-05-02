@@ -3,16 +3,26 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:conv="clr-namespace:PLC_IO.Converters"
         xmlns:vm="clr-namespace:PLC_IO.ViewModels"
         mc:Ignorable="d"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+Style="{StaticResource MaterialDesignWindow}"
+TextElement.Foreground="{DynamicResource MaterialDesign.Brush.Foreground}"
+TextElement.FontWeight="Regular"
+TextElement.FontSize="14"
+FontFamily="Segoe UI"
+Background="{DynamicResource MaterialDesign.Brush.Background}"
+        
         Title="PLC I/O Monitor" Height="750" Width="620"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
-    
+
     <Window.DataContext>
         <vm:MainViewModel />
     </Window.DataContext>
 
     <Window.Resources>
+        <conv:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
         <!-- IO 燈號 -->
         <Style x:Key="IoIndicator" TargetType="Ellipse">
             <Setter Property="Width" Value="18" />
@@ -103,7 +113,7 @@
                          Width="50" Margin="4,0,12,0" FontSize="14" VerticalContentAlignment="Center"
                          IsEnabled="{Binding IsDisconnected}" />
                 <Button Content="連線" Command="{Binding ConnectCommand}"
-                        Width="70" Height="30" Margin="0,0,6,0" />
+                        Width="70" Height="30" Margin="0,0,6,0" Click="Button_Click" />
                 <Button Content="斷線" Command="{Binding DisconnectCommand}"
                         Width="70" Height="30" />
             </StackPanel>
@@ -168,14 +178,44 @@
 
         <!-- ★ 診斷面板 -->
         <GroupBox Grid.Row="4" Header="通訊診斷" Margin="0,6,0,0" Padding="4">
-            <TextBox Text="{Binding DiagText, Mode=OneWay}"
-                     IsReadOnly="True"
-                     FontFamily="Consolas" FontSize="11"
-                     VerticalScrollBarVisibility="Auto"
-                     HorizontalScrollBarVisibility="Auto"
-                     TextWrapping="NoWrap"
-                     Background="#1E1E1E" Foreground="#DCDCDC"
-                     BorderThickness="0" />
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- 通訊狀態 -->
+                <TextBlock Grid.Row="0" Text="{Binding CommAlive, Mode=OneWay}"
+                           FontFamily="Consolas" FontSize="12"
+                           Foreground="#DCDCDC" Background="#1E1E1E"
+                           Padding="6,4" />
+
+                <!-- TX -->
+                <Border Grid.Row="1" Background="#1E1E1E" Padding="6,3" Margin="0,2,0,0">
+                    <TextBlock FontFamily="Consolas" FontSize="11" Foreground="#569CD6">
+                        <Run Text="TX → " /><Run Text="{Binding TxText, Mode=OneWay}" Foreground="#CE9178" />
+                    </TextBlock>
+                </Border>
+
+                <!-- RX -->
+                <Border Grid.Row="2" Background="#1E1E1E" Padding="6,3" Margin="0,2,0,0">
+                    <TextBlock FontFamily="Consolas" FontSize="11" Foreground="#4EC9B0">
+                        <Run Text="RX ← " /><Run Text="{Binding RxText, Mode=OneWay}" Foreground="#B5CEA8" />
+                    </TextBlock>
+                </Border>
+
+                <!-- 錯誤記錄（有內容才顯示） -->
+                <TextBox Grid.Row="3" Text="{Binding ErrorLog, Mode=OneWay}"
+                         IsReadOnly="True"
+                         FontFamily="Consolas" FontSize="11"
+                         VerticalScrollBarVisibility="Auto"
+                         TextWrapping="NoWrap"
+                         Background="#1E1E1E" Foreground="#F44747"
+                         BorderThickness="0" Margin="0,2,0,0"
+                         Visibility="{Binding ErrorLog, Converter={StaticResource StringToVisibilityConverter}}" />
+            </Grid>
         </GroupBox>
     </Grid>
 </Window>
