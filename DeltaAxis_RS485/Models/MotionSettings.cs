@@ -21,5 +21,5 @@ public class MotionSettings
     public int InPositionTimeout { get; set; } = 5000;
 
     /// <summary>每 mm 對應的 PUU 數量（需依機構換算）</summary>
-    public double PuuPerMm { get; set; } = 10000.0;
+    public double PuuPerMm { get; set; } = 1000.0;
 }

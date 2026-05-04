@@ -86,8 +86,11 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         // 設定 P2.030 = 5: 防止 EEPROM 因通訊連續寫入而減短壽命
         _modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, AsdaB3RegisterMap.AuxFunction_NoEepromSave);
 
+        //_modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, 5);
+
+
         // 設定控制模式為 PR mode
-        _modbus.WriteRegister(AsdaB3RegisterMap.P1_001_ControlMode, AsdaB3RegisterMap.ControlMode_PR);
+       // _modbus.WriteRegister(AsdaB3RegisterMap.P1_001_ControlMode, AsdaB3RegisterMap.ControlMode_PR);
 
         // 設定監視變數映射:
         // P0.009 → FeedbackPosition_PUU (回授位置)

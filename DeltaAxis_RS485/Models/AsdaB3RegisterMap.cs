@@ -269,7 +269,7 @@ public static class AsdaB3RegisterMap
     // ============================
 
     /// <summary>P1.001 設為 PR mode 的值</summary>
-    public const ushort ControlMode_PR = 0x0001; // 建議再依模式值表確認
+    public const ushort ControlMode_PR = 0x0101; // 建議再依模式值表確認
 
     /// <summary>P2.008 解鎖值</summary>
     public const ushort WriteProtectUnlock = 271;
