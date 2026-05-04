@@ -1,0 +1,63 @@
+{
+  "OpeningKernelSize": 7,
+  "TargetArea": 40000,
+  "TriangleSpec": {
+    "IsEnabled": true,
+    "UpperArea": 10000,
+    "LowerArea": 7500,
+    "CornerRadius": 8.0,
+    "AspectRatio": 1.0,
+    "AngleDegree": 180
+  },
+  "Roi": {
+    "Height": 182,
+    "Width": 246,
+    "X": 1072,
+    "Y": 1464
+  },
+  "KMeans": {
+    "IsEnabled": false,
+    "SelectedClusterIndex": 1,
+    "MaxIterations": 20,
+    "ConvergenceThreshold": 0.01,
+    "InitialRanges": [
+      {
+        "Min": 0,
+        "Max": 85
+      },
+      {
+        "Min": 86,
+        "Max": 170
+      },
+      {
+        "Min": 171,
+        "Max": 255
+      }
+    ]
+  },
+  "GrabCut": {
+    "IsEnabled": false,
+    "Iterations": 5,
+    "UseKMeansInitialization": true,
+    "ForegroundClusters": [
+      1
+    ],
+    "ApplyMorphologyAfterGrabCut": true,
+    "FgdSeedSize": 31
+  },
+  "RoiList": [
+    {
+      "FileNamePattern": "Screw count -1 , WD 20mm",
+      "IsEnabled": true,
+      "Name": "Screw count -1 , WD 20mm",
+      "OpeningKernelSize": 15,
+      "Roi": {
+        "Height": 182,
+        "Width": 246,
+        "X": 1072,
+        "Y": 1464
+      },
+      "TargetArea": 40000
+    }
+  ]
+}

@@ -1,45 +1,50 @@
 namespace Slot_Inspection.Models;
 
 /// <summary>
-/// 每個 Slot 對應的軸座標。
-/// ?? TODO：在真機上教點後，填入實際座標。
+/// 每個 Slot 的載台 Y 軸位置。
+/// X 軸用於讀碼（不參與 Slot 檢測），Z 軸由 InspectionConfig.CameraHeightZ 統一控制。
 /// </summary>
-public sealed record SlotPosition(double X, double Y, double Z, double R = 0);
+public sealed record SlotPosition(double Y);
 
 /// <summary>
-/// Slot 座標表 — 集中管理所有區域的拍照位置。
-/// 目前全部填 0（Stub），不移軸也能跑通流程。
+/// Slot 座標表 — 管理所有區域各 Slot 的 Y 軸座標。
+/// TODO: 在機台上 Teaching 後，將實際 Y 座標填入。
 /// </summary>
 public static class SlotPositionTable
 {
     // ── Area A Row1：Slot 1~13 ──
-    // ?? TODO：用手持示教器把每個 Slot 的位置記下來填進來
-    public static readonly SlotPosition[] AreaA_Row1 = Enumerable
-        .Range(0, 13)
-        .Select(i => new SlotPosition(X: 0, Y: 0, Z: 0))
-        .ToArray();
+    public static readonly SlotPosition[] AreaA_Row1 =
+    [
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0),
+    ];
 
     // ── Area A Row2：Slot 14~25 ──
-    public static readonly SlotPosition[] AreaA_Row2 = Enumerable
-        .Range(0, 12)
-        .Select(i => new SlotPosition(X: 0, Y: 0, Z: 0))
-        .ToArray();
+    public static readonly SlotPosition[] AreaA_Row2 =
+    [
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0),
+    ];
 
     // ── Area B Row1：Slot 1~13 ──
-    public static readonly SlotPosition[] AreaB_Row1 = Enumerable
-        .Range(0, 13)
-        .Select(i => new SlotPosition(X: 0, Y: 0, Z: 0))
-        .ToArray();
+    public static readonly SlotPosition[] AreaB_Row1 =
+    [
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0),
+    ];
 
     // ── Area B Row2：Slot 14~25 ──
-    public static readonly SlotPosition[] AreaB_Row2 = Enumerable
-        .Range(0, 12)
-        .Select(i => new SlotPosition(X: 0, Y: 0, Z: 0))
-        .ToArray();
+    public static readonly SlotPosition[] AreaB_Row2 =
+    [
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 0), new(Y: 0),
+    ];
 
-    /// <summary>
-    /// 依 target / slotIndex 取得對應座標。
-    /// </summary>
+    /// <summary>依 target / slotIndex 取得該 Slot 的 Y 軸座標</summary>
     public static SlotPosition Get(SlotInspectionProgress.TargetCollection target, int slotIndex)
         => target switch
         {

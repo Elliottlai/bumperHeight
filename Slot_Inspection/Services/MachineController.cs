@@ -4,6 +4,13 @@ using Slot_Inspection.Models;
 using FoupInspecMachine.Manager;
 using NLog;
 using System.IO;
+using System.IO.Ports;
+using System.Runtime.InteropServices;
+using BarcodeReader.Interfaces;
+using BarcodeReader.Services;
+using MvCodeReaderSDKNet;
+using PLC_IO.Interfaces;
+using PLC_IO.Services;
 
 namespace Slot_Inspection.Services;
 
@@ -21,7 +28,8 @@ public sealed class MachineController : IDisposable
     private const bool SimulationMode = false;
 #endif
 
-    private readonly string[] _axisNames = ["AxisX", "AxisY", "AxisZ", "AxisR"];
+    // X=讀碼軸, Y=載台軸, Z=相機高度軸（無 R 軸）
+    private readonly string[] _axisNames = ["AxisX", "AxisY", "AxisZ"];
     private readonly string[] _cameraNames = ["Camera1", "Camera2"];
 
     private readonly string _lightComPort = "COM7";
@@ -29,6 +37,10 @@ public sealed class MachineController : IDisposable
     private readonly int _barcodePort = 8000;
     private readonly string _moxaIp = "192.168.127.254";
     private readonly int _moxaPort = 4001;
+
+    // -- PLC (三菱 FX) 串口設定 --
+    private readonly string _plcComPort = "COM3";   // TODO: 改為實際 PLC 串口
+    private readonly int _plcBaudRate = 115200;       // TODO: 改為實際鮑率
 
     private readonly TimeSpan _axisHomeTimeout = TimeSpan.FromSeconds(60);
     private readonly TimeSpan _deviceConnectTimeout = TimeSpan.FromSeconds(10);
@@ -39,9 +51,13 @@ public sealed class MachineController : IDisposable
     private FoupInspecMachine.Models.OPT_Controller? _light;
     private CameraManager? _cameraManager;
     private ModbusClientRtuOverTcp? _modbusClient;
+    private ICodeReaderDevice? _barcodeDevice;    // 海康讀碼器 SDK 控制物件
+    private IBarcodeResultParser? _barcodeParser;  // 讀碼結果解析器
+    private IPlcCommunicator? _plc;               // 三菱 FX PLC 通訊
     private bool _disposed;
 
     private readonly InspectionConfig _config = new();
+    private readonly BumperAlgService _bumperAlg = new();
 
     // -- Sim image loader (lazy init) --
     private SimImageLoader? _simImageLoader;
@@ -51,6 +67,141 @@ public sealed class MachineController : IDisposable
     // -- Two cameras: Left & Right side of bumper --
     private static readonly NamedKey _cameraKeyLeft  = NamedKeyCamera.AreaCameraTop;
     private static readonly NamedKey _cameraKeyRight = NamedKeyCamera.AreaCameraSide;
+
+    // =========================================
+    //  S01: Carrier detection + Barcode scan
+    // =========================================
+
+    /// <summary>載台在席感測器對應的 PLC X 點位</summary>
+    private const int CarrierLeftSensorIndex = 12;   // X12 = 左側在席
+    private const int CarrierRightSensorIndex = 13;  // X13 = 右側在席
+
+    /// <summary>載台在席偵測結果</summary>
+    public enum CarrierPosition { None, Left, Right, Both }
+
+    /// <summary>
+    /// S01a：讀取 PLC X12（左）/ X13（右）判斷載台在席位置。
+    /// 載台在席即表示料已到位，不需額外等待放料步驟。
+    /// FxPlcCommunicator 內部會週期性輪詢 PLC，GetX() 直接讀取最新快取值。
+    /// </summary>
+    public CarrierPosition DetectCarrierPosition()
+    {
+        if (SimulationMode)
+        {
+            _logger.Info("[S01] (Sim) Carrier detected: Left");
+            return CarrierPosition.Left;
+        }
+
+        if (_plc == null || !_plc.IsConnected)
+        {
+            _logger.Warn("[S01] PLC not connected");
+            return CarrierPosition.None;
+        }
+
+        // 直接讀取 PLC X 點位快取（由 FxPlcCommunicator 背景輪詢更新）
+        bool left  = _plc.GetX(CarrierLeftSensorIndex);   // X12
+        bool right = _plc.GetX(CarrierRightSensorIndex);  // X13
+
+        var position = (left, right) switch
+        {
+            (true, true)   => CarrierPosition.Both,
+            (true, false)  => CarrierPosition.Left,
+            (false, true)  => CarrierPosition.Right,
+            (false, false) => CarrierPosition.None,
+        };
+
+        _logger.Info($"[S01] PLC sensor: X12(Left)={left}, X13(Right)={right} → {position}");
+        return position;
+    }
+
+    /// <summary>
+    /// S01b：依載台位置移動軸到讀碼位置 → 軟體觸發讀碼器 → 回傳條碼字串。
+    /// 失敗回傳 null。
+    /// </summary>
+    public async Task<string?> MoveAndReadBarcodeAsync(
+        CarrierPosition position,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (SimulationMode)
+        {
+            progress?.Report("[Sim] Moving to barcode position...");
+            await Task.Delay(500, ct);
+            progress?.Report("[Sim] Reading barcode...");
+            await Task.Delay(300, ct);
+            string simCode = position == CarrierPosition.Right
+                ? "SIM-RIGHT-001"
+                : "SIM-LEFT-001";
+            _logger.Info($"[S01] (Sim) Barcode read: {simCode}");
+            return simCode;
+        }
+
+        // STEP 1: 只有 X 軸移動到讀碼位置
+        double targetX = _config.GetBarcodePositionX(position);
+        progress?.Report($"X 軸移動至讀碼位置（{position}）...");
+        _logger.Info($"[S01] Moving AxisX to barcode pos: {position} → X={targetX}");
+
+        Axes["AxisX"].MotMoveAbs(targetX);
+
+        bool arrived = await WaitUntilAsync(
+            () => Axes["AxisX"].Wait(),
+            _config.MoveTimeout, ct);
+
+        if (!arrived)
+        {
+            _logger.Warn("[S01] Move to barcode position timeout");
+            progress?.Report("移動至讀碼位置逾時");
+            return null;
+        }
+
+        // STEP 2: 軟體觸發讀碼器取像 + 解析條碼
+        progress?.Report("讀碼中...");
+        return await ReadBarcodeAsync(ct);
+    }
+
+    /// <summary>
+    /// 觸發讀碼器取一幀影像，解析條碼後回傳字串。
+    /// 使用 MvCodeReaderSDK 的 Software Trigger 模式。
+    /// </summary>
+    private async Task<string?> ReadBarcodeAsync(CancellationToken ct = default)
+    {
+        if (_barcodeDevice == null || _barcodeParser == null)
+            return null;
+
+        return await Task.Run(() =>
+        {
+            // 發送軟體觸發命令，讓讀碼器拍一張照
+            _barcodeDevice.SetCommandValue("TriggerSoftware");
+
+            // 配置接收緩衝區
+            nint pData = 0;
+            nint pFrameInfo = Marshal.AllocHGlobal(
+                Marshal.SizeOf<MvCodeReader.MV_CODEREADER_IMAGE_OUT_INFO_EX2>());
+            try
+            {
+                // 等待讀碼器回傳影像（最長 5 秒）
+                int ret = _barcodeDevice.GetOneFrameTimeout(ref pData, pFrameInfo, 5000);
+                if (ret != 0)
+                {
+                    _logger.Warn($"Barcode read timeout: 0x{ret:X}");
+                    return null;
+                }
+
+                // 從影像中解析條碼
+                var results = _barcodeParser.Parse(pFrameInfo);
+                string? code = results.Count > 0 && results[0].Code != "NoRead"
+                    ? results[0].Code
+                    : null;
+
+                _logger.Info($"Barcode read: {code ?? "NoRead"}");
+                return code;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(pFrameInfo);
+            }
+        }, ct);
+    }
 
     // =========================================
     //  S00
@@ -68,9 +219,9 @@ public sealed class MachineController : IDisposable
             string[] steps =
             [
                 "Config", "IO Module", "OPT Light",
-                "4-Axis Servo", "4-Axis Home",
+                "3-Axis Servo", "3-Axis Home",
                 "Camera Left", "Camera Right",
-                "Barcode Reader"
+                "Barcode Reader", "PLC (FX)"
             ];
             foreach (var step in steps)
             {
@@ -107,19 +258,58 @@ public sealed class MachineController : IDisposable
         progress?.Report("Connecting barcode reader...");
         result.Add(InitBarcodeReader());
 
+        progress?.Report("Connecting PLC...");
+        result.Add(InitPlc());
+
         _logger.Info("===== S00 Init Done =====");
         _logger.Info(result.GetSummary());
         return result;
     }
 
     // =========================================
-    //  S02: Wait for material
+    //  S01c: Barcode axis return to home
+    // =========================================
+
+    /// <summary>
+    /// 將條碼讀取相關軸（X/Y/Z）回歸原點，讓機台回到待機狀態。
+    /// </summary>
+    public async Task MoveBarcodeAxisHomeAsync(
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (SimulationMode)
+        {
+            progress?.Report("[Sim] 條碼軸回歸原點...");
+            await Task.Delay(500, ct);
+            _logger.Info("[S01c] (Sim) Barcode axis homed");
+            return;
+        }
+
+        progress?.Report("讀碼軸(X)回歸原點...");
+        _logger.Info("[S01c] Moving AxisX to home");
+
+        Axes["AxisX"].Home();
+
+        bool done = await WaitUntilAsync(
+            () => Axes["AxisX"].Wait(),
+            _axisHomeTimeout, ct);
+
+        if (!done)
+            _logger.Warn("[S01c] Barcode axis home timeout");
+        else
+            _logger.Info("[S01c] Barcode axes homed");
+    }
+
+    // =========================================
+    //  S02: Wait for material (已棄用)
+    //  載台在席偵測（S01a）即代表有料，不需獨立等料步驟
     // =========================================
 
     private const byte MaterialSensorSlaveId = 1;
     private const ushort MaterialSensorAddress = 0;
     private readonly TimeSpan _materialTimeout = TimeSpan.FromSeconds(60);
 
+    [Obsolete("載台在席偵測（S01a）即代表有料，不需獨立等料步驟。")]
     public async Task<bool> WaitForMaterialAsync(
         IProgress<string>? progress = null,
         CancellationToken ct = default)
@@ -173,36 +363,61 @@ public sealed class MachineController : IDisposable
     {
         _logger.Info($"===== S03 Inspection Start | Barcode: {barcode} =====");
 
-        var zones = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
+        // Row1: AreaA_Row1 + AreaB_Row1 同時處理（13 slots）
+        // Row2: AreaA_Row2 + AreaB_Row2 同時處理（12 slots）
+        var rows = new (SlotInspectionProgress.TargetCollection AreaA,
+                        SlotInspectionProgress.TargetCollection AreaB,
+                        int Count)[]
         {
-            (SlotInspectionProgress.TargetCollection.AreaA_Row1, 13),
-            (SlotInspectionProgress.TargetCollection.AreaA_Row2, 12),
-            (SlotInspectionProgress.TargetCollection.AreaB_Row1, 13),
-            (SlotInspectionProgress.TargetCollection.AreaB_Row2, 12),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row1,
+             SlotInspectionProgress.TargetCollection.AreaB_Row1, 13),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row2,
+             SlotInspectionProgress.TargetCollection.AreaB_Row2, 12),
         };
 
-        foreach (var (target, count) in zones)
+        foreach (var (areaA, areaB, count) in rows)
         {
             for (int i = 0; i < count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
-                var (value, isNg, imagePath, image) = await InspectOneSlotAsync(barcode, target, i, ct);
+                // 同時對 AreaA 和 AreaB 進行檢測
+                var taskA = InspectOneSlotAsync(barcode, areaA, i, ct);
+                var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
+                await Task.WhenAll(taskA, taskB);
 
-                string slotName = $"{target}_Slot{i + 1}";
-                InspectionResultWriter.WriteSlotResult(barcode, slotName, value, isNg, imagePath);
+                var (valueA, isNgA, imagePathA, imageA) = taskA.Result;
+                var (valueB, isNgB, imagePathB, imageB) = taskB.Result;
+
+                // 寫入結果
+                string slotNameA = $"{areaA}_Slot{i + 1}";
+                string slotNameB = $"{areaB}_Slot{i + 1}";
+                InspectionResultWriter.WriteSlotResult(barcode, slotNameA, valueA, isNgA, imagePathA);
+                InspectionResultWriter.WriteSlotResult(barcode, slotNameB, valueB, isNgB, imagePathB);
+
+                // 同時回報 AreaA 和 AreaB 的進度（UI 同時顯示兩張圖）
+                progress?.Report(new SlotInspectionProgress
+                {
+                    Target     = areaA,
+                    SlotIndex  = i,
+                    Value      = valueA,
+                    IsNg       = isNgA,
+                    StatusText = $"[{areaA}] Slot {i + 1}/{count} - {(isNgA ? "NG" : "OK")}",
+                    Image      = imageA
+                });
 
                 progress?.Report(new SlotInspectionProgress
                 {
-                    Target     = target,
+                    Target     = areaB,
                     SlotIndex  = i,
-                    Value      = value,
-                    IsNg       = isNg,
-                    StatusText = $"[{target}] Slot {i + 1}/{count} - {(isNg ? "NG" : "OK")}",
-                    Image      = image
+                    Value      = valueB,
+                    IsNg       = isNgB,
+                    StatusText = $"[{areaB}] Slot {i + 1}/{count} - {(isNgB ? "NG" : "OK")}",
+                    Image      = imageB
                 });
 
-                _logger.Debug($"[S03] {target}[{i}] Value={value:F2} IsNg={isNg}");
+                _logger.Debug($"[S03] {areaA}[{i}] Value={valueA:F2} IsNg={isNgA}");
+                _logger.Debug($"[S03] {areaB}[{i}] Value={valueB:F2} IsNg={isNgB}");
             }
         }
 
@@ -227,19 +442,54 @@ public sealed class MachineController : IDisposable
         if (SimulationMode)
         {
             await Task.Delay(150, ct);
-            var rng = new Random();
-            double simL     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
-            double simR     = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
-            double simValue = (simL + simR) / 2.0;
-            bool simNg = simValue < _config.NgThresholdLow
-                      || simValue > _config.NgThresholdHigh;
             string slotLabel = $"{target}_S{slotIndex + 1}";
 
             var loader = GetSimImageLoader();
-            System.Windows.Media.ImageSource? simImage = loader.HasImages
-                ? (loader.Next() ?? SimImageGenerator.Generate(slotLabel, simValue, simNg))
-                : SimImageGenerator.Generate(slotLabel, simValue, simNg);
+            string? simPath = loader.NextPath();
+            if (!string.IsNullOrEmpty(simPath))
+            {
+                string jsonKey = _config.GetAlgJsonKeyFromImagePath(simPath);
+                string jsonFullPath = Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "Config", jsonKey + ".json");
+                _logger.Info($"[S03-Sim] {slotLabel} simPath={simPath}, jsonKey={jsonKey}, jsonExists={File.Exists(jsonFullPath)}");
 
+                System.Diagnostics.Debug.WriteLine(
+                    $"[S03-Sim] slot={slotLabel}, simPath={simPath}, file={Path.GetFileName(simPath)}");
+
+                var algResult = await Task.Run(
+                    () => _bumperAlg.Analyze(simPath, jsonKey, slotLabel), ct);
+
+                if (algResult.Success && algResult.Image != null)
+                {
+                    double simValueOk = algResult.IsNg ? 0.0 : 1.0;
+                    _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, isNg={algResult.IsNg}");
+                    return (simValueOk, algResult.IsNg, simPath, algResult.Image);
+                }
+
+                _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
+            }
+
+            // fallback: 直接顯示原圖（不再用 SimImageGenerator 假圖）
+            if (!string.IsNullOrEmpty(simPath) && File.Exists(simPath))
+            {
+                var fallbackImage = SimImageLoader.LoadFileAsBitmapSource(simPath);
+                if (fallbackImage != null)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[S03-Sim] {slotLabel} fallback: 顯示原圖 {Path.GetFileName(simPath)}");
+                    return (1.0, false, simPath, fallbackImage);
+                }
+            }
+
+            // 最終 fallback: 無圖可用時才用生成假圖
+            var rng = new Random();
+            double simL = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simR = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
+            double simValue = (simL + simR) / 2.0;
+            bool simNg = simValue < _config.NgThresholdLow
+                      || simValue > _config.NgThresholdHigh;
+
+            System.Windows.Media.ImageSource? simImage = SimImageGenerator.Generate(slotLabel, simValue, simNg);
             return (simValue, simNg, "", simImage);
         }
 
@@ -250,18 +500,17 @@ public sealed class MachineController : IDisposable
         string slotName = $"{target}_Slot{slotIndex + 1}";
         _logger.Debug($"[S03] Start measuring {slotName}");
 
-        // STEP 1: Move axis to Slot position
+        // STEP 1: Y 軸移動載台到 Slot 位置，Z 軸調整相機高度
         var pos = SlotPositionTable.Get(target, slotIndex);
-        Axes["AxisX"].MotMoveAbs(pos.X);
         Axes["AxisY"].MotMoveAbs(pos.Y);
-        Axes["AxisZ"].MotMoveAbs(pos.Z);
+        Axes["AxisZ"].MotMoveAbs(_config.CameraHeightZ);
 
         bool arrived = await WaitUntilAsync(
-            () => Axes["AxisX"].Wait() && Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+            () => Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
             _config.MoveTimeout, ct);
 
         if (!arrived)
-            _logger.Warn($"[S03] {slotName} move timeout (positions not taught yet)");
+            _logger.Warn($"[S03] {slotName} move timeout");
 
         // STEP 2: Both lights ON simultaneously
         _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
@@ -292,6 +541,7 @@ public sealed class MachineController : IDisposable
 
         // STEP 6: Save images
         string imagePath = "";
+        string pathL = "", pathR = "";
         if (_config.SaveImages)
         {
             string dir = Path.Combine(
@@ -300,8 +550,8 @@ public sealed class MachineController : IDisposable
                 barcode);
             Directory.CreateDirectory(dir);
 
-            string pathL = Path.Combine(dir, $"{slotName}_L.tif");
-            string pathR = Path.Combine(dir, $"{slotName}_R.tif");
+            pathL = Path.Combine(dir, $"{slotName}_L.tif");
+            pathR = Path.Combine(dir, $"{slotName}_R.tif");
 
             _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
             _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
@@ -309,19 +559,22 @@ public sealed class MachineController : IDisposable
             imagePath = pathL;
         }
 
-        // STEP 7: Measure both images
-        double valueLeft  = ImageMeasurer.Measure(imageLeft,  $"{slotName}_L");
-        double valueRight = ImageMeasurer.Measure(imageRight, $"{slotName}_R");
-        double measuredValue = (valueLeft + valueRight) / 2.0;
+        // STEP 7: 呼叫 BumperFlat 演算法分析（使用已存檔的 .tif 路徑）
+        string algJsonKey = _config.GetAlgJsonKey(target, slotIndex);
 
-        _logger.Debug($"[S03] {slotName} L={valueLeft:F4} R={valueRight:F4} Avg={measuredValue:F4}");
+        var algResultL = await Task.Run(() => _bumperAlg.Analyze(pathL, algJsonKey, $"{slotName}_L"), ct);
+        var algResultR = await Task.Run(() => _bumperAlg.Analyze(pathR, algJsonKey, $"{slotName}_R"), ct);
 
-        // STEP 8: NG judgment
-        bool isNg = measuredValue < _config.NgThresholdLow
-                 || measuredValue > _config.NgThresholdHigh;
+        _logger.Debug($"[S03] {slotName} ALG L={algResultL.Message} R={algResultR.Message}");
 
-        return (measuredValue, isNg, imagePath, null);
-        // TODO: convert HImage to BitmapSource for real mode display
+        // STEP 8: NG 判斷（左右任一 NG 即為 NG）
+        bool isNg = algResultL.IsNg || algResultR.IsNg;
+        double measuredValue = isNg ? 0.0 : 1.0;
+
+        // 優先顯示左側疊加結果影像
+        System.Windows.Media.ImageSource? displayImage = algResultL.Image ?? algResultR.Image;
+
+        return (measuredValue, isNg, imagePath, displayImage);
     }
 
     // =========================================
@@ -438,14 +691,89 @@ public sealed class MachineController : IDisposable
         const string name = "Barcode Reader";
         try
         {
-            using var socket = new System.Net.Sockets.TcpClient();
-            if (!socket.ConnectAsync(_barcodeIp, _barcodePort).Wait(_deviceConnectTimeout))
-                return DeviceInitResult.Fail(name, $"Connect {_barcodeIp}:{_barcodePort} timeout");
-            if (!socket.Connected)
-                return DeviceInitResult.Fail(name, $"Cannot connect {_barcodeIp}:{_barcodePort}");
-            _logger.Info($"{name}: OK ({_barcodeIp}:{_barcodePort})"); return DeviceInitResult.Ok(name);
+            // 1. 列舉所有 GigE 讀碼器裝置
+            var enumerator = new MvDeviceEnumerator();
+            var devices = enumerator.EnumerateDevices();
+
+            if (devices.Count == 0)
+                return DeviceInitResult.Fail(name, "No MvCodeReader device found");
+
+            // 2. 建立 SDK 控制物件與解析器
+            _barcodeDevice = new MvCodeReaderDevice();
+            _barcodeParser = new MvBarcodeResultParser();
+
+            // 3. 用第一台裝置建立 Handle
+            int ret = _barcodeDevice.CreateHandle(devices[0].RawDeviceInfo!);
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
+
+            // 4. 開啟裝置
+            ret = _barcodeDevice.OpenDevice();
+            if (ret != 0)
+            {
+                _barcodeDevice.DestroyHandle();
+                return DeviceInitResult.Fail(name, $"OpenDevice failed: 0x{ret:X}");
+            }
+
+            // 5. 設定為軟體觸發模式（由程式決定何時讀碼，而非連續觸發）
+            _barcodeDevice.SetEnumValue("TriggerMode",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_MODE.MV_CODEREADER_TRIGGER_MODE_ON);
+            _barcodeDevice.SetEnumValue("TriggerSource",
+                (uint)MvCodeReader.MV_CODEREADER_TRIGGER_SOURCE.MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
+
+            // 6. 開始取像（進入等待觸發狀態）
+            ret = _barcodeDevice.StartGrabbing();
+            if (ret != 0)
+                return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
+
+            _logger.Info($"{name}: OK ({devices[0].DisplayName})");
+            return DeviceInitResult.Ok(name);
         }
-        catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, ex.Message, ex); }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
+    }
+
+    /// <summary>
+    /// 初始化 PLC 通訊（三菱 FX 系列）。
+    /// 使用 PLC_IO 專案的 SerialBytesCommunicator（串口 Transport）
+    /// 搭配 FxPlcCommunicator（FX 協定解析）。
+    /// FxPlcCommunicator 會自動在背景輪詢 X/Y 點位，
+    /// 之後透過 GetX(index) 即可讀取最新值。
+    /// </summary>
+    private DeviceInitResult InitPlc()
+    {
+        const string name = "PLC (FX)";
+        try
+        {
+            // 建立串口 Transport → FX 協定通訊器
+            var transport = new SerialBytesCommunicator(
+                _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
+            _plc = new FxPlcCommunicator(transport);
+
+            // 等待 PLC 回應（DogValue 會隨每次成功通訊遞增）
+            long initialDog = _plc.DogValue;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.Elapsed < _deviceConnectTimeout)
+            {
+                if (_plc.DogValue != initialDog)
+                {
+                    _logger.Info($"{name}: OK ({_plcComPort}, DogValue={_plc.DogValue})");
+                    return DeviceInitResult.Ok(name);
+                }
+                Thread.Sleep(50);
+            }
+
+            return DeviceInitResult.Fail(name,
+                $"PLC no response on {_plcComPort} within {_deviceConnectTimeout.TotalSeconds}s");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
     }
 
     // =========================================
@@ -489,6 +817,8 @@ public sealed class MachineController : IDisposable
             }
             catch { }
 
+            try { _barcodeDevice?.Dispose(); } catch { }
+            try { _plc?.Dispose(); } catch { }
             try { _light?.Dispose(); } catch { }
             try { _modbusClient?.Dispose(); } catch { }
 

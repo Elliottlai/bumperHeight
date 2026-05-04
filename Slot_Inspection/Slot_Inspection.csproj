@@ -11,11 +11,30 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Emgu.CV" Version="4.12.0.5764" />
+    <PackageReference Include="Emgu.CV.runtime.windows" Version="4.12.0.5764" />
     <PackageReference Include="NLog" Version="6.1.2" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BarcodeReader\BarcodeReader.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
+    <ProjectReference Include="..\PLC_IO\PLC_IO.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BumperFlat.ImageProcessing">
+      <HintPath>..\TestALG\TestALG\Lib\BumperFlat.ImageProcessing.dll</HintPath>
+    </Reference>
+    <Reference Include="MvCodeReaderSDK.Net">
+      <HintPath>..\BarcodeReader\Lib\MvCodeReaderSDK.Net.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Config\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>
