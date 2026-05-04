@@ -134,7 +134,7 @@ public sealed class MainViewModel : ObservableObject
 
     // ═══════════════════════════════════════
     //  START：完整自動流程
-    //  S01 感測器檢查 → 移動讀碼 → S02 放料 → S03 檢測 → S04 結果
+    //  S01a 載台在席偵測(=有料) → S01b 移動讀碼 → S01c 軸復歸 → S03 檢測 → S04 結果
     // ═══════════════════════════════════════
 
     private async void OnStart()
@@ -151,6 +151,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             // ── S01a：檢查載台在席感測器（PLC X12/X13）──
+            // 載台在席 = 料已到位，不需額外等待放料
             StatusMessage = "檢查載台在席感測器...";
             var carrierPos = await Task.Run(() => _machine.DetectCarrierPosition());
 
@@ -187,18 +188,11 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"條碼確認：{code}";
             System.Diagnostics.Debug.WriteLine($"[S01] 自動讀碼成功: {code}");
 
-            // ── S02：等待放料就位 ──
-            StatusMessage = "請放料...（等待感測器）";
-            bool placed = await Task.Run(
-                () => _machine.WaitForMaterialAsync(statusProgress, _cts.Token));
+            // ── S01c：讀碼軸回歸原點 ──
+            await Task.Run(
+                () => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
 
-            if (!placed)
-            {
-                StatusMessage = "放料超時，請重新操作";
-                return;
-            }
-
-            // ── S03：開始檢測 ──
+            // ── S03：開始檢測（載台在席已確認有料，直接進入檢測）──
             StatusMessage = $"檢測中：{_confirmedBarcode}";
 
             var slotProgress = new Progress<SlotInspectionProgress>(report =>

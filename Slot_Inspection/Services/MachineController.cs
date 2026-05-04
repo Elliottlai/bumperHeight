@@ -81,6 +81,7 @@ public sealed class MachineController : IDisposable
 
     /// <summary>
     /// S01a弄 PLC X12オ/ X13耞更畊竚
+    /// 更畊ボぃ惠肂单˙艼
     /// FxPlcCommunicator ず场穦秅戳┦近高 PLCGetX() 钡弄程穝е
     /// </summary>
     public CarrierPosition DetectCarrierPosition()
@@ -300,13 +301,15 @@ public sealed class MachineController : IDisposable
     }
 
     // =========================================
-    //  S02: Wait for material
+    //  S02: Wait for material (斌ノ)
+    //  更畊盎代S01aΤぃ惠縒ミ单˙艼
     // =========================================
 
     private const byte MaterialSensorSlaveId = 1;
     private const ushort MaterialSensorAddress = 0;
     private readonly TimeSpan _materialTimeout = TimeSpan.FromSeconds(60);
 
+    [Obsolete("更畊盎代S01aΤぃ惠縒ミ单˙艼")]
     public async Task<bool> WaitForMaterialAsync(
         IProgress<string>? progress = null,
         CancellationToken ct = default)
