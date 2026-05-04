@@ -47,7 +47,8 @@
                         <TextBox x:Name="TxtLightChannel" Width="40" Text="1" VerticalAlignment="Center"/>
                         <TextBlock Text="  亮度:" VerticalAlignment="Center" Margin="8,0,4,0"/>
                         <Slider x:Name="SliderIntensity" Width="150" Minimum="0" Maximum="100"
-                                Value="80" VerticalAlignment="Center" IsSnapToTickEnabled="True" TickFrequency="1"/>
+                                Value="80" VerticalAlignment="Center" IsSnapToTickEnabled="True" TickFrequency="1"
+                                ValueChanged="SliderIntensity_ValueChanged"/>
                         <TextBlock x:Name="TxtIntensityValue" Text="80%" VerticalAlignment="Center"
                                    Width="40" Margin="6,0,0,0"/>
                     </StackPanel>
