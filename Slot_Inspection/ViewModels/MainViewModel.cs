@@ -66,12 +66,38 @@ public sealed class MainViewModel : ObservableObject
 
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
+    public ICommand DryRunCommand { get; }
+    public ICommand InitAxesCommand { get; }
+
+    private bool _isDryRunning;
+    public bool IsDryRunning
+    {
+        get => _isDryRunning;
+        set => SetProperty(ref _isDryRunning, value);
+    }
+
+    /// <summary>
+    /// 模擬模式開關。Debug-Sim 組態預設 true，其他組態預設 false。
+    /// 可在 UI 動態切換。
+    /// </summary>
+    public bool IsSimulationMode
+    {
+        get => MachineController.SimulationMode;
+        set
+        {
+            MachineController.SimulationMode = value;
+            OnPropertyChanged();
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
 
     public MainViewModel()
     {
         // START 只需：初始化完成 + 尚未運行（條碼由 START 後自動讀取）
-        StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning);
-        StopCommand = new RelayCommand(OnStop, () => IsRunning);
+        StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
+        StopCommand = new RelayCommand(OnStop, () => IsRunning || IsDryRunning);
+        DryRunCommand = new RelayCommand(OnDryRun, () => IsInitialized && !IsRunning && !IsDryRunning);
+        InitAxesCommand = new RelayCommand(OnInitAxes, () => !IsRunning && !IsDryRunning && !IsInitialized);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -252,12 +278,92 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private async void OnDryRun()
+    {
+        IsDryRunning = true;
+        _cts = new CancellationTokenSource();
+
+        var statusProgress = new Progress<string>(msg => StatusMessage = msg);
+
+        try
+        {
+            StatusMessage = "空跑測試開始...";
+            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token));
+            StatusMessage = "空跑測試完成 ?";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "空跑測試已取消";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"空跑測試異常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            IsDryRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
     private void OnStop()
     {
         IsRunning = false;
+        IsDryRunning = false;
         _cts?.Cancel();
         StatusMessage = "已停止";
         // TODO: 接入停止流程
+    }
+
+    /// <summary>
+    /// 軸控專用初始化（空跑測試前使用）。
+    /// 只初始化 Config + 軸，跳過相機、光源、讀碼器、PLC。
+    /// </summary>
+    private async void OnInitAxes()
+    {
+        IsDryRunning = true;
+        _cts = new CancellationTokenSource();
+        var progress = new Progress<string>(msg => StatusMessage = msg);
+
+        try
+        {
+            StatusMessage = "軸控初始化中...";
+            var result = await Task.Run(
+                () => _machine.InitializeAxesOnlyAsync(progress, _cts.Token));
+
+            IsInitialized = result.AllPassed;
+
+            if (result.AllPassed)
+            {
+                StatusMessage = "軸控初始化完成 ? 可執行空跑測試";
+            }
+            else
+            {
+                var failed = result.Items.FirstOrDefault(x => !x.Success);
+                StatusMessage = $"軸控初始化失敗: {failed?.DeviceName} - {failed?.Message}";
+            }
+
+            System.Diagnostics.Debug.WriteLine(result.GetSummary());
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "軸控初始化已取消";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"軸控初始化異常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            IsDryRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
     }
 
     /// <summary>

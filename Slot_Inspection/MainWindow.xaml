@@ -379,12 +379,35 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="5" Margin="12,4,12,4">
+            <UniformGrid Grid.Row="2" Columns="9" Margin="12,4,12,4">
                 <Button Content="Main" Background="#C6E0B4"/>
                 <Button Content="Setting"/>
                 <Button Content="IO table"/>
                 <Button Content="Result"/>
                 <Button Content="Alarm History"/>
+                <CheckBox Content="模擬模式"
+                          IsChecked="{Binding IsSimulationMode}"
+                          VerticalContentAlignment="Center"
+                          HorizontalAlignment="Center"
+                          FontSize="11"
+                          ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)"/>
+                <Button Content="⚙ 軸控初始化"
+                        Command="{Binding InitAxesCommand}"
+                        Style="{StaticResource StateButtonStyle}"
+                        Background="#DAE8FC"
+                        FontWeight="Bold"
+                        ToolTip="僅初始化軸控，用於空跑測試前（跳過相機/光源/PLC）"/>
+                <Button Content="🔄 空跑測試"
+                        Command="{Binding DryRunCommand}"
+                        Style="{StaticResource StateButtonStyle}"
+                        Background="#FFF2CC"
+                        FontWeight="Bold"
+                        ToolTip="依序測試所有軸的移動與到位功能（不觸發相機/光源）"/>
+                <Button Content="⏹ STOP"
+                        Command="{Binding StopCommand}"
+                        Style="{StaticResource StateButtonStyle}"
+                        Background="#F4B084"
+                        FontWeight="Bold"/>
             </UniformGrid>
 
             <!-- Footer -->

@@ -6,8 +6,15 @@
   <Nullable>enable</Nullable>
   <ImplicitUsings>enable</ImplicitUsings>
   <UseWPF>true</UseWPF>
+  <Configurations>Debug;Release;Debug-Sim</Configurations>
   <Platforms>AnyCPU;x64;x86</Platforms>
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug-Sim'">
+    <DefineConstants>$(DefineConstants);DEBUG;DEBUG_SIM</DefineConstants>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
   </PropertyGroup>
 
   <ItemGroup>

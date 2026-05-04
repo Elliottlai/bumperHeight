@@ -22,10 +22,14 @@ public sealed class MachineController : IDisposable
 {
     private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
 
-#if DEBUG
-    private const bool SimulationMode = true;
+    /// <summary>
+    /// 模擬模式：Debug-Sim 組態預設 true（全模擬），其他組態預設 false（實機）。
+    /// 可在執行時透過 UI 切換。
+    /// </summary>
+#if DEBUG_SIM
+    public static bool SimulationMode { get; set; } = true;
 #else
-    private const bool SimulationMode = false;
+    public static bool SimulationMode { get; set; } = false;
 #endif
 
     // X=讀碼軸, Y=載台軸, Z=相機高度軸（無 R 軸）
@@ -262,6 +266,50 @@ public sealed class MachineController : IDisposable
         result.Add(InitPlc());
 
         _logger.Info("===== S00 Init Done =====");
+        _logger.Info(result.GetSummary());
+        return result;
+    }
+
+    /// <summary>
+    /// 軸控專用初始化（空跑測試使用）。
+    /// 只初始化 Config + Axis，跳過相機、光源、讀?器、PLC。
+    /// Debug 模式下空跑前呼叫此方法，不需完整 S00 初始化。
+    /// </summary>
+    public async Task<MachineInitResult> InitializeAxesOnlyAsync(
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        var result = new MachineInitResult();
+        _logger.Info($"===== Axes-Only Init Start (Sim: {SimulationMode}) =====");
+
+        if (SimulationMode)
+        {
+            foreach (var step in new[] { "Config (Sim)", "3-Axis Servo (Sim)", "3-Axis Home (Sim)" })
+            {
+                ct.ThrowIfCancellationRequested();
+                progress?.Report($"[Sim] {step}...");
+                await Task.Delay(300, ct);
+                result.Add(DeviceInitResult.Ok(step));
+            }
+            _logger.Info("===== Axes-Only Sim Init Done =====");
+            return result;
+        }
+
+        // ? 載入設定檔（讀取 Axises.json）
+        progress?.Report("Loading config...");
+        result.Add(InitMachineCore());
+        if (!result.AllPassed) return result;
+
+        // ? 激磁所有軸
+        progress?.Report("Enabling servo...");
+        result.Add(await InitAxesAsync(ct));
+        if (!result.AllPassed) return result;
+
+        // ? 全軸歸原點
+        progress?.Report("Homing all axes...");
+        result.Add(await HomeAllAxesAsync(progress, ct));
+
+        _logger.Info("===== Axes-Only Init Done =====");
         _logger.Info(result.GetSummary());
         return result;
     }
@@ -627,13 +675,27 @@ public sealed class MachineController : IDisposable
                 ct.ThrowIfCancellationRequested();
                 if (!Axes.TryGetValue(axisName, out var axis))
                     return DeviceInitResult.Fail(name, $"Axis not found: {axisName}");
+
+                // RS485 軸需要先呼叫 Connect() 建立 Modbus RTU 連線
+                if (axis is cAxis_RS485 rs485Axis)
+                {
+                    _logger.Info($"[S00] {axisName} Connecting RS485 ({rs485Axis.PortName}, Baud={rs485Axis.BaudRate}, Slave={rs485Axis.SlaveId})...");
+                    rs485Axis.Connect();
+                    _logger.Info($"[S00] {axisName} RS485 Connected OK");
+                }
+
                 axis.ResetError();
                 axis.SetSVON(true);
-                bool ready = await WaitUntilAsync(() => axis.GetRDY() && !axis.GetAlarm(), _deviceConnectTimeout, ct);
-                if (!ready) return DeviceInitResult.Fail(name, $"{axisName} not ready (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                bool ready = await WaitUntilAsync(
+                    () => axis.GetRDY() && !axis.GetAlarm(),
+                    _deviceConnectTimeout, ct);
+                if (!ready)
+                    return DeviceInitResult.Fail(name,
+                        $"{axisName} not ready (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
                 _logger.Debug($"{axisName} ServoOn OK");
             }
-            _logger.Info($"{name}: OK"); return DeviceInitResult.Ok(name);
+            _logger.Info($"{name}: OK");
+            return DeviceInitResult.Ok(name);
         }
         catch (OperationCanceledException) { return DeviceInitResult.Fail(name, "Cancelled"); }
         catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, ex.Message, ex); }
@@ -777,6 +839,228 @@ public sealed class MachineController : IDisposable
     }
 
     // =========================================
+    //  Dry Run (空跑測試)
+    // =========================================
+    //  Dry Run (空跑測試)
+    // =========================================
+
+    /// <summary>
+    /// 空跑測試：模擬完整生產流程的軸控路徑，驗證每根軸能正確到達對應位置。
+    /// 排除掃碼、相機取像、光源控制，僅測試軸的移動與到位。
+    /// 路徑完全對應實際生產流程：
+    ///   S01b → AxisX 移動到讀碼位置（左/右）
+    ///   S01c → AxisX 回原點
+    ///   S03  → 逐 Slot 移動 AxisY 到載台位置 + AxisZ 到相機高度
+    ///   結束 → 全部回原點
+    /// </summary>
+    public async Task DryRunAsync(
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        _logger.Info("===== Dry Run Start =====");
+
+        if (SimulationMode)
+        {
+            await DryRunSimAsync(progress, ct);
+            return;
+        }
+
+        // ── 前置：確認所有軸已激磁且無警報 ──
+        foreach (var axisName in _axisNames)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Axes.TryGetValue(axisName, out var axis))
+                throw new InvalidOperationException($"{axisName} 不存在");
+
+            if (axis.GetAlarm())
+            {
+                progress?.Report($"? {axisName} 有警報，嘗試清除...");
+                axis.ResetError();
+                await Task.Delay(500, ct);
+                if (axis.GetAlarm())
+                    throw new InvalidOperationException($"{axisName} 警報無法清除，請檢查驅動器");
+            }
+
+            if (!axis.GetSVON())
+            {
+                progress?.Report($"{axisName} 激磁...");
+                axis.SetSVON(true);
+                bool ready = await WaitUntilAsync(
+                    () => axis.GetRDY() && !axis.GetAlarm(),
+                    _deviceConnectTimeout, ct);
+                if (!ready)
+                    throw new InvalidOperationException(
+                        $"{axisName} 激磁失敗 (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+            }
+
+            progress?.Report($"{axisName} 激磁完成 ?");
+        }
+
+        // ── S01b 模擬：AxisX 移動到讀碼位置 ──
+        progress?.Report("[S01b] AxisX → 讀碼位置（左）...");
+        await DryRunMoveAsync("AxisX", _config.BarcodePositionLeftX, progress, ct);
+
+        progress?.Report("[S01b] AxisX → 讀碼位置（右）...");
+        await DryRunMoveAsync("AxisX", _config.BarcodePositionRightX, progress, ct);
+
+        // ── S01c 模擬：AxisX 回原點 ──
+        progress?.Report("[S01c] AxisX 回原點...");
+        Axes["AxisX"].Home();
+        bool xHome = await WaitUntilAsync(() => Axes["AxisX"].Wait(), _axisHomeTimeout, ct);
+        if (!xHome) throw new TimeoutException("AxisX 回原點逾時");
+        progress?.Report($"[S01c] AxisX 回原點完成 (pos={Axes["AxisX"].GetRealPosition():F2}) ?");
+
+        // ── S03 模擬：逐 Slot 移動 AxisY + AxisZ 到檢測位置 ──
+        var rows = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
+        {
+            (SlotInspectionProgress.TargetCollection.AreaA_Row1, 13),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row2, 12),
+        };
+
+        int totalSlots = rows.Sum(r => r.Count);
+        int currentSlot = 0;
+
+        foreach (var (target, count) in rows)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                currentSlot++;
+
+                var pos = SlotPositionTable.Get(target, i);
+                string slotLabel = $"{target} Slot#{i + 1}";
+
+                progress?.Report($"[S03] ({currentSlot}/{totalSlots}) {slotLabel}: Y→{pos.Y:F1}, Z→{_config.CameraHeightZ:F1}...");
+
+                // 同時移動 Y 和 Z（與實際生產流程一致）
+                Axes["AxisY"].MotMoveAbs(pos.Y);
+                Axes["AxisZ"].MotMoveAbs(_config.CameraHeightZ);
+
+                bool arrived = await WaitUntilAsync(
+                    () => Axes["AxisY"].Wait() && Axes["AxisZ"].Wait(),
+                    _config.MoveTimeout, ct);
+
+                if (!arrived)
+                    throw new TimeoutException($"{slotLabel} 移動逾時 (Y 或 Z 未到位)");
+
+                // 檢查警報與極限
+                DryRunCheckAxisState("AxisY", slotLabel);
+                DryRunCheckAxisState("AxisZ", slotLabel);
+
+                double realY = Axes["AxisY"].GetRealPosition();
+                double realZ = Axes["AxisZ"].GetRealPosition();
+                progress?.Report($"[S03] ({currentSlot}/{totalSlots}) {slotLabel}: Y={realY:F2}, Z={realZ:F2} ?");
+                _logger.Info($"[DryRun] {slotLabel} Y={realY:F2} Z={realZ:F2}");
+
+                await Task.Delay(200, ct); // 短暫停留
+            }
+        }
+
+        // ── 結束：所有軸回原點 ──
+        progress?.Report("所有軸回原點...");
+        foreach (var axisName in _axisNames)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (Axes.TryGetValue(axisName, out var axis))
+                axis.Home();
+        }
+
+        bool allHome = await WaitUntilAsync(
+            () => _axisNames.All(n => !Axes.TryGetValue(n, out var a) || a.Wait()),
+            _axisHomeTimeout, ct);
+
+        if (!allHome)
+            _logger.Warn("[DryRun] Some axes did not reach home in time");
+
+        progress?.Report($"空跑測試完成 ? 已跑完 {totalSlots} 個 Slot 位置，所有軸已回原點");
+        _logger.Info("===== Dry Run Done =====");
+    }
+
+    /// <summary>空跑：移動單軸到指定位置並驗證到位</summary>
+    private async Task DryRunMoveAsync(
+        string axisName, double targetPos,
+        IProgress<string>? progress, CancellationToken ct)
+    {
+        var axis = Axes[axisName];
+        axis.MotMoveAbs(targetPos);
+
+        bool arrived = await WaitUntilAsync(
+            () => axis.Wait(), _config.MoveTimeout, ct);
+
+        if (!arrived)
+            throw new TimeoutException($"{axisName} 移動到 {targetPos:F1} mm 逾時");
+
+        DryRunCheckAxisState(axisName, $"target={targetPos:F1}");
+
+        double realPos = axis.GetRealPosition();
+        progress?.Report($"{axisName} 到位 ({realPos:F2} mm) ?");
+        _logger.Info($"[DryRun] {axisName} arrived at {realPos:F2} mm (target={targetPos:F1})");
+
+        await Task.Delay(300, ct);
+    }
+
+    /// <summary>空跑：檢查軸狀態（警報/極限），有問題就拋例外或記 log</summary>
+    private void DryRunCheckAxisState(string axisName, string context)
+    {
+        var axis = Axes[axisName];
+        if (axis.GetAlarm())
+            throw new InvalidOperationException($"{axisName} 於 {context} 發生警報");
+        if (axis.GetPLimit())
+            _logger.Warn($"[DryRun] {axisName} 正極限觸發 ({context})");
+        if (axis.GetNLimit())
+            _logger.Warn($"[DryRun] {axisName} 負極限觸發 ({context})");
+    }
+
+    /// <summary>模擬模式的空跑：走完整流程路徑但用 delay 模擬</summary>
+    private async Task DryRunSimAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        // S01b: AxisX 讀碼位置
+        progress?.Report("[Sim][S01b] AxisX → 讀碼位置（左）...");
+        await Task.Delay(400, ct);
+        progress?.Report($"[Sim][S01b] AxisX 到位 ({_config.BarcodePositionLeftX:F1} mm) ?");
+        await Task.Delay(200, ct);
+
+        progress?.Report("[Sim][S01b] AxisX → 讀碼位置（右）...");
+        await Task.Delay(400, ct);
+        progress?.Report($"[Sim][S01b] AxisX 到位 ({_config.BarcodePositionRightX:F1} mm) ?");
+        await Task.Delay(200, ct);
+
+        // S01c: AxisX 回原點
+        progress?.Report("[Sim][S01c] AxisX 回原點...");
+        await Task.Delay(400, ct);
+        progress?.Report("[Sim][S01c] AxisX 回原點完成 ?");
+
+        // S03: 逐 Slot
+        var rows = new (string Label, int Count)[]
+        {
+            ("AreaA_Row1", 13),
+            ("AreaA_Row2", 12),
+        };
+
+        int totalSlots = rows.Sum(r => r.Count);
+        int current = 0;
+
+        foreach (var (label, count) in rows)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                current++;
+                string slot = $"{label} Slot#{i + 1}";
+                progress?.Report($"[Sim][S03] ({current}/{totalSlots}) {slot}: Y+Z 移動中...");
+                await Task.Delay(250, ct);
+                progress?.Report($"[Sim][S03] ({current}/{totalSlots}) {slot}: 到位 ?");
+                await Task.Delay(100, ct);
+            }
+        }
+
+        // 回原點
+        progress?.Report("[Sim] 所有軸回原點...");
+        await Task.Delay(500, ct);
+        progress?.Report($"[Sim] 空跑測試完成 ? 已跑完 {totalSlots} 個 Slot 位置");
+        _logger.Info("===== Dry Run (Sim) Done =====");
+    }
+
     //  Utility
     // =========================================
 

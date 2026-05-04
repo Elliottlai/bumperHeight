@@ -7,7 +7,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Configurations>Debug;Release;Debug-Sim</Configurations>
     <Platforms>AnyCPU;x64;x86</Platforms>
+  </PropertyGroup>
+
+  <!-- Debug-Sim: 定義 DEBUG_SIM 常數，啟用模擬模式 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug-Sim'">
+    <DefineConstants>$(DefineConstants);DEBUG;DEBUG_SIM</DefineConstants>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\BarcodeReader\BarcodeReader.csproj" />
+    <ProjectReference Include="..\DeltaAxis_RS485\DeltaAxis_RS485.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
     <ProjectReference Include="..\PLC_IO\PLC_IO.csproj" />
   </ItemGroup>
