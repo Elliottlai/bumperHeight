@@ -72,8 +72,8 @@ public class AsdaB3AxisAdapter : IAxis, IDisposable
 
     public bool Wait()
     {
-        // 檢查是否已到位（非阻塞式查詢）
-        return _controller.IsServoOn && !_controller.HasAlarm();
+        // 確認伺服已激磁、無警報，且已到達目標位置（InPosition）
+        return _controller.IsServoOn && !_controller.HasAlarm() && _controller.IsInPosition();
     }
 
     public double GetRealPosition()

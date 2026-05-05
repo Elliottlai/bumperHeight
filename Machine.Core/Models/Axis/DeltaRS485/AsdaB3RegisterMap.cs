@@ -57,6 +57,9 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public const ushort P4_006_SoftwareDO = 0x040C;
         public const ushort P4_007_SoftwareDI = 0x040E;
 
+        public const ushort P5_005_HighSpeedHoming_Low = 0x050A; // 高速歸原點速度 (32-bit Low)
+        public const ushort P5_006_LowSpeedHoming_Low = 0x050C; // 低速歸原點速度 (32-bit Low)
+
         // ============================
         //  P5 群組 — PR / Motion
         // ============================

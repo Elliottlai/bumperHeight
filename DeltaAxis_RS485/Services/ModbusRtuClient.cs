@@ -20,6 +20,9 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
     /// <summary>建立 RS485 連線</summary>
     public void Connect(string portName, int baudRate, byte slaveId)
     {
+        // 確保舊連線已關閉，避免 SerialPort 重複開啟
+        Disconnect();
+
         _slaveId = slaveId;
 
         _serial = new SerialPort

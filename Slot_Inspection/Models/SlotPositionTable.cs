@@ -15,9 +15,9 @@ public static class SlotPositionTable
     // ¢w¢w Area A Row1¡GSlot 1~13 ¢w¢w
     public static readonly SlotPosition[] AreaA_Row1 =
     [
-        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
-        new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
-        new(Y: 0), new(Y: 0), new(Y: 0),
+        new(Y: 10), new(Y: 30), new(Y: 50), new(Y: 70), new(Y: 90),
+        new(Y: 110), new(Y: 130), new(Y: 150), new(Y: 170), new(Y: 190),
+        new(Y: 210), new(Y: 230), new(Y: 250),
     ];
 
     // ¢w¢w Area A Row2¡GSlot 14~25 ¢w¢w

@@ -68,12 +68,23 @@ public sealed class MainViewModel : ObservableObject
     public ICommand StopCommand { get; }
     public ICommand DryRunCommand { get; }
     public ICommand InitAxesCommand { get; }
+    public ICommand HomeCommand { get; }
 
     private bool _isDryRunning;
     public bool IsDryRunning
     {
         get => _isDryRunning;
         set => SetProperty(ref _isDryRunning, value);
+    }
+
+    private bool _isDeviceReady;
+    /// <summary>
+    /// 裝置已初始化（Config+Servo+PLC），但尚未完成原點賦歸。
+    /// </summary>
+    public bool IsDeviceReady
+    {
+        get => _isDeviceReady;
+        set => SetProperty(ref _isDeviceReady, value);
     }
 
     /// <summary>
@@ -93,11 +104,15 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
-        // START 只需：初始化完成 + 尚未運行（條碼由 START 後自動讀取）
+        // START 只需：初始化完成（含原點賦歸） + 尚未運行
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
         StopCommand = new RelayCommand(OnStop, () => IsRunning || IsDryRunning);
-        DryRunCommand = new RelayCommand(OnDryRun, () => IsInitialized && !IsRunning && !IsDryRunning);
-        InitAxesCommand = new RelayCommand(OnInitAxes, () => !IsRunning && !IsDryRunning && !IsInitialized);
+        // 空機測試只需 Servo 激磁完成即可（不需原點賦歸）
+        DryRunCommand = new RelayCommand(OnDryRun, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        // 初始化：Config + Servo + PLC（不含原點賦歸）
+        InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
+        // 原點賦歸：需裝置已初始化後才可使用
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsInitialized);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -118,6 +133,10 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     public async Task InitializeAsync()
     {
+        // 防止重複初始化
+        if (IsInitialized || IsRunning || IsDryRunning)
+            return;
+
         StatusMessage = "正在初始化...";
         _cts = new CancellationTokenSource();
 
@@ -319,10 +338,9 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 軸控專用初始化（空跑測試前使用）。
-    /// 只初始化 Config + 軸，跳過相機、光源、讀碼器、PLC。
+    /// 初始化按鈕：Config + Servo 激磁 + PLC 連線（不含原點賦歸）。
     /// </summary>
-    private async void OnInitAxes()
+    private async void OnInitDevices()
     {
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
@@ -330,31 +348,77 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = "軸控初始化中...";
+            StatusMessage = "初始化中（Config + Servo + PLC）...";
             var result = await Task.Run(
-                () => _machine.InitializeAxesOnlyAsync(progress, _cts.Token));
+                () => _machine.InitializeDevicesAsync(progress, _cts.Token));
 
-            IsInitialized = result.AllPassed;
+            IsDeviceReady = result.AllPassed;
 
             if (result.AllPassed)
             {
-                StatusMessage = "軸控初始化完成 ? 可執行空跑測試";
+                StatusMessage = "初始化完成 ? 請按【原點賦歸】";
             }
             else
             {
                 var failed = result.Items.FirstOrDefault(x => !x.Success);
-                StatusMessage = $"軸控初始化失敗: {failed?.DeviceName} - {failed?.Message}";
+                StatusMessage = $"初始化失敗: {failed?.DeviceName} - {failed?.Message}";
             }
 
             System.Diagnostics.Debug.WriteLine(result.GetSummary());
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "軸控初始化已取消";
+            StatusMessage = "初始化已取消";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"軸控初始化異常: {ex.Message}";
+            StatusMessage = $"初始化異常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            IsDryRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    /// <summary>
+    /// 原點賦歸按鈕：所有軸回原點。
+    /// </summary>
+    private async void OnHome()
+    {
+        IsDryRunning = true;
+        _cts = new CancellationTokenSource();
+        var progress = new Progress<string>(msg => StatusMessage = msg);
+
+        try
+        {
+            StatusMessage = "原點賦歸中...";
+            var result = await Task.Run(
+                () => _machine.HomeAllAxesPublicAsync(progress, _cts.Token));
+
+            if (result.AllPassed)
+            {
+                IsInitialized = true;
+                StatusMessage = "原點賦歸完成 ? 可執行空跑測試或 START";
+            }
+            else
+            {
+                var failed = result.Items.FirstOrDefault(x => !x.Success);
+                StatusMessage = $"原點賦歸失敗: {failed?.DeviceName} - {failed?.Message}";
+            }
+
+            System.Diagnostics.Debug.WriteLine(result.GetSummary());
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "原點賦歸已取消";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"原點賦歸異常: {ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally

@@ -49,6 +49,10 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             // 設定 P2.030 = 5: 不寫入 EEPROM（通訊連續寫入時避免壽命損耗）
             _modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, AsdaB3RegisterMap.AuxFunction_NoEepromSave);
 
+            // 每次連線後立即設定歸原點速度（高速 4000 rpm，低速 800 rpm）
+            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_005_HighSpeedHoming_Low, 4000);
+            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_006_LowSpeedHoming_Low, 800); // 低速  800 rpm
+
             // 設定監視變數映射:
             // P0.009 → FeedbackPosition_PUU (回授位置)
             // P0.010 → AlarmCodeDecimal (警報碼)
@@ -294,8 +298,15 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public bool IsServoReady() => ReadDriverStatus().HasFlag(DriverStatusFlags.ServoReady);
 
         /// <summary>
-        /// 執行原點復歸動作（觸發 PR#0 = Homing）
+        /// 設定歸原點速度（寫入 P5.005 高速 / P5.006 低速，單位 rpm）。
         /// </summary>
+        public void SetHomingSpeed(int highSpeedRpm, int? lowSpeedRpm = null)
+        {
+            ThrowIfDisposed();
+            int lowSpeed = lowSpeedRpm ?? highSpeedRpm / 5;
+            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_005_HighSpeedHoming_Low, highSpeedRpm);
+            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_006_LowSpeedHoming_Low, lowSpeed);
+        }
         public void ExecuteHoming()
         {
             ThrowIfDisposed();

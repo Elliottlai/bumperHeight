@@ -13,7 +13,8 @@ namespace Machine.Core.Interfaces
 
         string AxisX_UID { get; set; }
         string AxisY_UID { get; set; }
-        string AxisZ_UID { get; set; }
+        string AxisZL_UID { get; set; }
+        string AxisZR_UID { get; set; }
 
 
         

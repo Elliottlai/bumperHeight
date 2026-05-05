@@ -13,7 +13,8 @@ namespace Machine.Core
 
         private IAxis AxisX;
         private IAxis AxisY;
-        private IAxis AxisZ;
+        private IAxis AxisZL;
+        private IAxis AxisZR;
         private double standardBoardRelativeLocationZ;
 
         public string AxisX_UID
@@ -29,10 +30,16 @@ namespace Machine.Core
 
         }
 
-        public string AxisZ_UID
+        public string AxisZL_UID
         {
-            get => AxisZ?.UID ?? string.Empty;
-            set => AxisZ = cMachineManager.Axises.TryGetValue(value, out IAxis Axis) ? Axis : null;
+            get => AxisZL?.UID ?? string.Empty;
+            set => AxisZL = cMachineManager.Axises.TryGetValue(value, out IAxis Axis) ? Axis : null;
+        }
+
+        public string AxisZR_UID
+        {
+            get => AxisZR?.UID ?? string.Empty;
+            set => AxisZR = cMachineManager.Axises.TryGetValue(value, out IAxis Axis) ? Axis : null;
         }
 
 
