@@ -77,7 +77,7 @@ namespace CameraLightTest
             {
                 // 1. Machine.Core
                 Log("初始化 Machine.Core...");
-                cMachineManager.Init();
+                cMachineManager.Init(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MachineAssembly", "CameraLightTest"));
                 Log("  → OK");
 
                 // 填入可用相機列表
@@ -192,14 +192,19 @@ namespace CameraLightTest
                 {
                     int w = _camera.FrameWidth;
                     int h = _camera.BufHeight;
+                    int pixelBytes = _camera.PixelBytes;
 
-                    var hImg = new HImage();
-                    hImg.GenImage1Extern("byte", w, h, bufAddr[0], IntPtr.Zero);
-                    hImg.WriteImage("tiff", 0, filename);
-                    hImg.Dispose();
+                    // 根據 PixelBytes 決定像素格式
+                    var pixelFormat = pixelBytes == 3 ? PixelFormats.Rgb24 : PixelFormats.Gray8;
+                    int stride = w * pixelBytes;
 
-                    Log($"[3/4] 已存檔: {filename}");
-                    ShowPreview(bufAddr[0], w, h);
+                    // 存 BMP
+                    string bmpFilename = Path.Combine(dir,
+                        $"Capture_{DateTime.Now:yyyyMMdd_HHmmss_fff}.bmp");
+                    SaveBmp(bufAddr[0], w, h, stride, pixelFormat, bmpFilename);
+                    Log($"[3/4] 已存檔: {bmpFilename}");
+
+                    ShowPreview(bufAddr[0], w, h, stride, pixelFormat);
                 }
                 else
                 {
@@ -223,17 +228,43 @@ namespace CameraLightTest
         }
 
         // ═══════════════════════════════════════
-        //  影像預覽
+        //  存 BMP
         // ═══════════════════════════════════════
 
-        private unsafe void ShowPreview(IntPtr bufPtr, int width, int height)
+        private void SaveBmp(IntPtr bufPtr, int width, int height, int stride,
+                             PixelFormat pixelFormat, string filePath)
         {
             try
             {
-                int stride = width;
                 var bmp = BitmapSource.Create(
                     width, height, 96, 96,
-                    PixelFormats.Gray8, null,
+                    pixelFormat, null,
+                    bufPtr, height * stride, stride);
+                bmp.Freeze();
+
+                using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+                var encoder = new BmpBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+                encoder.Save(fs);
+            }
+            catch (Exception ex)
+            {
+                Log($"[WARN] 存檔失敗: {ex.Message}");
+            }
+        }
+
+        // ═══════════════════════════════════════
+        //  影像預覽
+        // ═══════════════════════════════════════
+
+        private void ShowPreview(IntPtr bufPtr, int width, int height, int stride,
+                                 PixelFormat pixelFormat)
+        {
+            try
+            {
+                var bmp = BitmapSource.Create(
+                    width, height, 96, 96,
+                    pixelFormat, null,
                     bufPtr, height * stride, stride);
                 bmp.Freeze();
                 ImgPreview.Source = bmp;
