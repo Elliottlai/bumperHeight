@@ -351,9 +351,9 @@ public sealed class MachineController : IDisposable
         result.Add(InitMachineCore());
         if (!result.AllPassed) return result;
 
-        // progress?.Report("Init light...");
-        // result.Add(InitLightHB());
-        // if (!result.AllPassed) return result;
+        progress?.Report("Init light...");
+        result.Add(InitLightHB());
+        if (!result.AllPassed) return result;
 
         progress?.Report("Enabling servo...");
         result.Add(await InitAxesAsync(ct));
@@ -695,10 +695,9 @@ public sealed class MachineController : IDisposable
             _logger.Warn($"[S03] {slotName} move timeout");
 
         // STEP 2: Both lights ON simultaneously
-        // TODO: 拍照存圖暫時停用
-        // _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
-        // _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
-        // await Task.Delay(_config.LightStabilizeMs, ct);
+        _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
+        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
+        await Task.Delay(_config.LightStabilizeMs, ct);
 
         // STEP 3: Both cameras trigger simultaneously
         //_cameraManager!.CameraStart(_cameraKeyLeft);
@@ -710,8 +709,8 @@ public sealed class MachineController : IDisposable
         //var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
 
         // STEP 5: Both lights OFF
-        // _light.SetValue(_config.LightChannelLeft,  0);
-        // _light.SetValue(_config.LightChannelRight, 0);
+        _light.SetValue(_config.LightChannelLeft,  0);
+        _light.SetValue(_config.LightChannelRight, 0);
 
         // Capture failure check
         //if (imageLeft == null || imageRight == null)
@@ -1225,24 +1224,24 @@ public sealed class MachineController : IDisposable
             // =====================================================
 
             // STEP 0-0 ① 確保光源已連線
-            // if (_lightHB == null || !_lightHB.IsOpen)
-            // {
-            //     progress?.Report("[STEP 0-0] 初始化光源 (HighBright)...");
-            //     var lr = InitLightHB();
-            //     if (!lr.Success)
-            //         throw new InvalidOperationException($"光源初始化失敗: {lr.Message}");
-            //     _logger.Info("[STEP 0-0] 光源初始化 ✓");
-            // }
+            if (_lightHB == null || !_lightHB.IsOpen)
+            {
+                progress?.Report("[STEP 0-0] 初始化光源 (HighBright)...");
+                var lr = InitLightHB();
+                if (!lr.Success)
+                    throw new InvalidOperationException($"光源初始化失敗: {lr.Message}");
+                _logger.Info("[STEP 0-0] 光源初始化 ✓");
+            }
 
-            // STEP 0-0 ② 強制關閉光源（防呆：上次流程中斷時可能殘留亮燈狀態）
-            // progress?.Report("[STEP 0-0] 光源全關（防呆）...");
-            // bool off1 = LightSetWithRetry(1, 0, "STEP0-0", "OFF");
-            // bool off2 = LightSetWithRetry(2, 0, "STEP0-0", "OFF");
-            // if (!off1 || !off2)
-            //     _logger.Warn($"[STEP 0-0] 光源強制關閉失敗  CH1={off1} CH2={off2}，請確認光源控制器連線");
-            // else
-            //     _logger.Info("[STEP 0-0] 光源全關 ✓");
-            // progress?.Report("[STEP 0-0] 光源已關 ✓");
+            // STEP 0-0 ② 開啟光源（空跑期間持續開啟，結束後才關閉）
+            progress?.Report("[STEP 0-0] 光源 CH1+CH2 開啟...");
+            bool on1 = LightSetWithRetry(1, 100, "STEP0-0", "ON");
+            bool on2 = LightSetWithRetry(2, 100, "STEP0-0", "ON");
+            if (!on1 || !on2)
+                _logger.Warn($"[STEP 0-0] 光源開啟失敗  CH1={on1} CH2={on2}，請確認光源控制器連線");
+            else
+                _logger.Info("[STEP 0-0] 光源 CH1+CH2 已開啟 ✓");
+            progress?.Report("[STEP 0-0] 光源已開啟 ✓");
 
             // STEP 0-1：確認 Y / ZL / ZR 軸已激磁且無警報
             progress?.Report("[STEP 0-1] 確認軸狀態...");
@@ -1432,19 +1431,19 @@ public sealed class MachineController : IDisposable
         finally
         {
             // 無論正常結束、中斷、事件發生，光源一定強制關閉
-            // if (_lightHB != null && _lightHB.IsOpen)
-            // {
-            //     try
-            //     {
-            //         _lightHB.SetValue(1, 0);
-            //         _lightHB.SetValue(2, 0);
-            //         _logger.Info("[DryRun] finally: 光源全關 ✓");
-            //     }
-            //     catch (Exception ex)
-            //     {
-            //         _logger.Warn($"[DryRun] finally: 光源關閉失敗 {ex.Message}");
-            //     }
-            // }
+            if (_lightHB != null && _lightHB.IsOpen)
+            {
+                try
+                {
+                    _lightHB.SetValue(1, 0);
+                    _lightHB.SetValue(2, 0);
+                    _logger.Info("[DryRun] finally: 光源全關 ✓");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn($"[DryRun] finally: 光源關閉失敗 {ex.Message}");
+                }
+            }
 
             // 停止 X7 背景監控
             x7MonitorCts.Cancel();
@@ -1487,12 +1486,15 @@ public sealed class MachineController : IDisposable
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
 
-        // STEP 2: CH1（左）+ CH2（右）光源同時 ON
-        progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: CH{LightChLeft}+CH{LightChRight} 光源 ON...");
-        bool ch1On = LightSetWithRetry(LightChLeft, LightPct, slotLabel, "ON");
-        bool ch2On = LightSetWithRetry(LightChRight, LightPct, slotLabel, "ON");
-        if (!ch1On || !ch2On)
-            _logger.Warn($"[DryRun] {slotLabel} 光源 ON 失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
+        // STEP 2: 檢查光源是否開啟，若未開啟則開啟（防呆：避免中途被意外關閉）
+        if (_lightHB != null && _lightHB.IsOpen)
+        {
+            // 嘗試讀取當前亮度（HighBright 控制器無讀取指令，直接重設確保亮度正確）
+            bool ch1On = LightSetWithRetry(LightChLeft, LightPct, slotLabel, "ENSURE_ON");
+            bool ch2On = LightSetWithRetry(LightChRight, LightPct, slotLabel, "ENSURE_ON");
+            if (!ch1On || !ch2On)
+                _logger.Warn($"[DryRun] {slotLabel} 光源確認/重設失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
+        }
         await Task.Delay(StabilizeMs, ct);
 
         // STEP 3: 開始取像（m_Xfer.Grab()）
@@ -1507,11 +1509,7 @@ public sealed class MachineController : IDisposable
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
 
-        // STEP 6: CH1（左）+ CH2（右）光源 OFF
-        bool ch1Off = LightSetWithRetry(LightChLeft, 0, slotLabel, "OFF");
-        bool ch2Off = LightSetWithRetry(LightChRight, 0, slotLabel, "OFF");
-        if (!ch1Off || !ch2Off)
-            _logger.Warn($"[DryRun] {slotLabel} 光源 OFF 失敗  CH{LightChLeft}={ch1Off} CH{LightChRight}={ch2Off}");
+        // STEP 6: 光源保持開啟（不關閉，等空跑流程結束後才關）
 
         // STEP 7: 讀取 Buffer
         var bufRight = _cameraRight?.GetBufAddress();

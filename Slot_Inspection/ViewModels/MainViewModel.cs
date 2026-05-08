@@ -73,6 +73,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand DryRunCommand { get; }
     public ICommand InitAxesCommand { get; }
     public ICommand HomeCommand { get; }
+    public ICommand ReadBarcodeCommand { get; }
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -117,6 +118,8 @@ public sealed class MainViewModel : ObservableObject
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
         // 原點賦歸：需裝置已初始化後才可使用
         HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsInitialized);
+        // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
+        ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -379,6 +382,83 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsDryRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    private async void OnReadBarcode()
+    {
+        IsRunning = true;
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        try
+        {
+            StatusMessage = "Y 軸移動至 491 mm...";
+
+            // STEP 1: Y 軸移動到 491
+            _machine.Axes["AxisY"].MotMoveAbs(491.0);
+            bool yArrived = await MachineController.WaitUntilAsync(
+                () => _machine.Axes["AxisY"].Wait(),
+                TimeSpan.FromSeconds(30), ct);
+            if (!yArrived)
+            {
+                StatusMessage = "Y 軸移動逾時";
+                return;
+            }
+            StatusMessage = "Y 軸已到位 (491 mm)";
+
+            // STEP 2: 偵測 X12 / X13 IO 訊號
+            bool x12 = _machine.GetPlcXOctal(12) ?? false;
+            bool x13 = _machine.GetPlcXOctal(13) ?? false;
+
+            if (!x12 && !x13)
+            {
+                StatusMessage = "未偵測到載台 (X12/X13 皆無訊號)";
+                return;
+            }
+
+            // STEP 3: 依據訊號移動 X 軸
+            double targetX;
+            if (x12)
+            {
+                targetX = -5.121;
+                StatusMessage = $"偵測到 X12=ON → X 軸移動至 {targetX} mm...";
+            }
+            else
+            {
+                targetX = 189.922;
+                StatusMessage = $"偵測到 X13=ON → X 軸移動至 {targetX} mm...";
+            }
+
+            _machine.Axes["AxisX"].MotMoveAbs(targetX);
+            bool xArrived = await MachineController.WaitUntilAsync(
+                () => _machine.Axes["AxisX"].Wait(),
+                TimeSpan.FromSeconds(30), ct);
+            if (!xArrived)
+            {
+                StatusMessage = "X 軸移動逾時";
+                return;
+            }
+
+            StatusMessage = $"X 軸已到位 ({targetX} mm)，準備讀碼...";
+
+            // TODO: 觸發讀碼器讀取條碼
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "讀碼流程已取消";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"讀碼流程異常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            IsRunning = false;
             _cts?.Dispose();
             _cts = null;
             CommandManager.InvalidateRequerySuggested();

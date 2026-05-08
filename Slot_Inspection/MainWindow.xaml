@@ -379,7 +379,7 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="10" Margin="12,4,12,4">
+            <UniformGrid Grid.Row="2" Columns="11" Margin="12,4,12,4">
                 <Button Content="Main" Background="#C6E0B4"/>
                 <Button Content="Setting"/>
                 <Button Content="IO table"/>
@@ -409,6 +409,12 @@
                         Background="#FFF2CC"
                         FontWeight="Bold"
                         ToolTip="依序測試所有軸的移動與到位功能（不觸發相機/光源）"/>
+                <Button Content="📷 讀取條碼"
+                        Command="{Binding ReadBarcodeCommand}"
+                        Style="{StaticResource StateButtonStyle}"
+                        Background="#B4C7E7"
+                        FontWeight="Bold"
+                        ToolTip="Y→491 → 偵測 X12/X13 → 移動 X 軸至讀碼位置"/>
                 <Button Content="⏹ STOP"
                         Command="{Binding StopCommand}"
                         Style="{StaticResource StateButtonStyle}"
