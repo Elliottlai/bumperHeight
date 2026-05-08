@@ -1,16 +1,19 @@
-﻿using Machine.Core;
-using Machine.Core.Interfaces;
-using Slot_Inspection.Models;
+﻿using BarcodeReader.Interfaces;
+using BarcodeReader.Services;
+using Emgu.CV.XFeatures2D;
 using FoupInspecMachine.Manager;
+using Machine.Core;
+using Machine.Core.Interfaces;
+using MvCodeReaderSDKNet;
 using NLog;
+using PLC_IO.Interfaces;
+using PLC_IO.Services;
+using Slot_Inspection.Enum;
+using Slot_Inspection.Models;
 using System.IO;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
-using BarcodeReader.Interfaces;
-using BarcodeReader.Services;
-using MvCodeReaderSDKNet;
-using PLC_IO.Interfaces;
-using PLC_IO.Services;
+
 
 namespace Slot_Inspection.Services;
 
@@ -40,8 +43,12 @@ public sealed class MachineController : IDisposable
     private readonly string[] _axisNames = ["AxisY", "AxisX", "AxisZL", "AxisZR"];
 
     // Y 軸行程極限（mm）
-    private const double YAxisMaxMm = 490.0;
-    private readonly string[] _cameraNames = ["Camera1", "Camera2"];
+    private const double YAxisMaxMm = 496.0;
+
+    // 相機 UID：必須與 GrabModule.txt 裡的 "UID" 欄位完全一致
+    private const string CameraUidRight = "Right";
+    private const string CameraUidLeft  = "Left";
+    private readonly string[] _cameraNames = [CameraUidRight, CameraUidLeft];
 
     private readonly string _lightComPort = "COM16"; // TODO: 確認光源實際 COM port
     private readonly string _barcodeIp = "192.168.1.10";
@@ -58,11 +65,66 @@ public sealed class MachineController : IDisposable
     public Dictionary<string, ICamera> Cameras => cMachineManager.Cameras;
 
     private FoupInspecMachine.Models.OPT_Controller? _light;
+    private HighBright_Controller? _lightHB;           // HighBright 光源（DryRun / 實際取像用）
     private CameraManager? _cameraManager;
+
+    // DryRun 直接操作的相機物件（對應 GrabModule.txt UID: "Right" / "Left"）
+    private ICamera? _cameraRight;
+    private ICamera? _cameraLeft;
+
     private ICodeReaderDevice? _barcodeDevice;    // 海康讀碼器 SDK 控制物件
     private IBarcodeResultParser? _barcodeParser;  // 讀碼結果解析器
     private IPlcCommunicator? _plc;               // 三菱 FX PLC 通訊
     private bool _disposed;
+
+    // -- DryRun 暫停/繼續機制（volatile bool + polling，避免 TCS 累積導致效能退化）--
+    private volatile bool _dryRunPaused;
+
+    /// <summary>目前是否處於 DryRun 暫停狀態</summary>
+    public bool IsDryRunPaused => _dryRunPaused;
+
+    /// <summary>
+    /// 暫停空跑流程並立即停止所有軸（X7 光閘觸發時呼叫）。
+    /// 電平觸發：只要 X7=0 就保持暫停，重複呼叫無副作用。
+    /// </summary>
+    public void PauseDryRun()
+    {
+        if (!_dryRunPaused)
+        {
+            _dryRunPaused = true;
+            // 立即停止所有動作軸
+            foreach (var axisName in new[] { "AxisY", "AxisZL", "AxisZR" })
+                if (Axes.TryGetValue(axisName, out var ax))
+                    try { ax.MotStop(isImmediate: true); } catch { }
+            _logger.Info("[DryRun] Paused + axes stopped (X7=0)");
+        }
+    }
+
+    /// <summary>繼續空跑流程（X10=1 時呼叫，僅在暫停狀態下有效）</summary>
+    public void ResumeDryRun()
+    {
+        if (_dryRunPaused)
+        {
+            _dryRunPaused = false;
+            _logger.Info("[DryRun] Resumed (X10=1)");
+        }
+    }
+
+    /// <summary>
+    /// 若目前處於暫停狀態則以 polling 等待，直到 ResumeDryRun() 被呼叫或取消。
+    /// 使用簡單的 volatile bool + Task.Delay polling，
+    /// 避免每次 pause/resume 建立 TaskCompletionSource 導致效能退化。
+    /// </summary>
+    private async Task CheckPauseAsync(IProgress<string>? progress, CancellationToken ct)
+    {
+        if (!_dryRunPaused) return;
+        progress?.Report("[暫停中] 光閘觸發，等待 X10=1 繼續空跑...");
+        while (_dryRunPaused)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct);
+        }
+    }
 
     private readonly InspectionConfig _config = new();
     private readonly BumperAlgService _bumperAlg = new();
@@ -73,16 +135,58 @@ public sealed class MachineController : IDisposable
         => _simImageLoader ??= new SimImageLoader(_config.SimImageFolderPath);
 
     // -- Two cameras: Left & Right side of bumper --
-    private static readonly NamedKey _cameraKeyLeft  = NamedKeyCamera.AreaCameraTop;
-    private static readonly NamedKey _cameraKeyRight = NamedKeyCamera.AreaCameraSide;
+    private static readonly Machine.Core.NamedKey _cameraKeyLeft = NamedKeyCamera.AreaCameraTop;
+    private static readonly Machine.Core.NamedKey _cameraKeyRight = NamedKeyCamera.AreaCameraSide;
 
     // =========================================
     //  S01: Carrier detection + Barcode scan
     // =========================================
 
-    /// <summary>載台在席感測器對應的 PLC X 點位</summary>
-    private const int CarrierLeftSensorIndex = 12;   // X12 = 左側在席
-    private const int CarrierRightSensorIndex = 13;  // X13 = 右側在席
+    /// <summary>
+    /// 讀取 PLC X 輸入點狀態（直接用 _xData 陣列索引）。
+    /// 建議改用 <see cref="GetPlcXOctal"/> 以 PLC 面板位址讀取。
+    /// </summary>
+    public bool GetPlcX(int index)
+    {
+        if (_plc == null || !_plc.IsConnected) return false;
+        return _plc.GetX(index);
+    }
+
+    /// <summary>
+    /// 以 PLC 面板標示的八進制位址讀取 X 輸入點。
+    /// 三菱 FX X 點位為八進制，FxPlcCommunicator._xData 為十進制索引：
+    ///   X0~X7  → index 0~7（相同）
+    ///   X10    → index 8
+    ///   X12    → index 10
+    ///   X13    → index 11
+    /// 直接傳入面板上看到的數字即可，例如 X10 傳 10，X7 傳 7。
+    /// 回傳 null 表示 PLC 未連線（無法判斷狀態），呼叫端應視為「不確定」而非「觸發」。
+    /// </summary>
+    public bool? GetPlcXOctal(int plcOctalAddr)
+    {
+        if (_plc == null || !_plc.IsConnected) return null;
+        return _plc.GetX(OctalAddrToIndex(plcOctalAddr));
+    }
+
+    /// <summary>
+    /// 將 PLC 八進制位址（面板標示數字）轉為 _xData 十進制索引。
+    /// 例：10（X10） → 8、12（X12） → 10、13（X13） → 11
+    /// </summary>
+    private static int OctalAddrToIndex(int plcOctalAddr)
+    {
+        int result = 0, place = 1;
+        while (plcOctalAddr > 0)
+        {
+            result += (plcOctalAddr % 10) * place;
+            place  *= 8;
+            plcOctalAddr /= 10;
+        }
+        return result;
+    }
+
+    /// <summary>載台在席感測器 PLC X 點位（八進制位址）</summary>
+    private const int CarrierLeftSensorPlcAddr  = 12;   // X12（八進制）→ OctalAddrToIndex = 10
+    private const int CarrierRightSensorPlcAddr = 13;   // X13（八進制）→ OctalAddrToIndex = 11
 
     /// <summary>載台在席偵測結果</summary>
     public enum CarrierPosition { None, Left, Right, Both }
@@ -107,8 +211,9 @@ public sealed class MachineController : IDisposable
         }
 
         // 直接讀取 PLC X 點位快取（由 FxPlcCommunicator 背景輪詢更新）
-        bool left  = _plc.GetX(CarrierLeftSensorIndex);   // X12
-        bool right = _plc.GetX(CarrierRightSensorIndex);  // X13
+        // 使用 OctalAddrToIndex 將八進制位址轉為正確的 _xData 索引
+        bool left  = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;   // X12（八進制）→ index 10
+        bool right = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13（八進制）→ index 11
 
         var position = (left, right) switch
         {
@@ -246,9 +351,8 @@ public sealed class MachineController : IDisposable
         result.Add(InitMachineCore());
         if (!result.AllPassed) return result;
 
-        // TODO: 光源硬體尚未就緒，暫時跳過
         // progress?.Report("Init light...");
-        // result.Add(InitLight());
+        // result.Add(InitLightHB());
         // if (!result.AllPassed) return result;
 
         progress?.Report("Enabling servo...");
@@ -259,12 +363,12 @@ public sealed class MachineController : IDisposable
         result.Add(await HomeAllAxesAsync(progress, ct));
         if (!result.AllPassed) return result;
 
-        // TODO: 相機硬體尚未就緒，暫時跳過
+        // TODO: 相機功能暫時停用
         // progress?.Report("Init cameras...");
-        // result.Add(InitCameras());
+        // result.Add(await InitCamerasAsync(ct));
         // if (!result.AllPassed) return result;
 
-        // TODO: 海康讀碼器 SDK 原生 DLL (MvCodeReaderCtrl.dll) 尚未就緒，暫時跳過
+        // TODO: 海康讀碼器 SDK 原生 DLL
         // progress?.Report("Connecting barcode reader...");
         // result.Add(InitBarcodeReader());
 
@@ -288,7 +392,7 @@ public sealed class MachineController : IDisposable
 
         if (SimulationMode)
         {
-            foreach (var step in new[] { "Config (Sim)", "4-Axis Servo (Sim)", "PLC (Sim)" })
+            foreach (var step in new[] { "Config (Sim)", "4-Axis Servo (Sim)", "Camera (Sim)", "PLC (Sim)" })
             {
                 ct.ThrowIfCancellationRequested();
                 progress?.Report($"[Sim] {step}...");
@@ -306,6 +410,11 @@ public sealed class MachineController : IDisposable
         progress?.Report("Enabling servo...");
         result.Add(await InitAxesAsync(ct));
         if (!result.AllPassed) return result;
+
+        // TODO: 相機功能暫時停用
+         progress?.Report("Init cameras...");
+         result.Add(await InitCamerasAsync(ct));
+         if (!result.AllPassed) return result;
 
         progress?.Report("Connecting PLC...");
         result.Add(InitPlc());
@@ -439,6 +548,14 @@ public sealed class MachineController : IDisposable
              SlotInspectionProgress.TargetCollection.AreaB_Row2, 12),
         };
 
+
+        Axes["AxisY"].SetMaxVel(3000);
+        Axes["AxisZL"].SetMaxVel(2000);
+        Axes["AxisZR"].SetMaxVel(2000);
+
+
+
+
         foreach (var (areaA, areaB, count) in rows)
         {
             for (int i = 0; i < count; i++)
@@ -567,8 +684,8 @@ public sealed class MachineController : IDisposable
         // STEP 1: Y 軸移動載台到 Slot 位置，ZL/ZR 調整相機高度
         var pos = SlotPositionTable.Get(target, slotIndex);
         Axes["AxisY"].MotMoveAbs(pos.Y);
-        Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZ);
-        Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZ);
+        Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZL);
+        Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZR);
 
         bool arrived = await WaitUntilAsync(
             () => Axes["AxisY"].Wait() && Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
@@ -578,51 +695,52 @@ public sealed class MachineController : IDisposable
             _logger.Warn($"[S03] {slotName} move timeout");
 
         // STEP 2: Both lights ON simultaneously
-        _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
-        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
-        await Task.Delay(_config.LightStabilizeMs, ct);
+        // TODO: 拍照存圖暫時停用
+        // _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
+        // _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
+        // await Task.Delay(_config.LightStabilizeMs, ct);
 
         // STEP 3: Both cameras trigger simultaneously
-        _cameraManager!.CameraStart(_cameraKeyLeft);
-        _cameraManager.CameraStart(_cameraKeyRight);
-        await Task.Delay(_config.CaptureWaitMs, ct);
+        //_cameraManager!.CameraStart(_cameraKeyLeft);
+        //_cameraManager.CameraStart(_cameraKeyRight);
+        //await Task.Delay(_config.CaptureWaitMs, ct);
 
         // STEP 4: Get both images
-        var imageLeft  = _cameraManager.GetCameraImage(_cameraKeyLeft);
-        var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
+        //var imageLeft  = _cameraManager.GetCameraImage(_cameraKeyLeft);
+        //var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
 
         // STEP 5: Both lights OFF
-        _light.SetValue(_config.LightChannelLeft,  0);
-        _light.SetValue(_config.LightChannelRight, 0);
+        // _light.SetValue(_config.LightChannelLeft,  0);
+        // _light.SetValue(_config.LightChannelRight, 0);
 
         // Capture failure check
-        if (imageLeft == null || imageRight == null)
-        {
-            string failSide = imageLeft == null && imageRight == null ? "BOTH"
-                            : imageLeft == null ? "LEFT" : "RIGHT";
-            _logger.Warn($"[S03] {slotName} {failSide} capture failed, treat as NG");
-            return (0, true, "", null);
-        }
+        //if (imageLeft == null || imageRight == null)
+        //{
+        //    string failSide = imageLeft == null && imageRight == null ? "BOTH"
+        //                    : imageLeft == null ? "LEFT" : "RIGHT";
+        //    _logger.Warn($"[S03] {slotName} {failSide} capture failed, treat as NG");
+        //    return (0, true, "", null);
+        //}
 
         // STEP 6: Save images
         string imagePath = "";
         string pathL = "", pathR = "";
-        if (_config.SaveImages)
-        {
-            string dir = Path.Combine(
-                _config.ImageSavePath,
-                DateTime.Now.ToString("yyyyMMdd"),
-                barcode);
-            Directory.CreateDirectory(dir);
+        //if (_config.SaveImages)
+        //{
+        //    string dir = Path.Combine(
+        //        _config.ImageSavePath,
+        //        DateTime.Now.ToString("yyyyMMdd"),
+        //        barcode);
+        //    Directory.CreateDirectory(dir);
 
-            pathL = Path.Combine(dir, $"{slotName}_L.tif");
-            pathR = Path.Combine(dir, $"{slotName}_R.tif");
+        //    pathL = Path.Combine(dir, $"{slotName}_L.tif");
+        //    pathR = Path.Combine(dir, $"{slotName}_R.tif");
 
-            _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
-            _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
+        //    _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
+        //    _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
 
-            imagePath = pathL;
-        }
+        //    imagePath = pathL;
+        //}
 
         // STEP 7: 呼叫 BumperFlat 演算法分析（使用已存檔的 .tif 路徑）
         string algJsonKey = _config.GetAlgJsonKey(target, slotIndex);
@@ -649,7 +767,19 @@ public sealed class MachineController : IDisposable
     private DeviceInitResult InitMachineCore()
     {
         const string name = "Config";
-        try { cMachineManager.Init(); _logger.Info($"{name}: OK"); return DeviceInitResult.Ok(name); }
+        try
+        {
+            // 與 CameraLightTest 相同的設定資料夾結構：
+            //   <exe>\MachineAssembly\Slot_Inspection\GrabModule.txt  ← 相機定義
+            //   <exe>\MachineAssembly\Slot_Inspection\Axises.txt      ← 軸定義
+            string baseDir = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "MachineAssembly",
+                "Slot_Inspection");
+            cMachineManager.Init(baseDir);
+            _logger.Info($"{name}: OK (BaseDir={baseDir})");
+            return DeviceInitResult.Ok(name);
+        }
         catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, $"Load failed: {ex.Message}", ex); }
     }
 
@@ -665,6 +795,29 @@ public sealed class MachineController : IDisposable
             _logger.Info($"{name}: OK ({_lightComPort})"); return DeviceInitResult.Ok(name);
         }
         catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, $"{_lightComPort}: {ex.Message}", ex); }
+    }
+
+    /// <summary>
+    /// 初始化 HighBright 光源控制器（DryRun / 取像用）。
+    /// COM port 與光源 COM port 共用 _lightComPort 設定。
+    /// </summary>
+    private DeviceInitResult InitLightHB()
+    {
+        const string name = "HighBright Light";
+        try
+        {
+            _lightHB = new HighBright_Controller(_lightComPort);
+            _lightHB.Connect();
+            if (!_lightHB.IsOpen)
+                return DeviceInitResult.Fail(name, $"Cannot open {_lightComPort}");
+            _logger.Info($"{name}: OK ({_lightComPort})");
+            return DeviceInitResult.Ok(name);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, $"{_lightComPort}: {ex.Message}", ex);
+        }
     }
 
     private async Task<DeviceInitResult> InitAxesAsync(CancellationToken ct)
@@ -708,51 +861,56 @@ public sealed class MachineController : IDisposable
         const string name = "4-Axis Home";
         try
         {
-            // ── Y0 恆亮：原點賦歸進行中──
-            _plc?.SetY(0, true);
-            _logger.Info("[Home] Y0 ON (steady)");
 
-            // ── 所有軸同時發出 Home 指令 ──
-            // 注意：Home() 觸發 PR#0（Homing PR），速度由驅動器 PR#0 設定決定，
-            // 與 SetMaxVel（PR#1 速度）無關，不在此呼叫 SetMaxVel，
-            // 避免 ApplySettings() 誤改 P6.002（PR#1 路徑定義）導致後續空跑速度異常。
-            progress?.Report("所有軸同時歸原點...");
-            foreach (var axisName in _axisNames)
+            _plc?.SetY(0, true);
+
+            // ── Step 1：先 home X, ZL, ZR（不含 Y） ──
+            progress?.Report("X / ZL / ZR 軸歸原點...");
+            string[] nonYAxes = ["AxisX", "AxisZL", "AxisZR"];
+            foreach (var axisName in nonYAxes)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Axes.TryGetValue(axisName, out var axis))
                     return DeviceInitResult.Fail(name, $"{axisName} 不存在");
-
-                // 設定歸原點速度：高速 8000 rpm，低速 800 rpm
-                if (axis is cAxis_RS485 rs485Axis)
-                    rs485Axis.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
-
+                if (axis is cAxis_RS485 rs485)
+                    rs485.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
                 axis.Home();
                 _logger.Debug($"{axisName} Home() issued");
             }
 
-            // ── 同時等待所有軸到位 ──
-            bool allDone = await WaitUntilAsync(
-                () => _axisNames.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()),
-                _axisHomeTimeout, ct);
-            // if (!allDone) return DeviceInitResult.Fail(name, $"Home timeout ({_axisHomeTimeout.TotalSeconds}s)");
+            // ── 等 ZL/ZR/X 完成，逾時才安全讓 Y 動 ──
+            bool nonYDone = await WaitHomeWithSafetyAsync(nonYAxes, _axisHomeTimeout, ct);
+            if (!nonYDone)
+                return DeviceInitResult.Fail(name, $"X/ZL/ZR Home timeout");
+
+            // ── Step 2：再 home Y ──
+            progress?.Report("Y 軸歸原點...");
+            if (!Axes.TryGetValue("AxisY", out var axisY))
+                return DeviceInitResult.Fail(name, "AxisY 不存在");
+            if (axisY is cAxis_RS485 yRs485)
+                yRs485.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
+            axisY.Home();
+
+            bool yDone = await WaitHomeWithSafetyAsync(["AxisY"], _axisHomeTimeout, ct);
+            if (!yDone)
+                return DeviceInitResult.Fail(name, "AxisY Home timeout");
 
             // ── 確認狀態 ──
             foreach (var axisName in _axisNames)
             {
                 if (!Axes.TryGetValue(axisName, out var axis)) continue;
                 if (!axis.GetOrg())
-                    _logger.Warn($"{axisName} home done but ORG not confirmed (AbsOk may need settling time)");
+                    _logger.Warn($"{axisName} ORG not confirmed");
                 if (axis.GetAlarm())
                     return DeviceInitResult.Fail(name, $"{axisName} alarm after home");
-                if (axis.GetPLimit())
-                    _logger.Warn($"{axisName} positive limit active after home");
-                if (axis.GetNLimit())
-                    _logger.Warn($"{axisName} negative limit active after home");
-                _logger.Debug($"{axisName} home done, pos={axis.GetRealPosition()}");
             }
 
-            _logger.Info($"{name}: OK"); return DeviceInitResult.Ok(name);
+            _logger.Info($"{name}: OK");
+            return DeviceInitResult.Ok(name);
+
+             
+
+         
         }
         catch (OperationCanceledException)
         {
@@ -763,22 +921,116 @@ public sealed class MachineController : IDisposable
         catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, ex.Message, ex); }
     }
 
-    private DeviceInitResult InitCameras()
+    /// <summary>
+    /// 等待所有軸完成原點賦歸，並同時監控 X7 光閘訊號。
+    /// X7=0 → 立即停軸 → 等待 X10=1（上升邊緣）→ 重新發出 Home 指令 → 繼續等待。
+    /// </summary>
+    private async Task<bool> WaitHomeWithSafetyAsync(string[] nonYAxes, TimeSpan  HomeTimeout,  CancellationToken ct)
     {
-        const string name = "FLIR Camera";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        const int DebounceCount = 3;
+        int x7LowCount = 0;
+
+        while (sw.Elapsed < _axisHomeTimeout)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // X7 光閘偵測（暫時停用）
+            //bool? x7 = GetPlcXOctal(7);
+            //if (x7 == false)
+            //{
+            //    x7LowCount++;
+            //}
+            //else
+            //{
+            //    x7LowCount = 0;
+            //}
+            //if (x7LowCount >= DebounceCount)
+            //{
+            //    x7LowCount = 0;
+            //    foreach (var n in _axisNames)
+            //        if (Axes.TryGetValue(n, out var ax)) try { ax.MotStop(isImmediate: true); } catch { }
+            //    progress?.Report("[Home] ⚠ 光閘觸發！等待 X10=1 繼續歸原點...");
+            //    _logger.Warn("[Home] X7 confirmed LOW (debounced), axes stopped, waiting for X10=1 + X7=1");
+            //    while (true)
+            //    {
+            //        ct.ThrowIfCancellationRequested();
+            //        bool x10 = GetPlcXOctal(10) ?? false;
+            //        bool x7Clear = GetPlcXOctal(7) ?? false;
+            //        if (x10 && x7Clear) { _logger.Info("[Home] X10=1, X7=1 → resume homing"); break; }
+            //        await Task.Delay(100, ct);
+            //    }
+            //    progress?.Report("[Home] 光閘解除，重新歸原點...");
+            //    _logger.Info("[Home] X10=1, re-issuing Home to all axes");
+            //    foreach (var axisName in _axisNames)
+            //    {
+            //        if (!Axes.TryGetValue(axisName, out var axis)) continue;
+            //        if (axis is cAxis_RS485 rs485Axis)
+            //            rs485Axis.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
+            //        axis.Home();
+            //    }
+            //    sw.Restart();
+            //    continue;
+            //}
+
+            // 檢查所有軸是否已到位
+            if (_axisNames.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()))
+                return true;
+
+            await Task.Delay(100, ct);
+        }
+
+        return false; // timeout
+    }
+
+    private async Task<DeviceInitResult> InitCamerasAsync(CancellationToken ct = default)
+    {
+        const string name = "FLIR Camera (DALSA)";
         try
         {
-            _cameraManager = new CameraManager(_isSimulation: false);
-            foreach (var camName in _cameraNames)
+            // 已初始化過就直接回傳成功，避免重複呼叫 Init() 導致 Sapera SDK
+            // 將相同 Handle 二次加入 Dictionary 而拋出 duplicate key 例外
+            if (_cameraRight != null && _cameraLeft != null)
             {
-                if (!Cameras.TryGetValue(camName, out var camera))
-                    return DeviceInitResult.Fail(name, $"Camera not found: {camName}");
-                if (!camera.Init()) return DeviceInitResult.Fail(name, $"{camName} Init() failed");
-                _logger.Debug($"{camName} Init OK");
+                _logger.Info($"{name}: already initialized, skip");
+                return DeviceInitResult.Ok(name);
             }
-            _logger.Info($"{name}: OK"); return DeviceInitResult.Ok(name);
+
+            // CameraManager 建構子內部會用 NamedKey 查 Dictionary<string,ICamera>
+            // 導致大量 KeyNotFoundException 並在 InitImageBuffer 時 crash (exit code 1)。
+            // 改為直接對 ICamera 呼叫 Init()，並用 Task.Run 避免
+            // Sapera SDK m_Xfer.Create() 同步阻塞 UI。
+
+            if (!Cameras.TryGetValue(CameraUidRight, out var camR))
+                return DeviceInitResult.Fail(name, $"Camera not found: {CameraUidRight}");
+
+            bool rightOk = await Task.Run(() => camR.Init(), ct);
+            if (!rightOk)
+                return DeviceInitResult.Fail(name, $"{CameraUidRight} Init() 回傳 false");
+            _cameraRight = camR;
+            _logger.Debug($"[S00] {CameraUidRight} Init OK  W={camR.FrameWidth} H={camR.BufHeight}");
+
+            if (!Cameras.TryGetValue(CameraUidLeft, out var camL))
+                return DeviceInitResult.Fail(name, $"Camera not found: {CameraUidLeft}");
+
+            bool leftOk = await Task.Run(() => camL.Init(), ct);
+            if (!leftOk)
+                return DeviceInitResult.Fail(name, $"{CameraUidLeft} Init() 回傳 false");
+            _cameraLeft = camL;
+            _logger.Debug($"[S00] {CameraUidLeft} Init OK  W={camL.FrameWidth} H={camL.BufHeight}");
+
+            _logger.Info($"{name}: OK");
+            return DeviceInitResult.Ok(name);
         }
-        catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, ex.Message, ex); }
+        catch (OperationCanceledException)
+        {
+            return DeviceInitResult.Fail(name, "Cancelled");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, $"{name}: FAIL");
+            return DeviceInitResult.Fail(name, ex.Message, ex);
+        }
     }
 
     private DeviceInitResult InitBarcodeReader()
@@ -876,19 +1128,29 @@ public sealed class MachineController : IDisposable
     // =========================================
     //  Dry Run (空跑測試)
     // =========================================
-    //  Dry Run (空跑測試)
-    // =========================================
 
     /// <summary>
-    /// 空跑測試：僅測試 ZL/ZR 升降 + Y 載台移動的基本動作。
-    /// 每個 Slot 流程：
-    ///   1. Y 移動到下一個 Slot → 等待到位 → 停留 1.5 秒
-    ///   2. ZL + ZR 下降至 5mm → 等待到位 → 停留 2 秒
+    /// 空跑測試主流程。
+    /// ┌─ STEP 0 : 前置確認（軸狀態、光源）
+    /// ├─ STEP 1 : 逐 Slot 迴圈
+    /// │   ├─ S1-1 : 光閘檢查（暫停等待）
+    /// │   ├─ S1-2 : Y 軸移動到 Slot 位置
+    /// │   ├─ S1-3 : 光閘檢查
+    /// │   ├─ S1-4 : ZL / ZR 下降至檢測高度
+    /// │   ├─ S1-5 : 光閘檢查
+    /// │   ├─ S1-6 : 光源 ON → 取像 → 光源 OFF
+    /// │   ├─ S1-7 : 光閘檢查（取像完成，不繼續下一張）
+    /// │   └─ S1-8 : ZL / ZR 上升至安全高度
+    /// ├─ STEP 2 : ZL / ZR 回原點（Y 軸保持原位）
+    /// └─ STEP 3 : Y 軸移動至待機位置（496 mm）
     /// </summary>
     public async Task DryRunAsync(
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
+        // 清除上一次因中斷而殘留的暫停狀態
+        _dryRunPaused = false;
+
         _logger.Info("===== Dry Run Start =====");
 
         if (SimulationMode)
@@ -896,6 +1158,10 @@ public sealed class MachineController : IDisposable
             await DryRunSimAsync(progress, ct);
             return;
         }
+        Axes["AxisX"].SetMaxVel(8000);
+        Axes["AxisY"].SetMaxVel(8000);
+        Axes["AxisZL"].SetMaxVel(4000);
+        Axes["AxisZR"].SetMaxVel(4000);
 
         // ── Y0 閃爍：空跑測試進行中指示燈（1s 亮 / 1s 暗）──
         using var blinkCts = new CancellationTokenSource();
@@ -915,46 +1181,118 @@ public sealed class MachineController : IDisposable
             }
         });
         _logger.Info("[DryRun] Y0 BLINK start");
+
+        // ── 背景光閘監控（暫時停用）──
+        using var x7MonitorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var x7MonitorTask = Task.CompletedTask;
+        //var x7MonitorTask = Task.Run(async () =>
+        //{
+        //    const int DebounceCount = 3; // 連續幾次 LOW 才視為真實觸發
+        //    int lowCount = 0;
+        //    while (!x7MonitorCts.Token.IsCancellationRequested)
+        //    {
+        //        try
+        //        {
+        //            bool? x7 = GetPlcXOctal(7);
+        //            if (x7 == false) // null（斷線）不計入，只有確定 LOW 才累計
+        //            {
+        //                lowCount++;
+        //                if (lowCount >= DebounceCount)
+        //                {
+        //                    if (!_dryRunPaused)
+        //                        _logger.Warn($"[DryRun] X7 debounce confirmed LOW ({lowCount}×50ms), pausing");
+        //                    PauseDryRun();
+        //                }
+        //            }
+        //            else
+        //            {
+        //                if (lowCount > 0 && lowCount < DebounceCount)
+        //                    _logger.Debug($"[DryRun] X7 glitch suppressed ({lowCount}×50ms)");
+        //                lowCount = 0; // HIGH 或斷線都重設計數
+        //            }
+        //            await Task.Delay(50, x7MonitorCts.Token);
+        //        }
+        //        catch (OperationCanceledException) { break; }
+        //        catch { break; }
+        //    }
+        //});
+        _logger.Info("[DryRun] X7 monitor disabled");
+
         try
         {
+            // =====================================================
+            //  STEP 0 : 前置確認
+            // =====================================================
 
-        // ── 前置：確認 Y / ZL / ZR 軸已激磁且無警報 ──
-        string[] dryRunAxes = ["AxisY", "AxisZL", "AxisZR"];
-        foreach (var axisName in dryRunAxes)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (!Axes.TryGetValue(axisName, out var axis))
-                throw new InvalidOperationException($"{axisName} 不存在");
+            // STEP 0-0 ① 確保光源已連線
+            // if (_lightHB == null || !_lightHB.IsOpen)
+            // {
+            //     progress?.Report("[STEP 0-0] 初始化光源 (HighBright)...");
+            //     var lr = InitLightHB();
+            //     if (!lr.Success)
+            //         throw new InvalidOperationException($"光源初始化失敗: {lr.Message}");
+            //     _logger.Info("[STEP 0-0] 光源初始化 ✓");
+            // }
 
-            if (axis.GetAlarm())
+            // STEP 0-0 ② 強制關閉光源（防呆：上次流程中斷時可能殘留亮燈狀態）
+            // progress?.Report("[STEP 0-0] 光源全關（防呆）...");
+            // bool off1 = LightSetWithRetry(1, 0, "STEP0-0", "OFF");
+            // bool off2 = LightSetWithRetry(2, 0, "STEP0-0", "OFF");
+            // if (!off1 || !off2)
+            //     _logger.Warn($"[STEP 0-0] 光源強制關閉失敗  CH1={off1} CH2={off2}，請確認光源控制器連線");
+            // else
+            //     _logger.Info("[STEP 0-0] 光源全關 ✓");
+            // progress?.Report("[STEP 0-0] 光源已關 ✓");
+
+            // STEP 0-1：確認 Y / ZL / ZR 軸已激磁且無警報
+            progress?.Report("[STEP 0-1] 確認軸狀態...");
+            string[] dryRunAxes = ["AxisY", "AxisZL", "AxisZR"];
+            foreach (var axisName in dryRunAxes)
             {
-                progress?.Report($"{axisName} 有警報，嘗試清除...");
-                axis.ResetError();
-                await Task.Delay(500, ct);
+                ct.ThrowIfCancellationRequested();
+                if (!Axes.TryGetValue(axisName, out var axis))
+                    throw new InvalidOperationException($"{axisName} 不存在");
+
                 if (axis.GetAlarm())
-                    throw new InvalidOperationException($"{axisName} 警報無法清除，請檢查驅動器");
+                {
+                    progress?.Report($"[STEP 0-1] {axisName} 有警報，嘗試清除...");
+                    axis.ResetError();
+                    await Task.Delay(500, ct);
+                    if (axis.GetAlarm())
+                        throw new InvalidOperationException($"{axisName} 警報無法清除，請檢查驅動器");
+                }
+
+                if (!axis.GetSVON())
+                {
+                    progress?.Report($"[STEP 0-1] {axisName} 激磁...");
+                    axis.SetSVON(true);
+                    bool ready = await WaitUntilAsync(
+                        () => axis.GetRDY() && !axis.GetAlarm(),
+                        _deviceConnectTimeout, ct);
+                    if (!ready)
+                        throw new InvalidOperationException(
+                            $"{axisName} 激磁失敗 (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                }
+
+                progress?.Report($"[STEP 0-1] {axisName} 就緒 ✓");
             }
 
-            if (!axis.GetSVON())
+            // TODO: 相機功能暫時停用
+            if (_cameraRight == null || _cameraLeft == null)
             {
-                progress?.Report($"{axisName} 激磁...");
-                axis.SetSVON(true);
-                bool ready = await WaitUntilAsync(
-                    () => axis.GetRDY() && !axis.GetAlarm(),
-                    _deviceConnectTimeout, ct);
-                if (!ready)
-                    throw new InvalidOperationException(
-                        $"{axisName} 激磁失敗 (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                progress?.Report("初始化相機...");
+                var cr = await InitCamerasAsync(ct);
+                if (!cr.Success)
+                    throw new InvalidOperationException($"相機初始化失敗: {cr.Message}");
+                progress?.Report("相機 ✓");
             }
 
-            progress?.Report($"{axisName} 就緒 ✓");
-        }
-
-        // ── 逐 Slot：Y 移動 → ZL/ZR 下降 → 停留 → ZL/ZR 上升 ──
-        var rows = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
+            // ── 逐 Slot：Y 移動 → ZL/ZR 下降 → 停留 → ZL/ZR 上升 ──
+            // Count 動態讀取陣列長度，避免 SlotPositionTable 筆數與此處不同步造成 IndexOutOfRangeException
+            var rows = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
         {
-            (SlotInspectionProgress.TargetCollection.AreaA_Row1, 13),
-            //(SlotInspectionProgress.TargetCollection.AreaA_Row2, 12),
+            (SlotInspectionProgress.TargetCollection.AreaA_Row1, SlotPositionTable.AreaA_Row1.Length),
+            //(SlotInspectionProgress.TargetCollection.AreaA_Row2, SlotPositionTable.AreaA_Row2.Length),
         };
 
         int totalSlots = rows.Sum(r => r.Count);
@@ -965,6 +1303,7 @@ public sealed class MachineController : IDisposable
             for (int i = 0; i < count; i++)
             {
                 ct.ThrowIfCancellationRequested();
+                await CheckPauseAsync(progress, ct);
                 currentSlot++;
 
                 var pos = SlotPositionTable.Get(target, i);
@@ -990,10 +1329,13 @@ public sealed class MachineController : IDisposable
                 progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: Y={realY:F2} ✓");
                 _logger.Info($"[DryRun] {slotLabel} Y={realY:F2}");
 
+                // ── 光閘檢查：Y 到位後，若 X7 觸發則暫停 ──
+                await CheckPauseAsync(progress, ct);
+
                 // STEP 2: ZL + ZR 同時下降至檢測高度
-                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR↓ {_config.CameraHeightZ}mm...");
-                Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZ);
-                Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZ);
+                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL↓ {_config.CameraHeightZL}mm / ZR↓ {_config.CameraHeightZR}mm...");
+                Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZL);
+                Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZR);
 
                 bool zDown = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
@@ -1005,11 +1347,17 @@ public sealed class MachineController : IDisposable
 
                 double realZL = Axes["AxisZL"].GetRealPosition();
                 double realZR = Axes["AxisZR"].GetRealPosition();
-                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL={realZL:F2} ZR={realZR:F2} ✓ 停留 2s...");
+                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL={realZL:F2} ZR={realZR:F2} ✓");
                 _logger.Info($"[DryRun] {slotLabel} ZL={realZL:F2} ZR={realZR:F2}");
 
-                // STEP 3: ZL/ZR 到位後停留 2 秒
-                await Task.Delay(2000, ct);
+                // ── 光閘檢查：Z 到位後，若 X7 觸發則暫停 ──
+                await CheckPauseAsync(progress, ct);
+
+                // STEP 3: ZL/ZR 到位後，在原本 2 秒停留期間執行「開光 → 取像 → 關光」
+                await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, progress, ct);
+
+                // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
+                await CheckPauseAsync(progress, ct);
 
                 // STEP 4: ZL + ZR 上升恢復安全高度
                 progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR↑ 恢復安全高度...");
@@ -1028,9 +1376,13 @@ public sealed class MachineController : IDisposable
             }
         }
 
-        // ── 最終步驟 1：所有軸同時回原點 ──
-        progress?.Report("所有軸回歸原點...");
-        string[] dryRunHomeAxes = ["AxisY", "AxisZL", "AxisZR"];
+        // =====================================================
+        //  STEP 2 : ZL / ZR 回原點（Y 軸保持原位）
+        // =====================================================
+        progress?.Report("[STEP 2] ZL / ZR 回原點...");
+        _logger.Info("[DryRun] STEP 2 Home ZL + ZR");
+
+        string[] dryRunHomeAxes = ["AxisZL", "AxisZR"];
         foreach (var axisName in dryRunHomeAxes)
             if (Axes.TryGetValue(axisName, out var ax)) ax.Home();
 
@@ -1038,28 +1390,68 @@ public sealed class MachineController : IDisposable
             () => dryRunHomeAxes.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()),
             _axisHomeTimeout, ct);
         if (!homeDone)
-            _logger.Warn("[DryRun] 回原點逾時，請確認軸狀態");
+            _logger.Warn("[STEP 2] ZL/ZR 回原點逾時，請確認軸狀態");
         else
-            progress?.Report("所有軸已回原點 ✓");
+            progress?.Report("[STEP 2] ZL+ZR 已回原點 ✓");
 
-        // ── 最終步驟 2：Y 軸移動至 490mm ──
-        progress?.Report("Y 軸移動至 490mm...");
-        Axes["AxisY"].MotMoveAbs(490.0);
-        await Task.Delay(150, ct);
-        bool yFinal = await WaitUntilAsync(
-            () => Axes["AxisY"].Wait(),
-            _config.MoveTimeout, ct);
-        if (!yFinal)
-            _logger.Warn("[DryRun] Y 軸移動至 490mm 逾時");
-        else
-            progress?.Report($"Y 軸已到達 490mm (實際={Axes["AxisY"].GetRealPosition():F2}) ✓");
+        // =====================================================
+        //  STEP 3 : Y 軸移動至待機位置（496 mm）
+        // =====================================================
+        progress?.Report("[STEP 3] Y 軸移動至待機位置 496 mm...");
+        _logger.Info("[DryRun] STEP 3 Y → 496 mm (standby)");
 
-        progress?.Report($"空跑測試完成 ✓ 已跑完 {totalSlots} 個 Slot");
+        // 若 X7 觸發暫停，等待恢復後再發出移動指令
+        await CheckPauseAsync(progress, ct);
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            Axes["AxisY"].MotMoveAbs(496.0);
+            await Task.Delay(150, ct);
+            bool yFinal = await WaitUntilAsync(
+                () => Axes["AxisY"].Wait() || _dryRunPaused, _config.MoveTimeout, ct);
+
+            if (_dryRunPaused)
+            {
+                // X7 觸發停軸，等待 X10 恢復後重新發出移動指令
+                _logger.Info("[STEP 3] X7 triggered during Y move, waiting for resume...");
+                await CheckPauseAsync(progress, ct);
+                continue; // 重新發出 MotMoveAbs
+            }
+
+            if (!yFinal)
+                _logger.Warn("[STEP 3] Y 軸移動至待機位置逾時");
+            else
+                progress?.Report($"[STEP 3] Y 已到達 496 mm (實際={Axes["AxisY"].GetRealPosition():F2}) ✓");
+            break;
+        }
+
+        progress?.Report($"空跑測試完成 ✓  共跑完 {totalSlots} 個 Slot");
         _logger.Info("===== Dry Run Done =====");
         } // end try
         finally
         {
-            // ── 停止閃爍，Y0 恢復恆亮（idle 狀態）──
+            // 無論正常結束、中斷、事件發生，光源一定強制關閉
+            // if (_lightHB != null && _lightHB.IsOpen)
+            // {
+            //     try
+            //     {
+            //         _lightHB.SetValue(1, 0);
+            //         _lightHB.SetValue(2, 0);
+            //         _logger.Info("[DryRun] finally: 光源全關 ✓");
+            //     }
+            //     catch (Exception ex)
+            //     {
+            //         _logger.Warn($"[DryRun] finally: 光源關閉失敗 {ex.Message}");
+            //     }
+            // }
+
+            // 停止 X7 背景監控
+            x7MonitorCts.Cancel();
+            try { await x7MonitorTask; } catch { }
+            _logger.Info("[DryRun] X7 monitor stop");
+
+            // 停止閃爍，Y0 恢復恆亮（idle 狀態）
             blinkCts.Cancel();
             try { await blinkTask; } catch { }
             _plc?.SetY(0, true);
@@ -1068,6 +1460,128 @@ public sealed class MachineController : IDisposable
     }
 
 
+
+    /// <summary>
+    /// DryRun 期間的光源 + 取像流程（ZL/ZR 到位後的 2 秒停留期間執行）。
+    /// 正確順序：Stop（清 IsGrabing）→ 光源 ON → Start → 等完整幀 → Stop（DMA 完成）→ 光源 OFF → GetBufAddress() → 存 BMP。
+    /// 影像儲存至 D:\CameraLightTest\yyyyMMdd\  （直接使用 ICamera，不透過 CameraManager）
+    /// </summary>
+    private async Task DryRunCaptureAsync(
+        string slotLabel,
+        int currentSlot,
+        int totalSlots,
+        IProgress<string>? progress,
+        CancellationToken ct)
+    {
+        const string SaveRoot     = @"D:\CameraLightTest";
+        const int    LightChLeft  = 1;    // 左相機光源通道
+        const int    LightChRight = 2;    // 右相機光源通道
+        const int    LightPct     = 100;  // 亮度 100%（可依需求調整）
+        const int    StabilizeMs  = 100;  // 光源穩定等待（ms）
+        // Right 相機 ExposureTime=100000μs(100ms)，需等曝光 + Sapera DMA 傳輸完成
+        // 取最長曝光 100ms + 100ms 傳輸緩衝 = 200ms → 再加 100ms 安全餘量 = 300ms
+        const int    GrabWaitMs   = 300;
+
+        // TODO: 拍照存圖暫時停用
+        // STEP 1: 先停止相機，清除 IsGrabing 狀態
+        _cameraRight?.Stop();
+        _cameraLeft?.Stop();
+
+        // STEP 2: CH1（左）+ CH2（右）光源同時 ON
+        progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: CH{LightChLeft}+CH{LightChRight} 光源 ON...");
+        bool ch1On = LightSetWithRetry(LightChLeft, LightPct, slotLabel, "ON");
+        bool ch2On = LightSetWithRetry(LightChRight, LightPct, slotLabel, "ON");
+        if (!ch1On || !ch2On)
+            _logger.Warn($"[DryRun] {slotLabel} 光源 ON 失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
+        await Task.Delay(StabilizeMs, ct);
+
+        // STEP 3: 開始取像（m_Xfer.Grab()）
+        progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: 相機取像...");
+        _cameraRight?.Start();
+        _cameraLeft?.Start();
+
+        // STEP 4: 等待曝光完成 + Sapera DMA 把資料寫入 Buffer
+        await Task.Delay(GrabWaitMs, ct);
+
+        // STEP 5: 停止取像（m_Xfer.Abort()）
+        _cameraRight?.Stop();
+        _cameraLeft?.Stop();
+
+        // STEP 6: CH1（左）+ CH2（右）光源 OFF
+        bool ch1Off = LightSetWithRetry(LightChLeft, 0, slotLabel, "OFF");
+        bool ch2Off = LightSetWithRetry(LightChRight, 0, slotLabel, "OFF");
+        if (!ch1Off || !ch2Off)
+            _logger.Warn($"[DryRun] {slotLabel} 光源 OFF 失敗  CH{LightChLeft}={ch1Off} CH{LightChRight}={ch2Off}");
+
+        // STEP 7: 讀取 Buffer
+        var bufRight = _cameraRight?.GetBufAddress();
+        var bufLeft = _cameraLeft?.GetBufAddress();
+
+        // STEP 8: 存 BMP 至 D:\CameraLightTest\yyyyMMdd\
+        string saveLabel = slotLabel.Replace(" ", "_");
+        string dir = Path.Combine(SaveRoot, DateTime.Now.ToString("yyyyMMdd"));
+        Directory.CreateDirectory(dir);
+        string ts = DateTime.Now.ToString("HHmmss_fff");
+
+        bool anySaved = false;
+
+        if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
+        {
+            string path = Path.Combine(dir, $"{saveLabel}_R_{ts}.bmp");
+            DryRunSaveBmp(_cameraRight, bufRight[0], path);
+            _logger.Info($"[DryRun] {slotLabel} 已存 R: {path}");
+            anySaved = true;
+        }
+        if (_cameraLeft != null && bufLeft != null && bufLeft.Length > 0 && bufLeft[0] != IntPtr.Zero)
+        {
+            string path = Path.Combine(dir, $"{saveLabel}_L_{ts}.bmp");
+            DryRunSaveBmp(_cameraLeft, bufLeft[0], path);
+            _logger.Info($"[DryRun] {slotLabel} 已存 L: {path}");
+            anySaved = true;
+        }
+
+        if (!anySaved)
+        {
+            _logger.Warn($"[DryRun] {slotLabel} 取像失敗（兩鏡頭皆無影像）");
+            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ⚠ 取像失敗");
+        }
+        else
+        {
+            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: 取像完成 ✓ → {dir}");
+        }
+
+        // STEP 9: 補足剩餘停留時間（確保整體 ≈ 2 秒）
+        int remaining = 2000 - StabilizeMs - GrabWaitMs;
+        if (remaining > 0)
+            await Task.Delay(remaining, ct);
+    }
+
+    /// <summary>DryRun 專用：從 ICamera Buffer 存成 BMP 檔（與 CameraLightTest 相同做法）</summary>
+    private void DryRunSaveBmp(ICamera camera, IntPtr bufPtr, string filePath)
+    {
+        try
+        {
+            int w      = camera.FrameWidth;
+            int h      = camera.BufHeight;
+            int stride = w * camera.PixelBytes;
+            var fmt    = camera.PixelBytes == 3
+                ? System.Windows.Media.PixelFormats.Rgb24
+                : System.Windows.Media.PixelFormats.Gray8;
+
+            var bmp = System.Windows.Media.Imaging.BitmapSource.Create(
+                w, h, 96, 96, fmt, null, bufPtr, h * stride, stride);
+            bmp.Freeze();
+
+            using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+            var encoder = new System.Windows.Media.Imaging.BmpBitmapEncoder();
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+            encoder.Save(fs);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[DryRun] SaveBmp 失敗 ({filePath}): {ex.Message}");
+        }
+    }
 
     /// <summary>空跑：檢查軸狀態（警報/極限），有問題就拋例外或記 log</summary>
     private void DryRunCheckAxisState(string axisName, string context)
@@ -1079,6 +1593,42 @@ public sealed class MachineController : IDisposable
             _logger.Warn($"[DryRun] {axisName} 正極限觸發 ({context})");
         if (axis.GetNLimit())
             _logger.Warn($"[DryRun] {axisName} 負極限觸發 ({context})");
+    }
+
+    /// <summary>
+    /// 光源設值（含 retry 與詳細 Log）。
+    /// HighBright 控制器有時因串口回應慢而 Timeout，最多重試 2 次。
+    /// </summary>
+    private bool LightSetWithRetry(int channel, int percent, string context, string action, int maxRetry = 2)
+    {
+        if (_lightHB == null || !_lightHB.IsOpen)
+        {
+            _logger.Error($"[Light] {context} CH{channel} {action} 失敗：光源未連線");
+            return false;
+        }
+
+        for (int attempt = 1; attempt <= maxRetry; attempt++)
+        {
+            try
+            {
+                bool ok = _lightHB.SetValue(channel, percent);
+                if (ok)
+                {
+                    _logger.Info($"[Light] {context} CH{channel} {action} {percent}% → OK (attempt {attempt})");
+                    return true;
+                }
+                _logger.Warn($"[Light] {context} CH{channel} {action} {percent}% → 回應錯誤 (attempt {attempt}/{maxRetry})  resp=\"{_lightHB.LastUnexpectedResponse}\"");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[Light] {context} CH{channel} {action} {percent}% → 例外 (attempt {attempt}/{maxRetry}): {ex.Message}");
+            }
+
+            if (attempt < maxRetry)
+                Thread.Sleep(50); // 短暫等待後重試
+        }
+
+        return false;
     }
 
     /// <summary>模擬模式的空跑：用 delay 模擬 ZL/ZR 升降 + Y 移動</summary>
@@ -1163,6 +1713,7 @@ public sealed class MachineController : IDisposable
             } catch { }
             try { _plc?.Dispose(); } catch { }
             try { _light?.Dispose(); } catch { }
+            try { _lightHB?.Dispose(); } catch { }
 
             foreach (var axis in Axes.Values)
                 try { axis.MotStop(); axis.SetSVON(false); } catch { }

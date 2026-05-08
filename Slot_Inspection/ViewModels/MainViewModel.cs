@@ -17,6 +17,10 @@ public sealed class MainViewModel : ObservableObject
     private bool _isInitialized;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
+    private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
+    private bool _prevX10 = false; // X10 上一次狀態（預設 0）
     private readonly MachineController _machine = new();
     private CancellationTokenSource? _cts;
 
@@ -106,7 +110,7 @@ public sealed class MainViewModel : ObservableObject
     {
         // START 只需：初始化完成（含原點賦歸） + 尚未運行
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
-        StopCommand = new RelayCommand(OnStop, () => IsRunning || IsDryRunning);
+        StopCommand = new RelayCommand(OnStop);
         // 空機測試只需 Servo 激磁完成即可（不需原點賦歸）
         DryRunCommand = new RelayCommand(OnDryRun, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 初始化：Config + Servo + PLC（不含原點賦歸）
@@ -126,6 +130,56 @@ public sealed class MainViewModel : ObservableObject
             CurrentTime = DateTime.Now.ToString("HH:mm:ss");
         };
         _timer.Start();
+
+        _plcTimer.Tick += OnPlcTick;
+        _plcTimer.Start();
+    }
+
+    /// <summary>
+    /// 每 100ms 輪詢一次 PLC X1+X2 訊號。
+    /// 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
+    /// </summary>
+    private void OnPlcTick(object? sender, EventArgs e)
+    {
+        // X7/X10 光閘暫停/繼續（暫時停用）
+        //if (IsDryRunning)
+        //{
+        //    bool x7 = _machine.GetPlcXOctal(7) ?? true;
+        //    if (!x7)
+        //        _machine.PauseDryRun();
+        //    if (_machine.IsDryRunPaused)
+        //    {
+        //        bool x10 = _machine.GetPlcXOctal(10) ?? false;
+        //        if (!_prevX10 && x10 && x7)
+        //            _machine.ResumeDryRun();
+        //        _prevX10 = x10;
+        //    }
+        //    else
+        //    {
+        //        _prevX10 = false;
+        //    }
+        //}
+
+        if (!IsDeviceReady || IsRunning || IsDryRunning) return;
+
+        bool x1 = _machine.GetPlcXOctal(1) ?? false; // X1
+        bool x2 = _machine.GetPlcXOctal(2) ?? false; // X2
+
+        if (x1 && x2)
+        {
+            if (!_x1x2Stopwatch.IsRunning)
+                _x1x2Stopwatch.Restart();
+
+            if (_x1x2Stopwatch.Elapsed >= DryRunTriggerDuration)
+            {
+                _x1x2Stopwatch.Reset();
+                OnDryRun();
+            }
+        }
+        else
+        {
+            _x1x2Stopwatch.Reset();
+        }
     }
 
     /// <summary>
@@ -301,6 +355,9 @@ public sealed class MainViewModel : ObservableObject
     {
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
+
+        // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
+        _prevX10 = false;
 
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
 

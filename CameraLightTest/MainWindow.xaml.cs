@@ -3,12 +3,14 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using FoupInspecMachine.Manager;
-using FoupInspecMachine.Models;
 using Machine.Core;
 using Machine.Core.Interfaces;
 using NLog;
 using HalconDotNet;
+using CameraLightTest.LightControllers;
+using Brushes = System.Windows.Media.Brushes;
 
 namespace CameraLightTest
 {
@@ -16,15 +18,49 @@ namespace CameraLightTest
     {
         private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
 
-        private OPT_Controller? _light;
+        private HighBright_Controller? _light;
         private ICamera? _camera;
         private bool _initialized;
+
+        // ── 防抖 Timer（300ms 內無新動作才送出指令）────────
+        private readonly DispatcherTimer _sliderDebounce;
 
         public MainWindow()
         {
             InitializeComponent();
+
             SliderIntensity.ValueChanged += (s, e) =>
                 TxtIntensityValue.Text = $"{(int)SliderIntensity.Value}%";
+
+            // 初始化防抖 Timer
+            _sliderDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+            _sliderDebounce.Tick += SliderDebounce_Tick;
+        }
+
+        // ═══════════════════════════════════════
+        //  Slider 即時控光（防抖）
+        // ═══════════════════════════════════════
+
+        private void SliderIntensity_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!_initialized || _light == null) return;
+
+            // 每次有新值進來就重置計時器
+            _sliderDebounce.Stop();
+            _sliderDebounce.Start();
+        }
+
+        private void SliderDebounce_Tick(object? sender, EventArgs e)
+        {
+            _sliderDebounce.Stop(); // 單次觸發
+
+            if (_light == null || !_light.IsOpen) return;
+
+            int ch        = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
+            int intensity = (int)SliderIntensity.Value;
+
+            bool ok = _light.SetValue(ch, intensity);
+            Log($"[Slider] CH{ch} = {intensity}%{(ok ? "" : " [失敗]")}");
         }
 
         // ═══════════════════════════════════════
@@ -35,13 +71,13 @@ namespace CameraLightTest
         {
             BtnInit.IsEnabled = false;
             TxtInitStatus.Text = "初始化中...";
-            TxtInitStatus.Foreground = System.Windows.Media.Brushes.Orange;
+            TxtInitStatus.Foreground = Brushes.Orange;
 
             try
             {
                 // 1. Machine.Core
                 Log("初始化 Machine.Core...");
-                cMachineManager.Init();
+                cMachineManager.Init(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MachineAssembly", "CameraLightTest"));
                 Log("  → OK");
 
                 // 填入可用相機列表
@@ -54,8 +90,8 @@ namespace CameraLightTest
                 // 2. 光源
                 string comPort = TxtLightCom.Text.Trim();
                 Log($"連接光源 ({comPort})...");
-                _light = new OPT_Controller(comPort);
-                _light.Open();
+                _light = new HighBright_Controller(comPort);
+                _light.Connect();
                 if (!_light.IsOpen)
                     throw new Exception($"光源開啟失敗 ({comPort})");
                 Log("  → OK");
@@ -73,17 +109,17 @@ namespace CameraLightTest
                 // 完成
                 _initialized = true;
                 TxtInitStatus.Text = "✓ 初始化完成";
-                TxtInitStatus.Foreground = System.Windows.Media.Brushes.LimeGreen;
-                BtnLightOn.IsEnabled = true;
+                TxtInitStatus.Foreground = Brushes.LimeGreen;
+                BtnLightOn.IsEnabled  = true;
                 BtnLightOff.IsEnabled = true;
-                BtnCapture.IsEnabled = true;
+                BtnCapture.IsEnabled  = true;
                 BtnSetExposure.IsEnabled = true;
                 Log("===== 初始化完成，可開始測試 =====");
             }
             catch (Exception ex)
             {
                 TxtInitStatus.Text = $"✗ 失敗: {ex.Message}";
-                TxtInitStatus.Foreground = System.Windows.Media.Brushes.Red;
+                TxtInitStatus.Foreground = Brushes.Red;
                 Log($"[ERROR] {ex.Message}");
                 BtnInit.IsEnabled = true;
             }
@@ -96,18 +132,18 @@ namespace CameraLightTest
         private void BtnLightOn_Click(object sender, RoutedEventArgs e)
         {
             if (_light == null) return;
-            int ch = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
+            int ch        = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
             int intensity = (int)SliderIntensity.Value;
-            _light.SetValue(ch, intensity);
-            Log($"光源 ON → CH{ch} = {intensity}%");
+            bool ok = _light.SetValue(ch, intensity);
+            Log($"光源 ON → CH{ch} = {intensity}%{(ok ? "" : " [失敗]")}");
         }
 
         private void BtnLightOff_Click(object sender, RoutedEventArgs e)
         {
             if (_light == null) return;
-            int ch = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
-            _light.SetValue(ch, 0);
-            Log($"光源 OFF → CH{ch}");
+            int ch  = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
+            bool ok = _light.SetValue(ch, 0);
+            Log($"光源 OFF → CH{ch}{(ok ? "" : " [失敗]")}");
         }
 
         // ═══════════════════════════════════════
@@ -132,12 +168,12 @@ namespace CameraLightTest
 
             try
             {
-                int ch = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
+                int ch        = int.TryParse(TxtLightChannel.Text, out int c) ? c : 1;
                 int intensity = (int)SliderIntensity.Value;
 
                 // 1. 開光
-                _light.SetValue(ch, intensity);
-                Log($"[1/4] 光源 ON (CH{ch}={intensity}%)");
+                bool ok = _light.SetValue(ch, intensity);
+                Log($"[1/4] 光源 ON (CH{ch}={intensity}%){(ok ? "" : " [失敗]")}");
                 await Task.Delay(100);
 
                 // 2. 觸發相機
@@ -156,17 +192,19 @@ namespace CameraLightTest
                 {
                     int w = _camera.FrameWidth;
                     int h = _camera.BufHeight;
+                    int pixelBytes = _camera.PixelBytes;
 
-                    // 存檔 (使用 HalconDotNet)
-                    var hImg = new HalconDotNet.HImage();
-                    hImg.GenImage1Extern("byte", w, h, bufAddr[0], IntPtr.Zero);
-                    hImg.WriteImage("tiff", 0, filename);
-                    hImg.Dispose();
+                    // 根據 PixelBytes 決定像素格式
+                    var pixelFormat = pixelBytes == 3 ? PixelFormats.Rgb24 : PixelFormats.Gray8;
+                    int stride = w * pixelBytes;
 
-                    Log($"[3/4] 已存檔: {filename}");
+                    // 存 BMP
+                    string bmpFilename = Path.Combine(dir,
+                        $"Capture_{DateTime.Now:yyyyMMdd_HHmmss_fff}.bmp");
+                    SaveBmp(bufAddr[0], w, h, stride, pixelFormat, bmpFilename);
+                    Log($"[3/4] 已存檔: {bmpFilename}");
 
-                    // 顯示預覽 (從記憶體建立 BitmapSource)
-                    ShowPreview(bufAddr[0], w, h);
+                    ShowPreview(bufAddr[0], w, h, stride, pixelFormat);
                 }
                 else
                 {
@@ -190,17 +228,43 @@ namespace CameraLightTest
         }
 
         // ═══════════════════════════════════════
-        //  影像預覽
+        //  存 BMP
         // ═══════════════════════════════════════
 
-        private unsafe void ShowPreview(IntPtr bufPtr, int width, int height)
+        private void SaveBmp(IntPtr bufPtr, int width, int height, int stride,
+                             PixelFormat pixelFormat, string filePath)
         {
             try
             {
-                int stride = width; // 8-bit grayscale, 1 byte per pixel
                 var bmp = BitmapSource.Create(
                     width, height, 96, 96,
-                    PixelFormats.Gray8, null,
+                    pixelFormat, null,
+                    bufPtr, height * stride, stride);
+                bmp.Freeze();
+
+                using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+                var encoder = new BmpBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+                encoder.Save(fs);
+            }
+            catch (Exception ex)
+            {
+                Log($"[WARN] 存檔失敗: {ex.Message}");
+            }
+        }
+
+        // ═══════════════════════════════════════
+        //  影像預覽
+        // ═══════════════════════════════════════
+
+        private void ShowPreview(IntPtr bufPtr, int width, int height, int stride,
+                                 PixelFormat pixelFormat)
+        {
+            try
+            {
+                var bmp = BitmapSource.Create(
+                    width, height, 96, 96,
+                    pixelFormat, null,
                     bufPtr, height * stride, stride);
                 bmp.Freeze();
                 ImgPreview.Source = bmp;
@@ -229,7 +293,8 @@ namespace CameraLightTest
         {
             try
             {
-                _light?.SetValue(1, 0);
+                _sliderDebounce.Stop();
+                _light?.TurnOffAll();
                 _light?.Dispose();
                 _camera?.Stop();
             }

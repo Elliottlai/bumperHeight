@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Machine.Core
+namespace Slot_Inspection.Enum
 {
     public class NamedKey
     {
@@ -14,6 +14,5 @@ namespace Machine.Core
         public override string ToString() => Key;
         public static NamedKey Create([CallerMemberName] string key = null) => new NamedKey(key);
         public static implicit operator string(NamedKey d) => d.ToString();
-          
     }
 }

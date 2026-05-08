@@ -58,8 +58,11 @@ public sealed class InspectionConfig
     //  TODO: 依實際 teaching 結果調整
     // =========================================
 
-    /// <summary>ZL/ZR 下降後的檢測高度（mm），所有 Slot 共用</summary>
-    public double CameraHeightZ { get; set; } = 5.0;  // TODO: Teaching 後填入實際值
+    /// <summary>ZL 下降後的檢測高度（mm），所有 Slot 共用</summary>
+    public double CameraHeightZL { get; set; } = 24.7;
+
+    /// <summary>ZR 下降後的檢測高度（mm），所有 Slot 共用</summary>
+    public double CameraHeightZR { get; set; } = 0.0;
 
     /// <summary>ZL/ZR 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
     public double ZSafeHeight { get; set; } = 0.0;

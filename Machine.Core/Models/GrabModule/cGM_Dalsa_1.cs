@@ -922,7 +922,7 @@ namespace Machine.Core
                         m_Xfer.Select(0, 0, BufIndex);
 
 
-                    bool ok = m_Xfer.Grab();
+                    bool ok = m_Xfer.Snap();
 
                     IsGrabing = true;
                 }
