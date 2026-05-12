@@ -72,11 +72,12 @@ public sealed class MainViewModel : ObservableObject
 
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
-    public ICommand DryRunCommand { get; }
+    public ICommand RunCommand { get; }
     public ICommand InitAxesCommand { get; }
     public ICommand HomeCommand { get; }
     public ICommand ReadBarcodeCommand { get; }
     public ICommand PositionSettingsCommand { get; }
+    public ICommand CropSettingsCommand { get; }
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -115,8 +116,8 @@ public sealed class MainViewModel : ObservableObject
         // START 只需：初始化完成（含原點賦歸） + 尚未運行
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
         StopCommand = new RelayCommand(OnStop);
-        // 空機測試只需 Servo 激磁完成即可（不需原點賦歸）
-        DryRunCommand = new RelayCommand(OnDryRun, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        // 主流程：逐 Slot 移動、取像、存圖
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
         // 原點賦歸：裝置就緒後隨時可按（不鎖定）
@@ -125,6 +126,8 @@ public sealed class MainViewModel : ObservableObject
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 座標設定：任何時候都可開啟
         PositionSettingsCommand = new RelayCommand(OnPositionSettings);
+        // 裁切設定：任何時候都可開啟
+        CropSettingsCommand = new RelayCommand(OnCropSettings);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -181,7 +184,7 @@ public sealed class MainViewModel : ObservableObject
             if (_x1x2Stopwatch.Elapsed >= DryRunTriggerDuration)
             {
                 _x1x2Stopwatch.Reset();
-                OnDryRun();
+                OnRunInspection();
             }
         }
         else
@@ -359,7 +362,7 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    private async void OnDryRun()
+    private async void OnRunInspection()
     {
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
@@ -371,17 +374,17 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = "空跑測試開始...";
-            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token));
-            StatusMessage = "空跑測試完成 ?";
+            StatusMessage = "主流程啟動...逐 Slot 取像中";
+            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token, _confirmedBarcode));
+            StatusMessage = "主流程完成 ?";
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "空跑測試已取消";
+            StatusMessage = "主流程已取消";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"空跑測試異常: {ex.Message}";
+            StatusMessage = $"主流程異常: {ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -496,11 +499,34 @@ public sealed class MainViewModel : ObservableObject
         if (win.ShowDialog() == true)
         {
             vm.ApplyTo(_machine.Config);
-            StatusMessage = "座標設定已更新";
+            SlotPositionTable.Save();
+            _machine.Config.Save();
+            StatusMessage = "座標設定已更新（已儲存）";
         }
     }
 
     /// <summary>
+    /// 開啟裁切設定對話視窗
+    /// </summary>
+    private void OnCropSettings()
+    {
+        var vm = new CropSettingsViewModel(_machine.Config);
+
+        var win = new Views.CropSettingsWindow
+        {
+            DataContext = vm,
+            Owner = Application.Current.MainWindow
+        };
+
+        if (win.ShowDialog() == true)
+        {
+            vm.ApplyTo(_machine.Config);
+            _machine.Config.Save();
+            StatusMessage = "裁切設定已更新（已儲存）";
+        }
+    }
+
+
     /// 初始化按鈕：Config + Servo 激磁 + PLC 連線（不含原點賦歸）。
     /// </summary>
     private async void OnInitDevices()

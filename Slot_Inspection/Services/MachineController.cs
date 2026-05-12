@@ -126,7 +126,7 @@ public sealed class MachineController : IDisposable
         }
     }
 
-    private readonly InspectionConfig _config = new();
+    private readonly InspectionConfig _config = InspectionConfig.Load();
     public InspectionConfig Config => _config;
     private readonly BumperAlgService _bumperAlg = new();
 
@@ -1159,7 +1159,8 @@ public sealed class MachineController : IDisposable
     /// </summary>
     public async Task DryRunAsync(
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string barcode = "")
     {
         // 清除上一次因中斷而殘留的暫停狀態
         _dryRunPaused = false;
@@ -1367,7 +1368,7 @@ public sealed class MachineController : IDisposable
                 await CheckPauseAsync(progress, ct);
 
                 // STEP 3: ZL/ZR 到位後，在原本 2 秒停留期間執行「開光 → 取像 → 關光」
-                await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, progress, ct);
+                await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct);
 
                 // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
                 await CheckPauseAsync(progress, ct);
@@ -1483,6 +1484,8 @@ public sealed class MachineController : IDisposable
         string slotLabel,
         int currentSlot,
         int totalSlots,
+        int slotIndex,
+        string barcode,
         IProgress<string>? progress,
         CancellationToken ct)
     {
@@ -1495,7 +1498,15 @@ public sealed class MachineController : IDisposable
         // 取最長曝光 100ms + 100ms 傳輸緩衝 = 200ms → 再加 100ms 安全餘量 = 300ms
         const int    GrabWaitMs   = 300;
 
-        // TODO: 拍照存圖暫時停用
+        // ── 根據 X12 / X13 判斷相機編號 ──
+        // X12=true → Left=C4, Right=C3
+        // X13=true → Left=C2, Right=C1
+        bool x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12
+        bool x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13
+        string camLeft  = x12 ? "C4" : (x13 ? "C2" : "C2");  // X12→C4, X13→C2, 預設C2
+        string camRight = x12 ? "C3" : (x13 ? "C1" : "C1");  // X12→C3, X13→C1, 預設C1
+        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} → Left={camLeft} Right={camRight}");
+
         // STEP 1: 先停止相機，清除 IsGrabing 狀態
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
@@ -1530,25 +1541,27 @@ public sealed class MachineController : IDisposable
         var bufLeft = _cameraLeft?.GetBufAddress();
 
         // STEP 8: 存 BMP 至 D:\CameraLightTest\yyyyMMdd\
-        string saveLabel = slotLabel.Replace(" ", "_");
+        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp
         string dir = Path.Combine(SaveRoot, DateTime.Now.ToString("yyyyMMdd"));
         Directory.CreateDirectory(dir);
-        string ts = DateTime.Now.ToString("HHmmss_fff");
+        string ts        = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");   // 2026-04-10T10-34-57
+        string slotNum   = (slotIndex + 1).ToString("D2");                  // 01, 02 ...
+        string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
 
         bool anySaved = false;
 
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{saveLabel}_R_{ts}.bmp");
-            DryRunSaveBmp(_cameraRight, bufRight[0], path);
-            _logger.Info($"[DryRun] {slotLabel} 已存 R: {path}");
+            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_LSlot{slotNum}.bmp");
+            DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
+            _logger.Info($"[DryRun] {slotLabel} 已存 R({camRight}): {path}");
             anySaved = true;
         }
         if (_cameraLeft != null && bufLeft != null && bufLeft.Length > 0 && bufLeft[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{saveLabel}_L_{ts}.bmp");
-            DryRunSaveBmp(_cameraLeft, bufLeft[0], path);
-            _logger.Info($"[DryRun] {slotLabel} 已存 L: {path}");
+            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camLeft}_LSlot{slotNum}.bmp");
+            DryRunSaveBmp(_cameraLeft, bufLeft[0], path, _config.GetRoi(camLeft));
+            _logger.Info($"[DryRun] {slotLabel} 已存 L({camLeft}): {path}");
             anySaved = true;
         }
 
@@ -1568,8 +1581,8 @@ public sealed class MachineController : IDisposable
             await Task.Delay(remaining, ct);
     }
 
-    /// <summary>DryRun 專用：從 ICamera Buffer 存成 BMP 檔（與 CameraLightTest 相同做法）</summary>
-    private void DryRunSaveBmp(ICamera camera, IntPtr bufPtr, string filePath)
+    /// <summary>DryRun 專用：從 ICamera Buffer 存成 BMP 檔，支援裁切 ROI。</summary>
+    private void DryRunSaveBmp(ICamera camera, IntPtr bufPtr, string filePath, CameraRoi? roi = null)
     {
         try
         {
@@ -1580,13 +1593,27 @@ public sealed class MachineController : IDisposable
                 ? System.Windows.Media.PixelFormats.Rgb24
                 : System.Windows.Media.PixelFormats.Gray8;
 
-            var bmp = System.Windows.Media.Imaging.BitmapSource.Create(
+            var fullBmp = System.Windows.Media.Imaging.BitmapSource.Create(
                 w, h, 96, 96, fmt, null, bufPtr, h * stride, stride);
-            bmp.Freeze();
+            fullBmp.Freeze();
+
+            System.Windows.Media.Imaging.BitmapSource saveBmp = fullBmp;
+
+            // ── 裁切 ROI（邊界保護：超出範圍則不裁切）──
+            if (roi != null && roi.IsEnabled
+                && (roi.X + roi.W) <= w
+                && (roi.Y + roi.H) <= h)
+            {
+                var rect    = new System.Windows.Int32Rect(roi.X, roi.Y, roi.W, roi.H);
+                var cropped = new System.Windows.Media.Imaging.CroppedBitmap(fullBmp, rect);
+                cropped.Freeze();
+                saveBmp = cropped;
+                _logger.Debug($"[DryRun] SaveBmp 裁切 ROI=({roi.X},{roi.Y}) {roi.W}×{roi.H} → {filePath}");
+            }
 
             using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
             var encoder = new System.Windows.Media.Imaging.BmpBitmapEncoder();
-            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bmp));
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(saveBmp));
             encoder.Save(fs);
         }
         catch (Exception ex)

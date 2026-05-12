@@ -46,6 +46,7 @@ public sealed class PositionSettingsViewModel : ObservableObject
     /// <summary>從 InspectionConfig 與 SlotPositionTable 載入目前值。</summary>
     public void LoadFrom(InspectionConfig config)
     {
+        SlotPositionTable.Load();   // 從 JSON 讀取最新已存座標
         YPositions.Clear();
         for (int i = 0; i < SlotPositionTable.AreaA_Row1.Length; i++)
             YPositions.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1[i].Y));

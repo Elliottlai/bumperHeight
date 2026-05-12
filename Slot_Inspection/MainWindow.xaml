@@ -90,7 +90,7 @@
             <!-- Header -->
             <Border Grid.Row="0" Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" Margin="12,12,12,8" Padding="18,10">
                 <DockPanel>
-                    <TextBlock DockPanel.Dock="Left" Text="量測畫面示意" FontSize="34" FontStyle="Italic" FontFamily="Times New Roman" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <TextBlock DockPanel.Dock="Left" Text="聯策科技" FontSize="34" FontStyle="Italic" FontFamily="Times New Roman" VerticalAlignment="Center" Margin="0,0,10,0"/>
                     <TextBlock DockPanel.Dock="Right" Text="Slot Inspection" Foreground="#2E75B6" FontSize="36" FontWeight="Bold" VerticalAlignment="Center"/>
                 </DockPanel>
             </Border>
@@ -133,15 +133,38 @@
                             </TextBox>
                         </Border>
 
-                        <UniformGrid Grid.Column="2" Columns="7" HorizontalAlignment="Stretch" Margin="2,0,0,0">
-                            <Button Content="RUN" Style="{StaticResource StateButtonStyle}" Background="#00C853"/>
-                            <Button Content="Down" Style="{StaticResource StateButtonStyle}" Background="#F44336"/>
-                            <Button Content="IDLE" Style="{StaticResource StateButtonStyle}" Background="#DDDDDD"/>
-                            <Button Content="START" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE" Command="{Binding StartCommand}"/>
-                            <Button Content="STOP" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE" Command="{Binding StopCommand}"/>
-                            <Button Content="{Binding CurrentDate}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
-                            <Button Content="{Binding CurrentTime}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
-                        </UniformGrid>
+                        <Grid Grid.Column="2" Margin="2,0,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="⚙ 初始化"
+                                    Command="{Binding InitAxesCommand}"
+                                    Style="{StaticResource StateButtonStyle}"
+                                    Background="#DAE8FC" FontSize="11" Padding="10,4"
+                                    FontWeight="Bold" ToolTip="Config + Servo 激磁 + PLC 連線"/>
+                            <Button Grid.Column="1" Content="🏠 原點賦歸"
+                                    Command="{Binding HomeCommand}"
+                                    Style="{StaticResource StateButtonStyle}"
+                                    Background="#D5E8D4" FontSize="11" Padding="10,4"
+                                    FontWeight="Bold" ToolTip="所有軸回原點"/>
+                            <Button Grid.Column="2" Content="▶ RUN"
+                                    Command="{Binding RunCommand}"
+                                    Style="{StaticResource StateButtonStyle}"
+                                    Background="#C6EFCE" FontSize="11" Padding="16,4"
+                                    FontWeight="Bold" ToolTip="執行主流程：逐 Slot 移動、取像、存圖"/>
+                            <Button Grid.Column="3" Content="⏹ STOP"
+                                    Command="{Binding StopCommand}"
+                                    Style="{StaticResource StateButtonStyle}"
+                                    Background="#FFCCCC" FontSize="11" Padding="16,4"
+                                    FontWeight="Bold"/>
+                            <Button Grid.Column="4" Content="{Binding CurrentDate}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
+                            <Button Grid.Column="5" Content="{Binding CurrentTime}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
+                        </Grid>
                     </Grid>
 
                     <Border Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource AreaHeaderBorderStyle}">
@@ -379,53 +402,37 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="12" Margin="12,4,12,4">
-                <Button Content="Main" Background="#C6E0B4"/>
-                <Button Content="Setting"/>
-                <Button Content="IO table"/>
-                <Button Content="Result"/>
-                <Button Content="Alarm History"/>
+            <UniformGrid Grid.Row="2" Columns="9" Margin="12,4,12,4">
+                <Button Content="Main" Background="#C6E0B4" FontSize="11" Padding="4,4"/>
+                <Button Content="Setting" FontSize="11" Padding="4,4"/>
+                <Button Content="IO table" FontSize="11" Padding="4,4"/>
+                <Button Content="Result" FontSize="11" Padding="4,4"/>
+                <Button Content="Alarm History" FontSize="11" Padding="4,4"/>
                 <CheckBox Content="模擬模式"
                           IsChecked="{Binding IsSimulationMode}"
                           VerticalContentAlignment="Center"
                           HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
                           FontSize="11"
                           ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)"/>
-                <Button Content="⚙ 初始化"
-                        Command="{Binding InitAxesCommand}"
-                        Style="{StaticResource StateButtonStyle}"
-                        Background="#DAE8FC"
-                        FontWeight="Bold"
-                        ToolTip="Config + Servo 激磁 + PLC 連線"/>
-                <Button Content="🏠 原點賦歸"
-                        Command="{Binding HomeCommand}"
-                        Style="{StaticResource StateButtonStyle}"
-                        Background="#D5E8D4"
-                        FontWeight="Bold"
-                        ToolTip="所有軸回原點"/>
-                <Button Content="🔄 空跑測試"
-                        Command="{Binding DryRunCommand}"
-                        Style="{StaticResource StateButtonStyle}"
-                        Background="#FFF2CC"
-                        FontWeight="Bold"
-                        ToolTip="依序測試所有軸的移動與到位功能（不觸發相機/光源）"/>
                 <Button Content="📷 讀取條碼"
                         Command="{Binding ReadBarcodeCommand}"
                         Style="{StaticResource StateButtonStyle}"
-                        Background="#B4C7E7"
+                        Background="#B4C7E7" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
                         ToolTip="Y→491 → 偵測 X12/X13 → 移動 X 軸至讀碼位置"/>
                 <Button Content="📍 座標設定"
                         Command="{Binding PositionSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
-                        Background="#E2EFDA"
+                        Background="#E2EFDA" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
                         ToolTip="調整 Y / X / ZL / ZR / Z安全高度座標"/>
-                <Button Content="⏹ STOP"
-                        Command="{Binding StopCommand}"
+                <Button Content="✂ 裁切設定"
+                        Command="{Binding CropSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
-                        Background="#F4B084"
-                        FontWeight="Bold"/>
+                        Background="#FCE4EC" FontSize="11" Padding="4,4"
+                        FontWeight="Bold"
+                        ToolTip="設定 C1~C4 各相機的影像裁切 ROI（X/Y/W/H）"/>
             </UniformGrid>
 
             <!-- Footer -->

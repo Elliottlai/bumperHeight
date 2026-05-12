@@ -1,6 +1,21 @@
 namespace Slot_Inspection.Models;
 
 using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+/// <summary>單一相機的裁切 ROI 設定。-1 表示不裁切。</summary>
+public sealed class CameraRoi
+{
+    public string CameraId { get; set; } = "";
+    public int X { get; set; } = -1;
+    public int Y { get; set; } = -1;
+    public int W { get; set; } = -1;
+    public int H { get; set; } = -1;
+
+    /// <summary>四個值都有效才啟用裁切。</summary>
+    public bool IsEnabled => X >= 0 && Y >= 0 && W > 0 && H > 0;
+}
 
 /// <summary>
 /// Inspection parameters (light, exposure, NG threshold).
@@ -71,6 +86,32 @@ public sealed class InspectionConfig
     public double ZSafeHeight { get; set; } = 0.0;
 
     // =========================================
+    //  裁切 ROI 設定（C1~C4 各自獨立）
+    // =========================================
+
+    /// <summary>C1 相機 ROI（X13=true, Right 相機）</summary>
+    public CameraRoi RoiC1 { get; set; } = new() { CameraId = "C1" };
+
+    /// <summary>C2 相機 ROI（X13=true, Left 相機）</summary>
+    public CameraRoi RoiC2 { get; set; } = new() { CameraId = "C2" };
+
+    /// <summary>C3 相機 ROI（X12=true, Right 相機）</summary>
+    public CameraRoi RoiC3 { get; set; } = new() { CameraId = "C3" };
+
+    /// <summary>C4 相機 ROI（X12=true, Left 相機）</summary>
+    public CameraRoi RoiC4 { get; set; } = new() { CameraId = "C4" };
+
+    /// <summary>依相機名稱取得對應 ROI。</summary>
+    public CameraRoi GetRoi(string cameraId) => cameraId switch
+    {
+        "C1" => RoiC1,
+        "C2" => RoiC2,
+        "C3" => RoiC3,
+        "C4" => RoiC4,
+        _    => new CameraRoi()
+    };
+
+    // =========================================
     //  BumperFlat 演算法 JSON 設定
     // =========================================
 
@@ -117,5 +158,41 @@ public sealed class InspectionConfig
 
         // 檔名沒有底線 → 使用預設 JSON key
         return DefaultAlgJsonKey;
+    }
+
+    // =========================================
+    //  設定檔存讀（JSON）
+    // =========================================
+
+    private static readonly string ConfigFilePath = Path.Combine(
+        AppDomain.CurrentDomain.BaseDirectory, "Config", "InspectionConfig.json");
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.Never
+    };
+
+    /// <summary>將目前設定儲存至 Config\InspectionConfig.json。</summary>
+    public void Save()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
+        File.WriteAllText(ConfigFilePath, JsonSerializer.Serialize(this, JsonOpts));
+    }
+
+    /// <summary>從 Config\InspectionConfig.json 載入設定，檔案不存在時回傳預設值。</summary>
+    public static InspectionConfig Load()
+    {
+        if (!File.Exists(ConfigFilePath))
+            return new InspectionConfig();
+        try
+        {
+            var json = File.ReadAllText(ConfigFilePath);
+            return JsonSerializer.Deserialize<InspectionConfig>(json, JsonOpts) ?? new InspectionConfig();
+        }
+        catch
+        {
+            return new InspectionConfig();
+        }
     }
 }
