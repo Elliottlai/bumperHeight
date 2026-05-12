@@ -1301,6 +1301,17 @@ public sealed class MachineController : IDisposable
                 progress?.Report("相機 ✓");
             }
 
+            // ── 依 X12 / X13 訊號選擇 R組 或 L組 Z 軸高度 ──
+            bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12 → R組
+            bool boardX13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 → L組
+            double zCamZL    = _config.GetCameraHeightZL(boardX12, boardX13);
+            double zCamZR    = _config.GetCameraHeightZR(boardX12, boardX13);
+            double zSafeZL   = _config.GetZLSafeHeight(boardX12, boardX13);
+            double zSafeZR   = _config.GetZRSafeHeight(boardX12, boardX13);
+            string boardGroup = boardX12 ? "R組(X12)" : (boardX13 ? "L組(X13)" : "L組(預設)");
+            progress?.Report($"[STEP 0-2] 板子訊號: {boardGroup} → ZL相機高={zCamZL:F2} ZR相機高={zCamZR:F2} ZL安全={zSafeZL:F2} ZR安全={zSafeZR:F2}");
+            _logger.Info($"[DryRun] {boardGroup}: ZL={zCamZL:F2}/{zSafeZL:F2}  ZR={zCamZR:F2}/{zSafeZR:F2}");
+
             // ── 逐 Slot：Y 移動 → ZL/ZR 下降 → 停留 → ZL/ZR 上升 ──
             // Count 動態讀取陣列長度，避免 SlotPositionTable 筆數與此處不同步造成 IndexOutOfRangeException
             var rows = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
@@ -1346,10 +1357,10 @@ public sealed class MachineController : IDisposable
                 // ── 光閘檢查：Y 到位後，若 X7 觸發則暫停 ──
                 await CheckPauseAsync(progress, ct);
 
-                // STEP 2: ZL + ZR 同時下降至檢測高度
-                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL↓ {_config.CameraHeightZL}mm / ZR↓ {_config.CameraHeightZR}mm...");
-                Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZL);
-                Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZR);
+                // STEP 2: ZL + ZR 同時下降至檢測高度（依 X12/X13 選 R組 或 L組 高度）
+                progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL↓ {zCamZL}mm / ZR↓ {zCamZR}mm ({boardGroup})...");
+                Axes["AxisZL"].MotMoveAbs(zCamZL);
+                Axes["AxisZR"].MotMoveAbs(zCamZR);
 
                 bool zDown = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
@@ -1373,10 +1384,10 @@ public sealed class MachineController : IDisposable
                 // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
                 await CheckPauseAsync(progress, ct);
 
-                // STEP 4: ZL + ZR 上升恢復安全高度
+                // STEP 4: ZL + ZR 上升恢復安全高度（依 X12/X13 選 R組 或 L組 安全高度）
                 progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR↑ 恢復安全高度...");
-                Axes["AxisZL"].MotMoveAbs(_config.ZLSafeHeight);
-                Axes["AxisZR"].MotMoveAbs(_config.ZRSafeHeight);
+                Axes["AxisZL"].MotMoveAbs(zSafeZL);
+                Axes["AxisZR"].MotMoveAbs(zSafeZR);
 
                 bool zUp = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
@@ -1541,7 +1552,7 @@ public sealed class MachineController : IDisposable
         var bufLeft = _cameraLeft?.GetBufAddress();
 
         // STEP 8: 存 BMP 至 D:\CameraLightTest\yyyyMMdd\
-        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp
+        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp (左相機) / RSlot01.bmp (右相機)
         string dir = Path.Combine(SaveRoot, DateTime.Now.ToString("yyyyMMdd"));
         Directory.CreateDirectory(dir);
         string ts        = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");   // 2026-04-10T10-34-57
@@ -1552,7 +1563,7 @@ public sealed class MachineController : IDisposable
 
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_LSlot{slotNum}.bmp");
+            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_RSlot{slotNum}.bmp");
             DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
             _logger.Info($"[DryRun] {slotLabel} 已存 R({camRight}): {path}");
             anySaved = true;

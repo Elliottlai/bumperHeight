@@ -72,21 +72,89 @@ public sealed class InspectionConfig
             : BarcodePositionLeftX;
 
     // =========================================
-    //  相機/光源高度設定（只有 Z 軸，所有 Slot 共用）
+    //  Z 軸高度設定 — R 組（X12=true，板子在右側）
     //  TODO: 依實際 teaching 結果調整
     // =========================================
 
-    /// <summary>ZL 下降後的檢測高度（mm），所有 Slot 共用</summary>
-    public double CameraHeightZL { get; set; } = 24.7;
+    /// <summary>R組：ZL 下降後的檢測高度（mm）</summary>
+    public double CameraHeightZL_R { get; set; } = 24.7;
 
-    /// <summary>ZR 下降後的檢測高度（mm），所有 Slot 共用</summary>
-    public double CameraHeightZR { get; set; } = 0.0;
+    /// <summary>R組：ZR 下降後的檢測高度（mm）</summary>
+    public double CameraHeightZR_R { get; set; } = 0.0;
 
-    /// <summary>ZL 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
-    public double ZLSafeHeight { get; set; } = 0.0;
+    /// <summary>R組：ZL 安全高度（mm）</summary>
+    public double ZLSafeHeight_R { get; set; } = 0.0;
 
-    /// <summary>ZR 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
-    public double ZRSafeHeight { get; set; } = 0.0;
+    /// <summary>R組：ZR 安全高度（mm）</summary>
+    public double ZRSafeHeight_R { get; set; } = 0.0;
+
+    // =========================================
+    //  Z 軸高度設定 — L 組（X13=true，板子在左側）
+    //  TODO: 依實際 teaching 結果調整
+    // =========================================
+
+    /// <summary>L組：ZL 下降後的檢測高度（mm）</summary>
+    public double CameraHeightZL_L { get; set; } = 24.7;
+
+    /// <summary>L組：ZR 下降後的檢測高度（mm）</summary>
+    public double CameraHeightZR_L { get; set; } = 0.0;
+
+    /// <summary>L組：ZL 安全高度（mm）</summary>
+    public double ZLSafeHeight_L { get; set; } = 0.0;
+
+    /// <summary>L組：ZR 安全高度（mm）</summary>
+    public double ZRSafeHeight_L { get; set; } = 0.0;
+
+    // ── 相容舊屬性（讀取時保留，存回新欄位）──
+    [JsonIgnore]
+    public double CameraHeightZL
+    {
+        get => CameraHeightZL_R;
+        set { CameraHeightZL_R = value; CameraHeightZL_L = value; }
+    }
+    [JsonIgnore]
+    public double CameraHeightZR
+    {
+        get => CameraHeightZR_R;
+        set { CameraHeightZR_R = value; CameraHeightZR_L = value; }
+    }
+    [JsonIgnore]
+    public double ZLSafeHeight
+    {
+        get => ZLSafeHeight_R;
+        set { ZLSafeHeight_R = value; ZLSafeHeight_L = value; }
+    }
+    [JsonIgnore]
+    public double ZRSafeHeight
+    {
+        get => ZRSafeHeight_R;
+        set { ZRSafeHeight_R = value; ZRSafeHeight_L = value; }
+    }
+
+    /// <summary>
+    /// 依 X12/X13 訊號取得對應的 ZL 檢測高度。
+    /// x12=true → R組；x13=true → L組。
+    /// </summary>
+    public double GetCameraHeightZL(bool x12, bool x13)
+        => x12 ? CameraHeightZL_R : CameraHeightZL_L;
+
+    /// <summary>
+    /// 依 X12/X13 訊號取得對應的 ZR 檢測高度。
+    /// </summary>
+    public double GetCameraHeightZR(bool x12, bool x13)
+        => x12 ? CameraHeightZR_R : CameraHeightZR_L;
+
+    /// <summary>
+    /// 依 X12/X13 訊號取得對應的 ZL 安全高度。
+    /// </summary>
+    public double GetZLSafeHeight(bool x12, bool x13)
+        => x12 ? ZLSafeHeight_R : ZLSafeHeight_L;
+
+    /// <summary>
+    /// 依 X12/X13 訊號取得對應的 ZR 安全高度。
+    /// </summary>
+    public double GetZRSafeHeight(bool x12, bool x13)
+        => x12 ? ZRSafeHeight_R : ZRSafeHeight_L;
 
     // =========================================
     //  裁切 ROI 設定（C1~C4 各自獨立）

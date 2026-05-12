@@ -24,18 +24,24 @@ public sealed class AxisPositionEntry : ObservableObject
 
 /// <summary>
 /// 座標設定對話視窗的 ViewModel。
-/// Y 軸 25 個座標、ZL/ZR、X 各自一個分頁。
+/// Y 軸 25 個座標、ZL/ZR（分 R組/L組）、X 各自一個分頁。
 /// </summary>
 public sealed class PositionSettingsViewModel : ObservableObject
 {
     // ── Y 軸：25 個 Slot 座標（AreaA_Row1，對應實體 Slot 1~25）──
     public ObservableCollection<AxisPositionEntry> YPositions { get; } = [];
 
-    // ── ZL 軸 ──
-    public ObservableCollection<AxisPositionEntry> ZLPositions { get; } = [];
+    // ── ZL 軸 R組（X12=true，板子在右側）──
+    public ObservableCollection<AxisPositionEntry> ZLPositions_R { get; } = [];
 
-    // ── ZR 軸 ──
-    public ObservableCollection<AxisPositionEntry> ZRPositions { get; } = [];
+    // ── ZR 軸 R組 ──
+    public ObservableCollection<AxisPositionEntry> ZRPositions_R { get; } = [];
+
+    // ── ZL 軸 L組（X13=true，板子在左側）──
+    public ObservableCollection<AxisPositionEntry> ZLPositions_L { get; } = [];
+
+    // ── ZR 軸 L組 ──
+    public ObservableCollection<AxisPositionEntry> ZRPositions_L { get; } = [];
 
     // ── X 軸 ──
     public ObservableCollection<AxisPositionEntry> XPositions { get; } = [];
@@ -51,13 +57,21 @@ public sealed class PositionSettingsViewModel : ObservableObject
         for (int i = 0; i < SlotPositionTable.AreaA_Row1.Length; i++)
             YPositions.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1[i].Y));
 
-        ZLPositions.Clear();
-        ZLPositions.Add(new AxisPositionEntry("ZL 相機高度",   config.CameraHeightZL));
-        ZLPositions.Add(new AxisPositionEntry("ZL 安全高度",  config.ZLSafeHeight));
+        ZLPositions_R.Clear();
+        ZLPositions_R.Add(new AxisPositionEntry("ZL 相機高度 (R組)", config.CameraHeightZL_R));
+        ZLPositions_R.Add(new AxisPositionEntry("ZL 安全高度 (R組)", config.ZLSafeHeight_R));
 
-        ZRPositions.Clear();
-        ZRPositions.Add(new AxisPositionEntry("ZR 相機高度",   config.CameraHeightZR));
-        ZRPositions.Add(new AxisPositionEntry("ZR 安全高度",  config.ZRSafeHeight));
+        ZRPositions_R.Clear();
+        ZRPositions_R.Add(new AxisPositionEntry("ZR 相機高度 (R組)", config.CameraHeightZR_R));
+        ZRPositions_R.Add(new AxisPositionEntry("ZR 安全高度 (R組)", config.ZRSafeHeight_R));
+
+        ZLPositions_L.Clear();
+        ZLPositions_L.Add(new AxisPositionEntry("ZL 相機高度 (L組)", config.CameraHeightZL_L));
+        ZLPositions_L.Add(new AxisPositionEntry("ZL 安全高度 (L組)", config.ZLSafeHeight_L));
+
+        ZRPositions_L.Clear();
+        ZRPositions_L.Add(new AxisPositionEntry("ZR 相機高度 (L組)", config.CameraHeightZR_L));
+        ZRPositions_L.Add(new AxisPositionEntry("ZR 安全高度 (L組)", config.ZRSafeHeight_L));
 
         XPositions.Clear();
         XPositions.Add(new AxisPositionEntry("X 左側讀碼",   config.BarcodePositionLeftX));
@@ -74,13 +88,21 @@ public sealed class PositionSettingsViewModel : ObservableObject
         for (int i = 0; i < YPositions.Count && i < SlotPositionTable.AreaA_Row1.Length; i++)
             SlotPositionTable.AreaA_Row1[i] = new SlotPosition(YPositions[i].Value);
 
-        // ZL
-        if (ZLPositions.Count >= 1) config.CameraHeightZL = ZLPositions[0].Value;
-        if (ZLPositions.Count >= 2) config.ZLSafeHeight   = ZLPositions[1].Value;
+        // ZL R組
+        if (ZLPositions_R.Count >= 1) config.CameraHeightZL_R = ZLPositions_R[0].Value;
+        if (ZLPositions_R.Count >= 2) config.ZLSafeHeight_R   = ZLPositions_R[1].Value;
 
-        // ZR
-        if (ZRPositions.Count >= 1) config.CameraHeightZR = ZRPositions[0].Value;
-        if (ZRPositions.Count >= 2) config.ZRSafeHeight   = ZRPositions[1].Value;
+        // ZR R組
+        if (ZRPositions_R.Count >= 1) config.CameraHeightZR_R = ZRPositions_R[0].Value;
+        if (ZRPositions_R.Count >= 2) config.ZRSafeHeight_R   = ZRPositions_R[1].Value;
+
+        // ZL L組
+        if (ZLPositions_L.Count >= 1) config.CameraHeightZL_L = ZLPositions_L[0].Value;
+        if (ZLPositions_L.Count >= 2) config.ZLSafeHeight_L   = ZLPositions_L[1].Value;
+
+        // ZR L組
+        if (ZRPositions_L.Count >= 1) config.CameraHeightZR_L = ZRPositions_L[0].Value;
+        if (ZRPositions_L.Count >= 2) config.ZRSafeHeight_L   = ZRPositions_L[1].Value;
 
         // X
         if (XPositions.Count >= 1) config.BarcodePositionLeftX  = XPositions[0].Value;

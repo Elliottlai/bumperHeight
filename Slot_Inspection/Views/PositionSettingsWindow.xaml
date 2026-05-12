@@ -83,30 +83,65 @@
                 </Grid>
             </TabItem>
 
-            <!-- ══ ZL 軸分頁 ══ -->
+            <!-- ══ ZL 軸分頁（R組 X12 / L組 X13）══ -->
             <TabItem Header="ZL 軸">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="28"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
+
+                    <!-- R組 標題 -->
                     <Grid Grid.Row="0" Background="#1E7E5E">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="200"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="項目" Foreground="White" FontWeight="Bold"
+                        <TextBlock Grid.Column="0" Text="R組" Foreground="White" FontWeight="Bold"
                                    VerticalAlignment="Center" Padding="6,0"/>
                         <TextBlock Grid.Column="1" Text="座標 (mm)" Foreground="White" FontWeight="Bold"
                                    VerticalAlignment="Center" Padding="4,0"/>
                     </Grid>
-                    <ItemsControl Grid.Row="1" ItemsSource="{Binding ZLPositions}">
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding ZLPositions_R}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Style="{StaticResource RowBorder}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="160"/>
+                                            <ColumnDefinition Width="200"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Label}"
+                                                   Style="{StaticResource IndexText}"/>
+                                        <TextBox Grid.Column="1" Margin="4,3"
+                                                 Text="{Binding Value, UpdateSourceTrigger=PropertyChanged, StringFormat=F3}"
+                                                 Style="{StaticResource ValueBox}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- L組 標題 -->
+                    <Grid Grid.Row="2" Background="#2E5E7E">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="L組" Foreground="White" FontWeight="Bold"
+                                   VerticalAlignment="Center" Padding="6,0"/>
+                        <TextBlock Grid.Column="1" Text="座標 (mm)" Foreground="White" FontWeight="Bold"
+                                   VerticalAlignment="Center" Padding="4,0"/>
+                    </Grid>
+                    <ItemsControl Grid.Row="3" ItemsSource="{Binding ZLPositions_L}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource RowBorder}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="200"/>
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding Label}"
@@ -122,30 +157,65 @@
                 </Grid>
             </TabItem>
 
-            <!-- ══ ZR 軸分頁 ══ -->
+            <!-- ══ ZR 軸分頁（R組 X12 / L組 X13）══ -->
             <TabItem Header="ZR 軸">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="28"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="28"/>
+                        <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
+
+                    <!-- R組 標題 -->
                     <Grid Grid.Row="0" Background="#7B3FA0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="200"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="項目" Foreground="White" FontWeight="Bold"
+                        <TextBlock Grid.Column="0" Text="R組" Foreground="White" FontWeight="Bold"
                                    VerticalAlignment="Center" Padding="6,0"/>
                         <TextBlock Grid.Column="1" Text="座標 (mm)" Foreground="White" FontWeight="Bold"
                                    VerticalAlignment="Center" Padding="4,0"/>
                     </Grid>
-                    <ItemsControl Grid.Row="1" ItemsSource="{Binding ZRPositions}">
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding ZRPositions_R}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border Style="{StaticResource RowBorder}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="160"/>
+                                            <ColumnDefinition Width="200"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Label}"
+                                                   Style="{StaticResource IndexText}"/>
+                                        <TextBox Grid.Column="1" Margin="4,3"
+                                                 Text="{Binding Value, UpdateSourceTrigger=PropertyChanged, StringFormat=F3}"
+                                                 Style="{StaticResource ValueBox}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <!-- L組 標題 -->
+                    <Grid Grid.Row="2" Background="#3F5FA0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="200"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="L組" Foreground="White" FontWeight="Bold"
+                                   VerticalAlignment="Center" Padding="6,0"/>
+                        <TextBlock Grid.Column="1" Text="座標 (mm)" Foreground="White" FontWeight="Bold"
+                                   VerticalAlignment="Center" Padding="4,0"/>
+                    </Grid>
+                    <ItemsControl Grid.Row="3" ItemsSource="{Binding ZRPositions_L}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource RowBorder}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="200"/>
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding Label}"
