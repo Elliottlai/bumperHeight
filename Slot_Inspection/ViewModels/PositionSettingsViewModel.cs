@@ -52,12 +52,12 @@ public sealed class PositionSettingsViewModel : ObservableObject
             YPositions.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1[i].Y));
 
         ZLPositions.Clear();
-        ZLPositions.Add(new AxisPositionEntry("ZL 相機高度", config.CameraHeightZL));
-        ZLPositions.Add(new AxisPositionEntry("Z 安全高度",  config.ZSafeHeight));
+        ZLPositions.Add(new AxisPositionEntry("ZL 相機高度",   config.CameraHeightZL));
+        ZLPositions.Add(new AxisPositionEntry("ZL 安全高度",  config.ZLSafeHeight));
 
         ZRPositions.Clear();
-        ZRPositions.Add(new AxisPositionEntry("ZR 相機高度", config.CameraHeightZR));
-        ZRPositions.Add(new AxisPositionEntry("Z 安全高度",  config.ZSafeHeight));
+        ZRPositions.Add(new AxisPositionEntry("ZR 相機高度",   config.CameraHeightZR));
+        ZRPositions.Add(new AxisPositionEntry("ZR 安全高度",  config.ZRSafeHeight));
 
         XPositions.Clear();
         XPositions.Add(new AxisPositionEntry("X 左側讀碼",   config.BarcodePositionLeftX));
@@ -76,12 +76,11 @@ public sealed class PositionSettingsViewModel : ObservableObject
 
         // ZL
         if (ZLPositions.Count >= 1) config.CameraHeightZL = ZLPositions[0].Value;
-        if (ZLPositions.Count >= 2) config.ZSafeHeight    = ZLPositions[1].Value;
+        if (ZLPositions.Count >= 2) config.ZLSafeHeight   = ZLPositions[1].Value;
 
         // ZR
         if (ZRPositions.Count >= 1) config.CameraHeightZR = ZRPositions[0].Value;
-        // ZSafeHeight 共用：ZL 頁寫入即可，ZR 頁同步
-        if (ZRPositions.Count >= 2) config.ZSafeHeight    = ZRPositions[1].Value;
+        if (ZRPositions.Count >= 2) config.ZRSafeHeight   = ZRPositions[1].Value;
 
         // X
         if (XPositions.Count >= 1) config.BarcodePositionLeftX  = XPositions[0].Value;

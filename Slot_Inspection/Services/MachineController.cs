@@ -867,8 +867,8 @@ public sealed class MachineController : IDisposable
             progress?.Report("ZL / ZR 上升至安全高度...");
             if (Axes.TryGetValue("AxisZL", out var zl) && Axes.TryGetValue("AxisZR", out var zr))
             {
-                zl.MotMoveAbs(_config.ZSafeHeight);
-                zr.MotMoveAbs(_config.ZSafeHeight);
+                zl.MotMoveAbs(_config.ZLSafeHeight);
+                zr.MotMoveAbs(_config.ZRSafeHeight);
                 bool zlzrUp = await WaitUntilAsync(
                     () => zl.Wait() && zr.Wait(),
                     _config.MoveTimeout, ct);
@@ -1375,8 +1375,8 @@ public sealed class MachineController : IDisposable
 
                 // STEP 4: ZL + ZR 上升恢復安全高度
                 progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR↑ 恢復安全高度...");
-                Axes["AxisZL"].MotMoveAbs(_config.ZSafeHeight);
-                Axes["AxisZR"].MotMoveAbs(_config.ZSafeHeight);
+                Axes["AxisZL"].MotMoveAbs(_config.ZLSafeHeight);
+                Axes["AxisZR"].MotMoveAbs(_config.ZRSafeHeight);
 
                 bool zUp = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),

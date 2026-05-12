@@ -82,8 +82,11 @@ public sealed class InspectionConfig
     /// <summary>ZR 下降後的檢測高度（mm），所有 Slot 共用</summary>
     public double CameraHeightZR { get; set; } = 0.0;
 
-    /// <summary>ZL/ZR 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
-    public double ZSafeHeight { get; set; } = 0.0;
+    /// <summary>ZL 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
+    public double ZLSafeHeight { get; set; } = 0.0;
+
+    /// <summary>ZR 安全高度（mm）：Y 軸移動前抬升至此位置，避免碰撞</summary>
+    public double ZRSafeHeight { get; set; } = 0.0;
 
     // =========================================
     //  裁切 ROI 設定（C1~C4 各自獨立）

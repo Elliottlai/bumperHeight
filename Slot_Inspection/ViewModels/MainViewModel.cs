@@ -76,6 +76,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand InitAxesCommand { get; }
     public ICommand HomeCommand { get; }
     public ICommand ReadBarcodeCommand { get; }
+    public ICommand MoveToPickPositionCommand { get; }
     public ICommand PositionSettingsCommand { get; }
     public ICommand CropSettingsCommand { get; }
 
@@ -124,6 +125,8 @@ public sealed class MainViewModel : ObservableObject
         HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        // 移至取料位：Y 軸移動到取料位座標
+        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 座標設定：任何時候都可開啟
         PositionSettingsCommand = new RelayCommand(OnPositionSettings);
         // 裁切設定：任何時候都可開啟
@@ -480,6 +483,44 @@ public sealed class MainViewModel : ObservableObject
         _cts?.Cancel();
         StatusMessage = "已停止";
         // TODO: 接入停止流程
+    }
+
+    private async void OnMoveToPickPosition()
+    {
+        IsRunning = true;
+        _cts = new CancellationTokenSource();
+        var ct = _cts.Token;
+
+        try
+        {
+            double targetY = _machine.Config.BarcodePositionY;
+            StatusMessage = $"Y 軸移動至取料位置 {targetY} mm...";
+
+            _machine.Axes["AxisY"].MotMoveAbs(targetY);
+            bool arrived = await MachineController.WaitUntilAsync(
+                () => _machine.Axes["AxisY"].Wait(),
+                TimeSpan.FromSeconds(30), ct);
+
+            StatusMessage = arrived
+                ? $"Y 軸已到達取料位置 ({targetY} mm) ?"
+                : "Y 軸移動逾時";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "移至取料位已取消";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"移至取料位異常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            IsRunning = false;
+            _cts?.Dispose();
+            _cts = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
     }
 
     /// <summary>
