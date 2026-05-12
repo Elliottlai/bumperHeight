@@ -41,6 +41,9 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         if (Axes.Count > 0)
             SelectedAxis = Axes[0];
 
+        // 為 Y 軸設定移動前安全檢查：確保 ZL/ZR 已連線、Servo On，且高度低於安全高度 25 mm
+        SetupYAxisPreMoveCheck();
+
         ConnectAllCommand = new RelayCommand(() =>
         {
             foreach (var ax in Axes)
@@ -54,6 +57,42 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                 if (ax.DisconnectCommand.CanExecute(null))
                     ax.DisconnectCommand.Execute(null);
         });
+    }
+
+    /// <summary>Y 軸移動前需確保 ZL/ZR 軸皆已連線、Servo On，且當前高度低於安全高度。</summary>
+    private const double ZSafeHeightMm = 25.0;
+
+    private void SetupYAxisPreMoveCheck()
+    {
+        // Axes[0]=Y, [1]=X, [2]=ZL, [3]=ZR（對應 configs 的順序）
+        if (Axes.Count < 4) return;
+
+        var yAxis = Axes[0];
+        var zlAxis = Axes[2];
+        var zrAxis = Axes[3];
+
+        yAxis.PreMoveCheck = () =>
+        {
+            if (!zlAxis.IsConnected)
+                return (false, "ZL 軸未連線");
+
+            if (!zrAxis.IsConnected)
+                return (false, "ZR 軸未連線");
+
+            if (!zlAxis.IsAbsoluteCoordinateOk)
+                return (false, "ZL 軸絕對座標異常");
+
+            if (!zrAxis.IsAbsoluteCoordinateOk)
+                return (false, "ZR 軸絕對座標異常");
+
+            if (zlAxis.CurrentPositionMm >= ZSafeHeightMm)
+                return (false, $"ZL 軸高度 {zlAxis.CurrentPositionMm:F2} mm 超過安全高度 {ZSafeHeightMm} mm");
+
+            if (zrAxis.CurrentPositionMm >= ZSafeHeightMm)
+                return (false, $"ZR 軸高度 {zrAxis.CurrentPositionMm:F2} mm 超過安全高度 {ZSafeHeightMm} mm");
+
+            return (true, string.Empty);
+        };
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

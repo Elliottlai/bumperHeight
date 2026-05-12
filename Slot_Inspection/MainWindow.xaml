@@ -379,7 +379,7 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="11" Margin="12,4,12,4">
+            <UniformGrid Grid.Row="2" Columns="12" Margin="12,4,12,4">
                 <Button Content="Main" Background="#C6E0B4"/>
                 <Button Content="Setting"/>
                 <Button Content="IO table"/>
@@ -415,6 +415,12 @@
                         Background="#B4C7E7"
                         FontWeight="Bold"
                         ToolTip="Y→491 → 偵測 X12/X13 → 移動 X 軸至讀碼位置"/>
+                <Button Content="📍 座標設定"
+                        Command="{Binding PositionSettingsCommand}"
+                        Style="{StaticResource StateButtonStyle}"
+                        Background="#E2EFDA"
+                        FontWeight="Bold"
+                        ToolTip="調整 Y / X / ZL / ZR / Z安全高度座標"/>
                 <Button Content="⏹ STOP"
                         Command="{Binding StopCommand}"
                         Style="{StaticResource StateButtonStyle}"

@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Slot_Inspection.Models;
 using Slot_Inspection.Services;
+using Slot_Inspection.Views;
 
 namespace Slot_Inspection.ViewModels;
 
@@ -74,6 +76,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand InitAxesCommand { get; }
     public ICommand HomeCommand { get; }
     public ICommand ReadBarcodeCommand { get; }
+    public ICommand PositionSettingsCommand { get; }
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -116,10 +119,12 @@ public sealed class MainViewModel : ObservableObject
         DryRunCommand = new RelayCommand(OnDryRun, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
-        // 原點賦歸：需裝置已初始化後才可使用
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsInitialized);
+        // 原點賦歸：裝置就緒後隨時可按（不鎖定）
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        // 座標設定：任何時候都可開啟
+        PositionSettingsCommand = new RelayCommand(OnPositionSettings);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 1, 13);
@@ -396,10 +401,10 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = "Y 軸移動至 491 mm...";
+            StatusMessage = $"Y 軸移動至 {_machine.Config.BarcodePositionY} mm...";
 
-            // STEP 1: Y 軸移動到 491
-            _machine.Axes["AxisY"].MotMoveAbs(491.0);
+            // STEP 1: Y 軸移動到設定位置
+            _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
             bool yArrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisY"].Wait(),
                 TimeSpan.FromSeconds(30), ct);
@@ -408,7 +413,7 @@ public sealed class MainViewModel : ObservableObject
                 StatusMessage = "Y 軸移動逾時";
                 return;
             }
-            StatusMessage = "Y 軸已到位 (491 mm)";
+            StatusMessage = $"Y 軸已到位 ({_machine.Config.BarcodePositionY} mm)";
 
             // STEP 2: 偵測 X12 / X13 IO 訊號
             bool x12 = _machine.GetPlcXOctal(12) ?? false;
@@ -424,12 +429,12 @@ public sealed class MainViewModel : ObservableObject
             double targetX;
             if (x12)
             {
-                targetX = -5.121;
+                targetX = _machine.Config.BarcodePositionLeftX;
                 StatusMessage = $"偵測到 X12=ON → X 軸移動至 {targetX} mm...";
             }
             else
             {
-                targetX = 189.922;
+                targetX = _machine.Config.BarcodePositionRightX;
                 StatusMessage = $"偵測到 X13=ON → X 軸移動至 {targetX} mm...";
             }
 
@@ -472,6 +477,27 @@ public sealed class MainViewModel : ObservableObject
         _cts?.Cancel();
         StatusMessage = "已停止";
         // TODO: 接入停止流程
+    }
+
+    /// <summary>
+    /// 開啟座標設定對話視窗，確認後寫回 InspectionConfig。
+    /// </summary>
+    private void OnPositionSettings()
+    {
+        var vm = new PositionSettingsViewModel();
+        vm.LoadFrom(_machine.Config);
+
+        var win = new PositionSettingsWindow
+        {
+            DataContext = vm,
+            Owner = Application.Current.MainWindow
+        };
+
+        if (win.ShowDialog() == true)
+        {
+            vm.ApplyTo(_machine.Config);
+            StatusMessage = "座標設定已更新";
+        }
     }
 
     /// <summary>

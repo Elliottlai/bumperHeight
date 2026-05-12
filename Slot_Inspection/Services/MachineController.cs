@@ -127,6 +127,7 @@ public sealed class MachineController : IDisposable
     }
 
     private readonly InspectionConfig _config = new();
+    public InspectionConfig Config => _config;
     private readonly BumperAlgService _bumperAlg = new();
 
     // -- Sim image loader (lazy init) --
@@ -536,8 +537,7 @@ public sealed class MachineController : IDisposable
     {
         _logger.Info($"===== S03 Inspection Start | Barcode: {barcode} =====");
 
-        // Row1: AreaA_Row1 + AreaB_Row1 同時處理（13 slots）
-        // Row2: AreaA_Row2 + AreaB_Row2 同時處理（12 slots）
+        // Row1: AreaA_Row1 + AreaB_Row1 同時處理（25 slots）
         var rows = new (SlotInspectionProgress.TargetCollection AreaA,
                         SlotInspectionProgress.TargetCollection AreaB,
                         int Count)[]
@@ -862,6 +862,20 @@ public sealed class MachineController : IDisposable
         {
 
             _plc?.SetY(0, true);
+
+            // ── Step 0：先讓 ZL / ZR 升至安全高度，避免碰撞 ──
+            progress?.Report("ZL / ZR 上升至安全高度...");
+            if (Axes.TryGetValue("AxisZL", out var zl) && Axes.TryGetValue("AxisZR", out var zr))
+            {
+                zl.MotMoveAbs(_config.ZSafeHeight);
+                zr.MotMoveAbs(_config.ZSafeHeight);
+                bool zlzrUp = await WaitUntilAsync(
+                    () => zl.Wait() && zr.Wait(),
+                    _config.MoveTimeout, ct);
+                if (!zlzrUp)
+                    return DeviceInitResult.Fail(name, "ZL/ZR 上升至安全高度逾時");
+                _logger.Info("ZL/ZR 已上升至安全高度");
+            }
 
             // ── Step 1：先 home X, ZL, ZR（不含 Y） ──
             progress?.Report("X / ZL / ZR 軸歸原點...");

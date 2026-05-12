@@ -41,11 +41,14 @@ public sealed class InspectionConfig
     //  TODO: 依實際 teaching 結果調整
     // =========================================
 
+    /// <summary>讀碼時 Y 軸移動目標位置 (mm)</summary>
+    public double BarcodePositionY { get; set; } = 491.0;
+
     /// <summary>掃左側條碼時，X 軸位置</summary>
-    public double BarcodePositionLeftX { get; set; } = 100.0;
+    public double BarcodePositionLeftX { get; set; } = -5.121;
 
     /// <summary>掃右側條碼時，X 軸位置</summary>
-    public double BarcodePositionRightX { get; set; } = 300.0;
+    public double BarcodePositionRightX { get; set; } = 189.922;
 
     /// <summary>依載台在席位置回傳讀碼器的 X 軸座標</summary>
     public double GetBarcodePositionX(Services.MachineController.CarrierPosition position)

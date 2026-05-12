@@ -152,6 +152,12 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public string AlarmCodeHex => $"0x{AlarmCodeDecimal:X4}";
 
     // ============================
+    //  Y 軸移動前安全前置檢查
+    //  回傳 (true, "") 表示允許移動；(false, reason) 表示禁止並附上原因
+    // ============================
+    public Func<(bool Ok, string Reason)>? PreMoveCheck { get; set; }
+
+    // ============================
     //  Commands
     // ============================
     public ICommand ConnectCommand { get; }
@@ -440,6 +446,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     private void DoMoveToPosition()
     {
+        if (!RunPreMoveCheck()) return;
         RunSafe(() =>
         {
             int puu = _controller!.MmToPuu(TargetPositionMm);
@@ -458,6 +465,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
 
     private void DoHoming()
     {
+        if (!RunPreMoveCheck()) return;
         RunSafe(() =>
         {
             // 觸發 Homing PR#0，不阻塞等待
@@ -570,6 +578,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     private void DoJog(double incrementMm)
     {
+        if (!RunPreMoveCheck()) return;
         RunSafe(() =>
         {
             double target = CurrentPositionMm + incrementMm;
@@ -579,6 +588,21 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
             IsMoving = true;
             StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm → {target:F3} mm";
         });
+    }
+
+    /// <summary>
+    /// 執行 PreMoveCheck；若沒有設定則直接通過。
+    /// 回傳 true 表示可以移動，false 表示禁止移動。
+    /// </summary>
+    private bool RunPreMoveCheck()
+    {
+        if (PreMoveCheck == null) return true;
+        var (ok, reason) = PreMoveCheck();
+        if (!ok)
+        {
+            StatusMessage = $"安全檢查未通過: {reason}";
+        }
+        return ok;
     }
 
 

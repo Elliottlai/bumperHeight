@@ -12,8 +12,8 @@ public sealed record SlotPosition(double Y);
 /// </summary>
 public static class SlotPositionTable
 {
-    // ¢w¢w Area A Row1¡GSlot 1~13 ¢w¢w
-    public static readonly SlotPosition[] AreaA_Row1 =
+    // ¢w¢w Area A Row1¡GSlot 1~25 ¢w¢w
+    public static SlotPosition[] AreaA_Row1 =
     [
         //new(Y: 53.79),new(Y: 341.790), //for testing
 
@@ -26,7 +26,7 @@ public static class SlotPositionTable
     ];
 
     // ¢w¢w Area A Row2¡GSlot 14~25 ¢w¢w
-    public static readonly SlotPosition[] AreaA_Row2 =
+    public static SlotPosition[] AreaA_Row2 =
     [
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
@@ -34,7 +34,7 @@ public static class SlotPositionTable
     ];
 
     // ¢w¢w Area B Row1¡GSlot 1~13 ¢w¢w
-    public static readonly SlotPosition[] AreaB_Row1 =
+    public static SlotPosition[] AreaB_Row1 =
     [
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
@@ -42,7 +42,7 @@ public static class SlotPositionTable
     ];
 
     // ¢w¢w Area B Row2¡GSlot 14~25 ¢w¢w
-    public static readonly SlotPosition[] AreaB_Row2 =
+    public static SlotPosition[] AreaB_Row2 =
     [
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
         new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0), new(Y: 0),
