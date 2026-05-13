@@ -126,6 +126,62 @@ public sealed class MachineController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Y 軸移動前的 ZL/ZR 安全高度保護。
+    /// 若 ZL 或 ZR 超過安全高度容差，彈出確認視窗詢問使用者是否先升軸；
+    /// 使用者按「是」→ 升至安全高度並等待到位；按「否」→ 拋出 OperationCanceledException。
+    /// </summary>
+    private async Task EnsureZSafeBeforeYMoveAsync(
+        double safeZL, double safeZR,
+        IProgress<string>? progress, CancellationToken ct)
+    {
+        double currentZL = Axes["AxisZL"].GetRealPosition();
+        double currentZR = Axes["AxisZR"].GetRealPosition();
+        double tol = _config.ZSafeTolerance;
+
+        bool zlUnsafe = currentZL > safeZL + tol;
+        bool zrUnsafe = currentZR > safeZR + tol;
+
+        if (!zlUnsafe && !zrUnsafe) return;
+
+        string detail = $"ZL 目前={currentZL:F2} mm（安全={safeZL:F2}）\n" +
+                        $"ZR 目前={currentZR:F2} mm（安全={safeZR:F2}）";
+        string message = $"ZL/ZR 尚未回到安全高度，直接移動 Y 軸可能造成碰撞。\n\n" +
+                         $"{detail}\n\n是否將 ZL/ZR 升至安全高度後再繼續？";
+
+        _logger.Warn($"[SafetyCheck] Y 軸移動前 ZL/ZR 不在安全位置：{detail.Replace('\n', ' ')}");
+
+        bool? userConfirm = null;
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            var result = System.Windows.MessageBox.Show(
+                message,
+                "⚠ ZL/ZR 安全高度警告",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning,
+                System.Windows.MessageBoxResult.No);
+            userConfirm = result == System.Windows.MessageBoxResult.Yes;
+        });
+
+        if (userConfirm != true)
+        {
+            _logger.Warn("[SafetyCheck] 使用者拒絕升軸，Y 移動取消。");
+            throw new OperationCanceledException("使用者取消：ZL/ZR 未達安全高度，Y 軸移動中止。");
+        }
+
+        progress?.Report($"[SafetyCheck] 升 ZL→{safeZL:F2} ZR→{safeZR:F2} mm...");
+        Axes["AxisZL"].MotMoveAbs(safeZL);
+        Axes["AxisZR"].MotMoveAbs(safeZR);
+        bool raised = await WaitUntilAsync(
+            () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
+            _config.MoveTimeout, ct);
+
+        if (!raised)
+            _logger.Warn("[SafetyCheck] ZL/ZR 升軸 timeout，仍繼續移動 Y。");
+        else
+            progress?.Report($"[SafetyCheck] ZL/ZR 已到安全高度 ✓");
+    }
+
     private readonly InspectionConfig _config = InspectionConfig.Load();
     public InspectionConfig Config => _config;
     private readonly BumperAlgService _bumperAlg = new();
@@ -683,6 +739,12 @@ public sealed class MachineController : IDisposable
 
         // STEP 1: Y 軸移動載台到 Slot 位置，ZL/ZR 調整相機高度
         var pos = SlotPositionTable.Get(target, slotIndex);
+        bool s3x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;
+        bool s3x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;
+        await EnsureZSafeBeforeYMoveAsync(
+            _config.GetZLSafeHeight(s3x12, s3x13),
+            _config.GetZRSafeHeight(s3x12, s3x13),
+            null, ct);
         Axes["AxisY"].MotMoveAbs(pos.Y);
         Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZL);
         Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZR);
@@ -1160,7 +1222,8 @@ public sealed class MachineController : IDisposable
     public async Task DryRunAsync(
         IProgress<string>? progress = null,
         CancellationToken ct = default,
-        string barcode = "")
+        string barcode = "",
+        IProgress<SlotInspectionProgress>? slotProgress = null)
     {
         // 清除上一次因中斷而殘留的暫停狀態
         _dryRunPaused = false;
@@ -1337,6 +1400,7 @@ public sealed class MachineController : IDisposable
                 // STEP 1: Y 軸移動到目標 Slot 位置
                 double clampedY = Math.Clamp(pos.Y, 0.0, YAxisMaxMm);
                 progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: Y→{clampedY:F1} mm...");
+                await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct);
                 Axes["AxisY"].MotMoveAbs(clampedY);
 
                 // 等 150ms 讓驅動器接收指令並清除舊的到位旗標，
@@ -1379,7 +1443,14 @@ public sealed class MachineController : IDisposable
                 await CheckPauseAsync(progress, ct);
 
                 // STEP 3: ZL/ZR 到位後，在原本 2 秒停留期間執行「開光 → 取像 → 關光」
-                await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct);
+                // 左相機 → targetA (AreaA)，右相機 → targetB (AreaB)，共用同一個 slotIndex
+                var targetB = target switch
+                {
+                    SlotInspectionProgress.TargetCollection.AreaA_Row1 => SlotInspectionProgress.TargetCollection.AreaB_Row1,
+                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => SlotInspectionProgress.TargetCollection.AreaB_Row2,
+                    _ => SlotInspectionProgress.TargetCollection.AreaB_Row1
+                };
+                await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct, target, targetB, slotProgress);
 
                 // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
                 await CheckPauseAsync(progress, ct);
@@ -1427,6 +1498,7 @@ public sealed class MachineController : IDisposable
 
         // 若 X7 觸發暫停，等待恢復後再發出移動指令
         await CheckPauseAsync(progress, ct);
+        await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct);
 
         while (true)
         {
@@ -1498,7 +1570,10 @@ public sealed class MachineController : IDisposable
         int slotIndex,
         string barcode,
         IProgress<string>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        SlotInspectionProgress.TargetCollection targetA = SlotInspectionProgress.TargetCollection.AreaA_Row1,
+        SlotInspectionProgress.TargetCollection targetB  = SlotInspectionProgress.TargetCollection.AreaB_Row1,
+        IProgress<SlotInspectionProgress>? slotProgress = null)
     {
         const string SaveRoot     = @"D:\CameraLightTest";
         const int    LightChLeft  = 1;    // 左相機光源通道
@@ -1509,14 +1584,15 @@ public sealed class MachineController : IDisposable
         // 取最長曝光 100ms + 100ms 傳輸緩衝 = 200ms → 再加 100ms 安全餘量 = 300ms
         const int    GrabWaitMs   = 300;
 
-        // ── 根據 X12 / X13 判斷相機編號 ──
-        // X12=true → Left=C4, Right=C3
-        // X13=true → Left=C2, Right=C1
+        // ── 根據 X12 / X13 判斷相機編號與板子側別 ──
+        // X12=true → 板子在 R側 → RSlot；Left=C4, Right=C3
+        // X13=true → 板子在 L側 → LSlot；Left=C2, Right=C1
         bool x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12
         bool x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13
-        string camLeft  = x12 ? "C4" : (x13 ? "C2" : "C2");  // X12→C4, X13→C2, 預設C2
-        string camRight = x12 ? "C3" : (x13 ? "C1" : "C1");  // X12→C3, X13→C1, 預設C1
-        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} → Left={camLeft} Right={camRight}");
+        string camLeft    = x12 ? "C4" : "C2";   // X12→C4, X13（或預設）→C2
+        string camRight   = x12 ? "C3" : "C1";   // X12→C3, X13（或預設）→C1
+        string slotSide   = x12 ? "RSlot" : "LSlot";  // X12→RSlot, X13→LSlot
+        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} → Left={camLeft} Right={camRight} Side={slotSide}");
 
         // STEP 1: 先停止相機，清除 IsGrabing 狀態
         _cameraRight?.Stop();
@@ -1552,28 +1628,90 @@ public sealed class MachineController : IDisposable
         var bufLeft = _cameraLeft?.GetBufAddress();
 
         // STEP 8: 存 BMP 至 D:\CameraLightTest\yyyyMMdd\
-        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp (左相機) / RSlot01.bmp (右相機)
+        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp (X13=L側) / RSlot01.bmp (X12=R側)
+        // 同一次取像的兩支相機使用相同的 LSlot/RSlot 前綴
         string dir = Path.Combine(SaveRoot, DateTime.Now.ToString("yyyyMMdd"));
         Directory.CreateDirectory(dir);
         string ts        = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");   // 2026-04-10T10-34-57
         string slotNum   = (slotIndex + 1).ToString("D2");                  // 01, 02 ...
         string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
+        string slotTag   = $"{slotSide}{slotNum}";                          // LSlot01 or RSlot01
 
         bool anySaved = false;
 
+        // Area A 顯示左相機；Area B 顯示右相機（同一個 Y 位置，各側各自顯示）
+        System.Windows.Media.Imaging.BitmapSource? uiImageLeft  = null;  // → targetA (AreaA)
+        System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // → targetB (AreaB)
+
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_RSlot{slotNum}.bmp");
+            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_{slotTag}.bmp");
             DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
             _logger.Info($"[DryRun] {slotLabel} 已存 R({camRight}): {path}");
             anySaved = true;
+
+            // 右相機圖片 → AreaB：先呼叫 ALG 畫線，失敗才 fallback 原圖
+            string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
+            var algR = await Task.Run(() => _bumperAlg.Analyze(path, algKeyR, $"{slotLabel}_R"), ct);
+            if (algR.Success && algR.Image is System.Windows.Media.Imaging.BitmapSource bsR)
+            {
+                uiImageRight = bsR;
+                _logger.Info($"[DryRun] {slotLabel} R ALG 畫線 OK (json={algKeyR})");
+            }
+            else
+            {
+                _logger.Warn($"[DryRun] {slotLabel} R ALG 失敗({algR.Message})，顯示原圖");
+                uiImageRight = BufferToBitmapSource(_cameraRight, bufRight[0], _config.GetRoi(camRight));
+            }
         }
         if (_cameraLeft != null && bufLeft != null && bufLeft.Length > 0 && bufLeft[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camLeft}_LSlot{slotNum}.bmp");
+            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camLeft}_{slotTag}.bmp");
             DryRunSaveBmp(_cameraLeft, bufLeft[0], path, _config.GetRoi(camLeft));
             _logger.Info($"[DryRun] {slotLabel} 已存 L({camLeft}): {path}");
             anySaved = true;
+
+            // 左相機圖片 → AreaA：先呼叫 ALG 畫線，失敗才 fallback 原圖
+            string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
+            var algL = await Task.Run(() => _bumperAlg.Analyze(path, algKeyL, $"{slotLabel}_L"), ct);
+            if (algL.Success && algL.Image is System.Windows.Media.Imaging.BitmapSource bsL)
+            {
+                uiImageLeft = bsL;
+                _logger.Info($"[DryRun] {slotLabel} L ALG 畫線 OK (json={algKeyL})");
+            }
+            else
+            {
+                _logger.Warn($"[DryRun] {slotLabel} L ALG 失敗({algL.Message})，顯示原圖");
+                uiImageLeft = BufferToBitmapSource(_cameraLeft, bufLeft[0], _config.GetRoi(camLeft));
+            }
+        }
+
+        // 即時更新 UI 圖像：左相機 → AreaA，右相機 → AreaB
+        if (slotProgress != null)
+        {
+            string statusText = $"({currentSlot}/{totalSlots}) {slotLabel}: 取像完成 ✓";
+
+            if (uiImageLeft != null)
+            {
+                slotProgress.Report(new SlotInspectionProgress
+                {
+                    Target     = targetA,
+                    SlotIndex  = slotIndex,
+                    Image      = uiImageLeft,
+                    StatusText = statusText
+                });
+            }
+
+            if (uiImageRight != null)
+            {
+                slotProgress.Report(new SlotInspectionProgress
+                {
+                    Target     = targetB,
+                    SlotIndex  = slotIndex,
+                    Image      = uiImageRight,
+                    StatusText = statusText
+                });
+            }
         }
 
         if (!anySaved)
@@ -1630,6 +1768,41 @@ public sealed class MachineController : IDisposable
         catch (Exception ex)
         {
             _logger.Warn($"[DryRun] SaveBmp 失敗 ({filePath}): {ex.Message}");
+        }
+    }
+
+    /// <summary>從 ICamera Buffer 轉成 WPF BitmapSource（供 UI 即時顯示），支援裁切 ROI。</summary>
+    private System.Windows.Media.Imaging.BitmapSource? BufferToBitmapSource(ICamera camera, IntPtr bufPtr, CameraRoi? roi = null)
+    {
+        try
+        {
+            int w      = camera.FrameWidth;
+            int h      = camera.BufHeight;
+            int stride = w * camera.PixelBytes;
+            var fmt    = camera.PixelBytes == 3
+                ? System.Windows.Media.PixelFormats.Rgb24
+                : System.Windows.Media.PixelFormats.Gray8;
+
+            var fullBmp = System.Windows.Media.Imaging.BitmapSource.Create(
+                w, h, 96, 96, fmt, null, bufPtr, h * stride, stride);
+            fullBmp.Freeze();
+
+            if (roi != null && roi.IsEnabled
+                && (roi.X + roi.W) <= w
+                && (roi.Y + roi.H) <= h)
+            {
+                var rect    = new System.Windows.Int32Rect(roi.X, roi.Y, roi.W, roi.H);
+                var cropped = new System.Windows.Media.Imaging.CroppedBitmap(fullBmp, rect);
+                cropped.Freeze();
+                return cropped;
+            }
+
+            return fullBmp;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[DryRun] BufferToBitmapSource 失敗: {ex.Message}");
+            return null;
         }
     }
 

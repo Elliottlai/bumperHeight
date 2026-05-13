@@ -156,6 +156,12 @@ public sealed class InspectionConfig
     public double GetZRSafeHeight(bool x12, bool x13)
         => x12 ? ZRSafeHeight_R : ZRSafeHeight_L;
 
+    /// <summary>
+    /// ZL/ZR 判斷「已在安全高度」的容差（mm）。
+    /// 實際位置 ? SafeHeight + ZSafeTolerance 視為安全。
+    /// </summary>
+    public double ZSafeTolerance { get; set; } = 1.0;
+
     // =========================================
     //  裁切 ROI 設定（C1~C4 各自獨立）
     // =========================================
@@ -207,8 +213,9 @@ public sealed class InspectionConfig
     /// <summary>
     /// 根據影像檔名推導演算法 JSON key（比照 TestALG）：
     /// 1) 先取檔名（無副檔名）
-    /// 2) 若含 '_'，取最後一個 '_' 後面的字串
-    /// 3) 回傳空值時 fallback DefaultAlgJsonKey
+    /// 2) 若含至少兩個 '_'，取倒數第二個 '_' 後面的字串（例如 C1_LSlot01）
+    /// 3) 只有一個 '_' 則取最後一個 '_' 後面的字串
+    /// 4) 回傳空值時 fallback DefaultAlgJsonKey
     /// </summary>
     public string GetAlgJsonKeyFromImagePath(string imagePath)
     {
@@ -219,10 +226,13 @@ public sealed class InspectionConfig
         if (string.IsNullOrWhiteSpace(name))
             return DefaultAlgJsonKey;
 
-        int idx = name.LastIndexOf('_');
-        if (idx >= 0 && idx < name.Length - 1)
+        // 找倒數第二個 '_'
+        int lastIdx = name.LastIndexOf('_');
+        if (lastIdx > 0)
         {
-            string key = name[(idx + 1)..].Trim();
+            int secondLastIdx = name.LastIndexOf('_', lastIdx - 1);
+            int startIdx = secondLastIdx >= 0 ? secondLastIdx + 1 : lastIdx + 1;
+            string key = name[startIdx..].Trim();
             if (!string.IsNullOrWhiteSpace(key))
                 return key;
         }

@@ -378,7 +378,29 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             StatusMessage = "主流程啟動...逐 Slot 取像中";
-            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token, _confirmedBarcode));
+
+            var dryRunSlotProgress = new Progress<SlotInspectionProgress>(report =>
+            {
+                var collection = report.Target switch
+                {
+                    SlotInspectionProgress.TargetCollection.AreaA_Row1 => AreaA_Row1,
+                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => AreaA_Row2,
+                    SlotInspectionProgress.TargetCollection.AreaB_Row1 => AreaB_Row1,
+                    SlotInspectionProgress.TargetCollection.AreaB_Row2 => AreaB_Row2,
+                    _ => null
+                };
+
+                if (collection != null && report.SlotIndex < collection.Count)
+                {
+                    if (report.Image != null)
+                        collection[report.SlotIndex].ImageSource = report.Image;
+                }
+
+                if (!string.IsNullOrEmpty(report.StatusText))
+                    StatusMessage = report.StatusText;
+            });
+
+            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token, _confirmedBarcode, dryRunSlotProgress));
             StatusMessage = "主流程完成 ?";
         }
         catch (OperationCanceledException)

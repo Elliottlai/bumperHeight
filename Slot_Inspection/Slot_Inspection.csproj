@@ -29,6 +29,7 @@
     <ProjectReference Include="..\DeltaAxis_RS485\DeltaAxis_RS485.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
     <ProjectReference Include="..\PLC_IO\PLC_IO.csproj" />
+    <ProjectReference Include="..\TestALG\TestALG\TestALG.csproj" />
   </ItemGroup>
 
   <ItemGroup>

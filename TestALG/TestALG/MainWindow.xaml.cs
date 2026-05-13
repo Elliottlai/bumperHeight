@@ -83,13 +83,19 @@ namespace TestALG
                 ImagePathTextBox.Text = _imagePath;
 
                 // 約定：JSON 放在執行檔目錄下的 config 資料夾，
-                // 檔名取「副檔名前最後一個底線 '_' 後的字串」。
+                // 檔名取「倒數第二個 '_' 後面的字串」，例如：
+                //   2026-05-13_BARCODE_C1_LSlot01.bmp → C1_LSlot01
+                //   test_C3_RSlot05.bmp               → C3_RSlot05
                 string imageNameWithoutExt = System.IO.Path.GetFileNameWithoutExtension(_imagePath);
                 string jsonKey = imageNameWithoutExt;
-                int lastUnderscoreIndex = imageNameWithoutExt.LastIndexOf('_');
-                if (lastUnderscoreIndex >= 0 && lastUnderscoreIndex < imageNameWithoutExt.Length - 1)
+                int lastIdx = imageNameWithoutExt.LastIndexOf('_');
+                if (lastIdx > 0)
                 {
-                    jsonKey = imageNameWithoutExt.Substring(lastUnderscoreIndex + 1).Trim();
+                    int secondLastIdx = imageNameWithoutExt.LastIndexOf('_', lastIdx - 1);
+                    int startIdx = secondLastIdx >= 0 ? secondLastIdx + 1 : lastIdx + 1;
+                    string candidate = imageNameWithoutExt.Substring(startIdx).Trim();
+                    if (!string.IsNullOrWhiteSpace(candidate))
+                        jsonKey = candidate;
                 }
 
                 string exeDir = AppDomain.CurrentDomain.BaseDirectory;
