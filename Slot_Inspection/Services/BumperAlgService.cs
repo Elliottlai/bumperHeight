@@ -84,9 +84,14 @@ public sealed class BumperAlgService
                 $"additionalKeys={mainData?.Count ?? 0}, contourDrawn={drawn}");
 
             bool isNg = DetermineNg(result);
+            double detectedArea = 0.0;
+            if (mainData != null && mainData.TryGetValue("DetectedArea", out var areaVal))
+            {
+                try { detectedArea = Convert.ToDouble(areaVal); } catch { }
+            }
             var bitmapSource = MatToBitmapSource(overlay);
             bitmapSource.Freeze();
-            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource);
+            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource, detectedArea);
         }
         catch (Exception ex)
         {
@@ -332,8 +337,9 @@ public readonly record struct BumperAlgResult(
     bool Success,
     bool IsNg,
     string Message,
-    BitmapSource? Image)
+    BitmapSource? Image,
+    double DetectedArea = 0.0)
 {
     public static BumperAlgResult Fail(string message)
-        => new(false, true, message, null);
+        => new(false, true, message, null, 0.0);
 }

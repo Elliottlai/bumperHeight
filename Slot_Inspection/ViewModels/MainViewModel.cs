@@ -133,10 +133,10 @@ public sealed class MainViewModel : ObservableObject
         CropSettingsCommand = new RelayCommand(OnCropSettings);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
-        FillSlots(AreaA_Row1, 1, 13);
-        FillSlots(AreaA_Row2, 14, 12);
-        FillSlots(AreaB_Row1, 1, 13);
-        FillSlots(AreaB_Row2, 14, 12);
+        FillSlots(AreaA_Row1, 25, 13);
+        FillSlots(AreaA_Row2, 12, 12);
+        FillSlots(AreaB_Row1, 25, 13);
+        FillSlots(AreaB_Row2, 12, 12);
 
         _timer.Tick += (_, _) =>
         {
@@ -394,6 +394,8 @@ public sealed class MainViewModel : ObservableObject
                 {
                     if (report.Image != null)
                         collection[report.SlotIndex].ImageSource = report.Image;
+                    if (report.Value != 0)
+                        collection[report.SlotIndex].Value = report.Value;
                 }
 
                 if (!string.IsNullOrEmpty(report.StatusText))
@@ -708,7 +710,7 @@ public sealed class MainViewModel : ObservableObject
         {
             target.Add(new SlotItem
             {
-                Name = $"SLOT#{startNumber + i}",
+                Name = $"SLOT#{startNumber - i}",
                 Value = 0,
                 IsNg = false,
             });
