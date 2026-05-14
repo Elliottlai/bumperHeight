@@ -60,7 +60,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>Y 軸移動前需確保 ZL/ZR 軸皆已連線、Servo On，且當前高度低於安全高度。</summary>
-    private const double ZSafeHeightMm = 25.0;
+    private const double ZSafeHeightMm = 5.0;
 
     private void SetupYAxisPreMoveCheck()
     {

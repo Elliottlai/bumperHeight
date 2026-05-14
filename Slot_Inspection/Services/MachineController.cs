@@ -1555,7 +1555,7 @@ public sealed class MachineController : IDisposable
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
-                Axes["AxisY"].MotMoveAbs(496.0);
+                Axes["AxisY"].MotMoveAbs(_config.BarcodePositionY);
                 await Task.Delay(150, ct);
                 bool yFinal = await WaitUntilAsync(
                     () => Axes["AxisY"].Wait() || _dryRunPaused, _config.MoveTimeout, ct);

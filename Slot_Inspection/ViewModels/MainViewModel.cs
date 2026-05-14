@@ -129,6 +129,8 @@ public sealed class MainViewModel : ObservableObject
         MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 座標設定：任何時候都可開啟
         PositionSettingsCommand = new RelayCommand(OnPositionSettings);
+
+
         // 裁切設定：任何時候都可開啟
         CropSettingsCommand = new RelayCommand(OnCropSettings);
 
@@ -602,6 +604,9 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+
+            SlotPositionTable.Load();
+
             StatusMessage = "初始化中（Config + Servo + PLC）...";
             var result = await Task.Run(
                 () => _machine.InitializeDevicesAsync(progress, _cts.Token));
