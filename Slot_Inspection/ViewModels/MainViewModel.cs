@@ -27,9 +27,7 @@ public sealed class MainViewModel : ObservableObject
     private CancellationTokenSource? _cts;
 
     public ObservableCollection<SlotItem> AreaA_Row1 { get; } = [];
-    public ObservableCollection<SlotItem> AreaA_Row2 { get; } = [];
     public ObservableCollection<SlotItem> AreaB_Row1 { get; } = [];
-    public ObservableCollection<SlotItem> AreaB_Row2 { get; } = [];
 
     public AreaStatistics AreaA_Stats { get; } = new();
     public AreaStatistics AreaB_Stats { get; } = new();
@@ -79,6 +77,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand MoveToPickPositionCommand { get; }
     public ICommand PositionSettingsCommand { get; }
     public ICommand CropSettingsCommand { get; }
+    public ICommand OpenImageViewerCommand { get; }
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -112,6 +111,22 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// ZL/ZR 到位後是否啟用安定延遲（防止振動拍照模糊）。
+    /// 變更時同步儲存 Config。
+    /// </summary>
+    public bool EnableAxisSettleDelay
+    {
+        get => _machine.Config.EnableAxisSettleDelay;
+        set
+        {
+            if (_machine.Config.EnableAxisSettleDelay == value) return;
+            _machine.Config.EnableAxisSettleDelay = value;
+            _machine.Config.Save();
+            OnPropertyChanged();
+        }
+    }
+
     public MainViewModel()
     {
         // START 只需：初始化完成（含原點賦歸） + 尚未運行
@@ -134,11 +149,12 @@ public sealed class MainViewModel : ObservableObject
         // 裁切設定：任何時候都可開啟
         CropSettingsCommand = new RelayCommand(OnCropSettings);
 
+        // 點擊圖像放大預覽
+        OpenImageViewerCommand = new RelayCommand<SlotItem>(OnOpenImageViewer);
+
         // 先填入空白 Slot 佔位（UI 不會是空的）
-        FillSlots(AreaA_Row1, 25, 13);
-        FillSlots(AreaA_Row2, 12, 12);
-        FillSlots(AreaB_Row1, 25, 13);
-        FillSlots(AreaB_Row2, 12, 12);
+        FillSlots(AreaA_Row1, 25, 25);
+        FillSlots(AreaB_Row1, 25, 25);
 
         _timer.Tick += (_, _) =>
         {
@@ -315,9 +331,9 @@ public sealed class MainViewModel : ObservableObject
                 var collection = report.Target switch
                 {
                     SlotInspectionProgress.TargetCollection.AreaA_Row1 => AreaA_Row1,
-                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => AreaA_Row2,
+                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => AreaA_Row1,
                     SlotInspectionProgress.TargetCollection.AreaB_Row1 => AreaB_Row1,
-                    SlotInspectionProgress.TargetCollection.AreaB_Row2 => AreaB_Row2,
+                    SlotInspectionProgress.TargetCollection.AreaB_Row2 => AreaB_Row1,
                     _ => null
                 };
 
@@ -335,8 +351,8 @@ public sealed class MainViewModel : ObservableObject
                 () => _machine.RunInspectionAsync(_confirmedBarcode, slotProgress, _cts.Token));
 
             // 全部完成 → 計算統計
-            AreaA_Stats.Calculate(AreaA_Row1, AreaA_Row2);
-            AreaB_Stats.Calculate(AreaB_Row1, AreaB_Row2);
+            AreaA_Stats.Calculate(AreaA_Row1);
+            AreaB_Stats.Calculate(AreaB_Row1);
 
             bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
 
@@ -375,6 +391,9 @@ public sealed class MainViewModel : ObservableObject
         // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
         _prevX10 = false;
 
+        // 清除上一輪的影像 / 數值 / 狀態
+        ResetAllSlots();
+
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
 
         try
@@ -386,9 +405,9 @@ public sealed class MainViewModel : ObservableObject
                 var collection = report.Target switch
                 {
                     SlotInspectionProgress.TargetCollection.AreaA_Row1 => AreaA_Row1,
-                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => AreaA_Row2,
+                    SlotInspectionProgress.TargetCollection.AreaA_Row2 => AreaA_Row1,
                     SlotInspectionProgress.TargetCollection.AreaB_Row1 => AreaB_Row1,
-                    SlotInspectionProgress.TargetCollection.AreaB_Row2 => AreaB_Row2,
+                    SlotInspectionProgress.TargetCollection.AreaB_Row2 => AreaB_Row1,
                     _ => null
                 };
 
@@ -572,6 +591,16 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    private void OnOpenImageViewer(SlotItem? slot)
+    {
+        if (slot?.ImageSource is not System.Windows.Media.Imaging.BitmapSource bmp) return;
+        var viewer = new Slot_Inspection.Views.ImageViewerWindow(bmp, slot.Name)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        viewer.Show();
+    }
+
     /// <summary>
     /// 開啟裁切設定對話視窗
     /// </summary>
@@ -694,16 +723,15 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void ResetAllSlots()
     {
-        foreach (var slot in AreaA_Row1.Concat(AreaA_Row2)
-                                       .Concat(AreaB_Row1)
-                                       .Concat(AreaB_Row2))
+        foreach (var slot in AreaA_Row1.Concat(AreaB_Row1))
         {
+            slot.ImageSource = null;
             slot.Value = 0;
             slot.IsNg  = false;
         }
 
-        AreaA_Stats.Calculate(AreaA_Row1, AreaA_Row2);
-        AreaB_Stats.Calculate(AreaB_Row1, AreaB_Row2);
+        AreaA_Stats.Calculate(AreaA_Row1);
+        AreaB_Stats.Calculate(AreaB_Row1);
     }
 
     /// <summary>

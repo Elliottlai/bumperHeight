@@ -37,6 +37,19 @@ public sealed class InspectionConfig
     public bool SaveImages { get; set; } = true;
     public string ImageSavePath { get; set; } = @"D:\InspectionImages";
 
+    // -- Axis settle delay (防止 ZL/ZR 到位後振動拍照模糊) --
+    /// <summary>
+    /// 是否在 ZL/ZR 軸到位後，額外等待 <see cref="AxisSettleDelayMs"/> ms 才拍照，
+    /// 以避免機械振動造成影像模糊。可透過 UI CheckBox 關閉。
+    /// </summary>
+    public bool EnableAxisSettleDelay { get; set; } = true;
+
+    /// <summary>
+    /// ZL/ZR 到位後等待振動平息的時間 (ms)，預設 150 ms。
+    /// <see cref="EnableAxisSettleDelay"/> 為 false 時不生效。
+    /// </summary>
+    public int AxisSettleDelayMs { get; set; } = 150;
+
     // -- NG threshold --
     public double NgThresholdLow { get; set; } = 0.40;
     public double NgThresholdHigh { get; set; } = 0.60;

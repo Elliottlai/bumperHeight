@@ -798,6 +798,13 @@ public sealed class MachineController : IDisposable
         if (!arrived)
             _logger.Warn($"[S03] {slotName} move timeout");
 
+        // STEP 1.5: 等待 ZL/ZR 機械振動平息，避免拍照晃動
+        if (_config.EnableAxisSettleDelay && _config.AxisSettleDelayMs > 0)
+        {
+            _logger.Debug($"[S03] {slotName} axis settle delay {_config.AxisSettleDelayMs} ms");
+            await Task.Delay(_config.AxisSettleDelayMs, ct);
+        }
+
         // STEP 2: Both lights ON simultaneously
         _light!.SetValue(_config.LightChannelLeft, _config.LightIntensityLeft);
         _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
@@ -1278,7 +1285,7 @@ public sealed class MachineController : IDisposable
 
         if (SimulationMode)
         {
-            await DryRunSimAsync(progress, ct);
+            await DryRunSimAsync(progress, ct, slotProgress);
             return;
         }
         Axes["AxisX"].SetMaxVel(8000);
@@ -1944,37 +1951,89 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>模擬模式的空跑：用 delay 模擬 ZL/ZR 升降 + Y 移動</summary>
-    private async Task DryRunSimAsync(IProgress<string>? progress, CancellationToken ct)
+    private async Task DryRunSimAsync(
+        IProgress<string>? progress,
+        CancellationToken ct,
+        IProgress<SlotInspectionProgress>? slotProgress = null)
     {
-        var rows = new (string Label, int Count)[]
-        {
-            ("AreaA_Row1", 13),
-            ("AreaA_Row2", 12),
-        };
+        const string SimImageRoot = @"D:\CameraTestImage";
+        // 圖檔 prefix：CameraTestImage 下只有 AreaA_Row1_Slot#N_L/R 命名
+        const string ImgPrefix = "AreaA_Row1";
+        const int SlotCount = 25;
 
-        int totalSlots = rows.Sum(r => r.Count);
-        int current = 0;
+        progress?.Report($"[Sim] 開始模擬取像，共 {SlotCount} 個 Slot");
 
-        foreach (var (label, count) in rows)
+        for (int i = 0; i < SlotCount; i++)
         {
-            for (int i = 0; i < count; i++)
+            ct.ThrowIfCancellationRequested();
+            int slotNum = 25 - i; // 遞減：25, 24, ..., 1
+
+            progress?.Report($"[Sim] ({i + 1}/{SlotCount}) SLOT#{slotNum}: 模擬取像...");
+
+            // _L → AreaA（左相機），_R → AreaB（右相機），同一個 slot 同時回報
+            System.Windows.Media.ImageSource? imgL = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "L");
+            System.Windows.Media.ImageSource? imgR = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "R");
+
+            string statusText = $"[Sim] SLOT#{slotNum} 取像完成";
+
+            // AreaA：左相機圖
+            slotProgress?.Report(new SlotInspectionProgress
             {
-                ct.ThrowIfCancellationRequested();
-                current++;
-                string slot = $"{label} Slot#{i + 1}";
-                progress?.Report($"[Sim] ({current}/{totalSlots}) {slot}: ZL+ZR↑ 安全高度...");
-                await Task.Delay(150, ct);
-                progress?.Report($"[Sim] ({current}/{totalSlots}) {slot}: Y 移動中...");
-                await Task.Delay(200, ct);
-                progress?.Report($"[Sim] ({current}/{totalSlots}) {slot}: ZL+ZR↓ 檢測高度...");
-                await Task.Delay(150, ct);
-                progress?.Report($"[Sim] ({current}/{totalSlots}) {slot}: 到位 ?");
-                await Task.Delay(100, ct);
-            }
+                Target     = SlotInspectionProgress.TargetCollection.AreaA_Row1,
+                SlotIndex  = i,
+                Image      = imgL,
+                StatusText = statusText,
+            });
+
+            // 給 UI 執行緒時間處理 AreaA 再投遞 AreaB
+            await Task.Delay(10, ct);
+
+            // AreaB：右相機圖（同步顯示）
+            slotProgress?.Report(new SlotInspectionProgress
+            {
+                Target     = SlotInspectionProgress.TargetCollection.AreaB_Row1,
+                SlotIndex  = i,
+                Image      = imgR,
+                StatusText = statusText,
+            });
+
+            await Task.Delay(290, ct); // 模擬每槽間隔（總計 300ms）
         }
 
-        progress?.Report($"[Sim] 空跑測試完成 ? 已跑完 {totalSlots} 個 Slot");
+        progress?.Report($"[Sim] 模擬完成，共 {SlotCount} 個 Slot");
         _logger.Info("===== Dry Run (Sim) Done =====");
+    }
+
+    /// <summary>
+    /// 從 SimImageRoot 找到符合 &lt;prefix&gt;_Slot#&lt;N&gt;_&lt;side&gt;_*.bmp 的最新檔案並載入為 BitmapSource。
+    /// </summary>
+    private static System.Windows.Media.ImageSource? LoadSimImage(string root, string prefix, int slotNum, string side)
+    {
+        if (!System.IO.Directory.Exists(root))
+            return null;
+
+        var pattern = $"{prefix}_Slot#{slotNum}_{side}_*.bmp";
+        var files = System.IO.Directory.GetFiles(root, pattern);
+        if (files.Length == 0)
+            return null;
+
+        // 取最後修改時間最新的一張
+        var file = files.OrderByDescending(f => System.IO.File.GetLastWriteTime(f)).First();
+
+        try
+        {
+            var bi = new System.Windows.Media.Imaging.BitmapImage();
+            bi.BeginInit();
+            bi.UriSource   = new Uri(file, UriKind.Absolute);
+            bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bi.EndInit();
+            bi.Freeze();
+            return bi;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     //  Utility

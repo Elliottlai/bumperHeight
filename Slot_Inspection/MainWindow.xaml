@@ -54,6 +54,53 @@
             </Border>
         </DataTemplate>
 
+        <!-- 每個 Slot 卡片：Slot編號 + 圖像 + 數値全包在一起 -->
+        <DataTemplate x:Key="SlotCardTemplate">
+            <Border BorderBrush="#333" BorderThickness="0,1,1,1" Height="116">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="20"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="22"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- SLOT 名稱 -->
+                    <Border Grid.Row="0" Style="{StaticResource SlotNameCellStyle}" BorderThickness="0,0,0,1">
+                        <TextBlock Text="{Binding Name}" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+
+                    <!-- 圖像（可點擊放大） -->
+                    <Border Grid.Row="1" BorderBrush="#333" BorderThickness="0,0,0,1" Background="Black"
+                            Cursor="Hand" Tag="{Binding}">
+                        <Border.InputBindings>
+                            <MouseBinding MouseAction="LeftClick" Command="{Binding DataContext.OpenImageViewerCommand,
+                                RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
+                        </Border.InputBindings>
+                        <Grid>
+                            <Image Source="{Binding ImageSource}" Stretch="Uniform"/>
+                            <TextBlock x:Name="ImgPlaceholder" Text="IMG" Foreground="#88FFFFFF" FontSize="11"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Visibility="Collapsed"/>
+                            <!-- 放大提示 icon -->
+                            <TextBlock Text="🔍" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                       Foreground="#AAFFFFFF" Margin="0,0,2,2"
+                                       Visibility="{Binding ImageSource, Converter={x:Null}}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Value -->
+                    <Border Grid.Row="2" Background="White">
+                        <TextBlock Text="{Binding Value, StringFormat=F2}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding ImageSource}" Value="{x:Null}">
+                    <Setter TargetName="ImgPlaceholder" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
         <Style x:Key="StateButtonStyle" TargetType="Button">
             <Setter Property="Margin" Value="1"/>
             <Setter Property="Padding" Value="14,6"/>
@@ -100,11 +147,11 @@
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="44"/>
-                        <RowDefinition Height="30"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="30"/>
-                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
@@ -167,49 +214,100 @@
                         </Grid>
                     </Grid>
 
-                    <Border Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource AreaHeaderBorderStyle}">
-                        <TextBlock Text="Area A" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="6*"/>
+                            <ColumnDefinition Width="4*"/>
+                        </Grid.ColumnDefinitions>
+                        <!-- Area A 標題 -->
+                        <Border Grid.Column="0" Background="#2E75B6" BorderBrush="#1A4E8A" BorderThickness="1" Margin="0,2,4,2">
+                            <TextBlock Text="Area A" FontSize="15" FontWeight="Bold"
+                                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <!-- Area A Stats -->
+                        <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" Background="#F0F4FA" Margin="0,2,0,2">
+                            <UniformGrid Columns="4" DataContext="{Binding AreaA_Stats}">
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Result" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Result}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Avg" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Avg, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Min" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Min, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border>
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Max" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Max, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                        </Border>
+                    </Grid>
 
-                    <!-- Area A Row 1 -->
-                    <Grid Grid.Row="2">
+                    <!-- Area A Row 1+2 -->
+                    <Grid Grid.Row="2" Margin="0,2,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="44"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="74"/>
-                            <RowDefinition Height="22"/>
-                        </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}">
-                            <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <!-- 左側固定標籤欄（兩排各一組） -->
+                        <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1,1,1,1">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="116"/>
+                                    <RowDefinition Height="116"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="20"/>
+                                        <RowDefinition Height="74"/>
+                                        <RowDefinition Height="22"/>
+                                    </Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="1" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="2" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Grid.Row="1">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="20"/>
+                                        <RowDefinition Height="74"/>
+                                        <RowDefinition Height="22"/>
+                                    </Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="1" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="2" Background="White">
+                                        <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                            </Grid>
                         </Border>
-                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
 
-                        <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaA_Row1}" ItemTemplate="{StaticResource SlotNameTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaA_Row1}" ItemTemplate="{StaticResource SlotImageTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaA_Row1}" ItemTemplate="{StaticResource SlotValueTemplate}">
+                        <!-- Slot 卡片列表，13個一排自動換行 -->
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding AreaA_Row1}" ItemTemplate="{StaticResource SlotCardTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <UniformGrid Columns="13"/>
@@ -218,191 +316,113 @@
                         </ItemsControl>
                     </Grid>
 
-                    <!-- Area A Row 2 -->
-                    <Grid Grid.Row="3">
+                    <!-- Area B 標頭 -->
+                    <Grid Grid.Row="4">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="44"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="90"/>
+                            <ColumnDefinition Width="6*"/>
+                            <ColumnDefinition Width="4*"/>
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="74"/>
-                            <RowDefinition Height="22"/>
-                        </Grid.RowDefinitions>
-
-                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}">
-                            <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <!-- Area B 標題 -->
+                        <Border Grid.Column="0" Background="#548235" BorderBrush="#375623" BorderThickness="1" Margin="0,2,4,2">
+                            <TextBlock Text="Area B" FontSize="15" FontWeight="Bold"
+                                       Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-
-                        <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotNameTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotImageTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaA_Row2}" ItemTemplate="{StaticResource SlotValueTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <Border Grid.Row="0" Grid.Column="2" Grid.RowSpan="3" BorderBrush="#333" BorderThickness="1" Background="White">
-                            <StackPanel VerticalAlignment="Center" DataContext="{Binding AreaA_Stats}">
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Result: "/><Run Text="{Binding Result}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Avg: "/><Run Text="{Binding Avg, StringFormat=F2}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Min: "/><Run Text="{Binding Min, StringFormat=F2}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Max: "/><Run Text="{Binding Max, StringFormat=F2}"/>
-                                </TextBlock>
-                            </StackPanel>
+                        <!-- Area B Stats -->
+                        <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" Background="#F0F4FA" Margin="0,2,0,2">
+                            <UniformGrid Columns="4" DataContext="{Binding AreaB_Stats}">
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Result" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Result}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Avg" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Avg, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border BorderBrush="#BCC" BorderThickness="0,0,1,0">
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Min" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Min, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border>
+                                    <StackPanel VerticalAlignment="Center" Margin="4,3">
+                                        <TextBlock Text="Max" FontSize="9" Foreground="#666" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Max, StringFormat=F2}" FontSize="13" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
                         </Border>
                     </Grid>
 
-                    <Border Grid.Row="4" Grid.ColumnSpan="3" Style="{StaticResource AreaHeaderBorderStyle}">
-                        <TextBlock Text="Area B" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-
-                    <!-- Area B Row 1 -->
-                    <Grid Grid.Row="5">
+                    <!-- Area B Row 1+2 -->
+                    <Grid Grid.Row="5" Margin="0,2,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="44"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="74"/>
-                            <RowDefinition Height="22"/>
-                        </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}">
-                            <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                        <!-- 左側固定標籤欄（兩排各一組） -->
+                        <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1,1,1,1">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="116"/>
+                                    <RowDefinition Height="116"/>
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="20"/>
+                                        <RowDefinition Height="74"/>
+                                        <RowDefinition Height="22"/>
+                                    </Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="1" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="2" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+
+                                <Grid Grid.Row="1">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="20"/>
+                                        <RowDefinition Height="74"/>
+                                        <RowDefinition Height="22"/>
+                                    </Grid.RowDefinitions>
+                                    <Border Grid.Row="0" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="1" Background="White" BorderBrush="#333" BorderThickness="0,0,0,1">
+                                        <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                    <Border Grid.Row="2" Background="White">
+                                        <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                            </Grid>
                         </Border>
 
-                        <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaB_Row1}" ItemTemplate="{StaticResource SlotNameTemplate}">
+                        <!-- Slot 卡片列表，13個一排自動換行 -->
+                        <ItemsControl Grid.Column="1" ItemsSource="{Binding AreaB_Row1}" ItemTemplate="{StaticResource SlotCardTemplate}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <UniformGrid Columns="13"/>
                                 </ItemsPanelTemplate>
                             </ItemsControl.ItemsPanel>
                         </ItemsControl>
-
-                        <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaB_Row1}" ItemTemplate="{StaticResource SlotImageTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaB_Row1}" ItemTemplate="{StaticResource SlotValueTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="13"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-                    </Grid>
-
-                    <!-- Area B Row 2 -->
-                    <Grid Grid.Row="6">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="44"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="90"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="74"/>
-                            <RowDefinition Height="22"/>
-                        </Grid.RowDefinitions>
-
-                        <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}">
-                            <TextBlock Text="SLOT" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Image" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-                        <Border Grid.Row="2" Grid.Column="0" Style="{StaticResource RowTitleCellStyle}" BorderThickness="1,0,1,1">
-                            <TextBlock Text="Value" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                        </Border>
-
-                        <ItemsControl Grid.Row="0" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotNameTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="1" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotImageTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <ItemsControl Grid.Row="2" Grid.Column="1" ItemsSource="{Binding AreaB_Row2}" ItemTemplate="{StaticResource SlotValueTemplate}">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <UniformGrid Columns="12"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-
-                        <Border Grid.Row="0" Grid.Column="2" Grid.RowSpan="3" BorderBrush="#333" BorderThickness="1" Background="White">
-                            <StackPanel VerticalAlignment="Center" DataContext="{Binding AreaB_Stats}">
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Result: "/><Run Text="{Binding Result}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Avg: "/><Run Text="{Binding Avg, StringFormat=F2}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Min: "/><Run Text="{Binding Min, StringFormat=F2}"/>
-                                </TextBlock>
-                                <TextBlock HorizontalAlignment="Center">
-                                    <Run Text="Max: "/><Run Text="{Binding Max, StringFormat=F2}"/>
-                                </TextBlock>
-                            </StackPanel>
-                        </Border>
                     </Grid>
                 </Grid>
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="10" Margin="12,4,12,4">
+            <UniformGrid Grid.Row="2" Columns="11" Margin="12,4,12,4">
                 <Button Content="Main" Background="#C6E0B4" FontSize="11" Padding="4,4"/>
                 <Button Content="Setting" FontSize="11" Padding="4,4"/>
                 <Button Content="IO table" FontSize="11" Padding="4,4"/>
@@ -415,6 +435,13 @@
                           VerticalAlignment="Center"
                           FontSize="11"
                           ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)"/>
+                <CheckBox Content="⏱ ZL/ZR 安定延遲"
+                          IsChecked="{Binding EnableAxisSettleDelay}"
+                          VerticalContentAlignment="Center"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          FontSize="11"
+                          ToolTip="勾選：ZL/ZR 到位後等待 150 ms 再拍照，防止機械振動造成影像模糊"/>
                 <Button Content="📷 讀取條碼"
                         Command="{Binding ReadBarcodeCommand}"
                         Style="{StaticResource StateButtonStyle}"

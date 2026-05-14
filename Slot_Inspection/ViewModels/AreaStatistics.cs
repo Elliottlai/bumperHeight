@@ -34,14 +34,14 @@ public sealed class AreaStatistics : ObservableObject
         set => SetProperty(ref _max, value);
     }
 
-    public void Calculate(ObservableCollection<SlotItem> row1, ObservableCollection<SlotItem> row2)
+    public void Calculate(ObservableCollection<SlotItem> row1)
     {
-        var allValues = row1.Concat(row2).Select(s => s.Value).ToList();
+        var allValues = row1.Select(s => s.Value).ToList();
         if (allValues.Count == 0) return;
 
         Avg = Math.Round(allValues.Average(), 2);
         Min = allValues.Min();
         Max = allValues.Max();
-        Result = row1.Concat(row2).Any(s => s.IsNg) ? "NG" : "OK";
+        Result = row1.Any(s => s.IsNg) ? "NG" : "OK";
     }
 }
