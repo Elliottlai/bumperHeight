@@ -18,14 +18,53 @@ public partial class ImageViewerWindow : Window
     private double _translateX;
     private double _translateY;
 
+    // ── 多張導覽 ──
+    private readonly IReadOnlyList<(BitmapSource Image, string Name)> _images;
+    private int _currentIndex;
+
+    /// <summary>單張模式（不顯示上一張/下一張）</summary>
     public ImageViewerWindow(BitmapSource image, string slotName)
+        : this([(image, slotName)], 0) { }
+
+    /// <summary>多張模式，傳入完整清單與起始索引</summary>
+    public ImageViewerWindow(
+        IReadOnlyList<(BitmapSource Image, string Name)> images,
+        int startIndex)
     {
         InitializeComponent();
-        TitleText.Text = slotName;
-        PreviewImage.Source = image;
+        _images = images;
+        _currentIndex = Math.Clamp(startIndex, 0, Math.Max(0, images.Count - 1));
 
-        // 初始縮放：適合視窗
-        Loaded += (_, _) => FitToWindow();
+        Loaded += (_, _) =>
+        {
+            ShowImage(_currentIndex);
+            UpdateNavButtons();
+        };
+    }
+
+    private void ShowImage(int index)
+    {
+        if (_images.Count == 0) return;
+        _currentIndex = Math.Clamp(index, 0, _images.Count - 1);
+
+        var (bmp, name) = _images[_currentIndex];
+        PreviewImage.Source = bmp;
+        TitleText.Text = name;
+        IndexText.Text = _images.Count > 1 ? $"{_currentIndex + 1} / {_images.Count}" : "";
+
+        FitToWindow();
+        UpdateNavButtons();
+    }
+
+    private void UpdateNavButtons()
+    {
+        bool multi = _images.Count > 1;
+        PrevButton.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
+        NextButton.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
+        IndexText.Visibility  = multi ? Visibility.Visible : Visibility.Collapsed;
+
+        PrevButton.IsEnabled = _currentIndex > 0;
+        NextButton.IsEnabled = _currentIndex < _images.Count - 1;
     }
 
     private void FitToWindow()
@@ -38,8 +77,9 @@ public partial class ImageViewerWindow : Window
         double scaleY = availH / bmp.PixelHeight;
         _zoom = Math.Min(scaleX, scaleY) * 0.95;
 
-        _translateX = 0;
-        _translateY = 0;
+        // 讓圖像置中：translate = (availSize - imageSize * zoom) / 2
+        _translateX = (availW - bmp.PixelWidth  * _zoom) / 2.0;
+        _translateY = (availH - bmp.PixelHeight * _zoom) / 2.0;
         ApplyTransform();
     }
 
@@ -51,6 +91,17 @@ public partial class ImageViewerWindow : Window
         TranslateT.X = _translateX;
         TranslateT.Y = _translateY;
         ZoomText.Text = $"{_zoom * 100:F0}%";
+    }
+
+    // ── 導覽按鈕 ──
+    private void Prev_Click(object sender, RoutedEventArgs e) => ShowImage(_currentIndex - 1);
+    private void Next_Click(object sender, RoutedEventArgs e) => ShowImage(_currentIndex + 1);
+
+    // ── 鍵盤左/右鍵切換 ──
+    private void Window_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Left)  { ShowImage(_currentIndex - 1); e.Handled = true; }
+        if (e.Key == Key.Right) { ShowImage(_currentIndex + 1); e.Handled = true; }
     }
 
     // ── 滾輪縮放（以滑鼠位置為中心） ──
@@ -95,7 +146,7 @@ public partial class ImageViewerWindow : Window
         ApplyTransform();
     }
 
-    // ── 按鈕 ──
+    // ── 縮放按鈕 ──
     private void ZoomIn_Click(object sender, RoutedEventArgs e)
     {
         _zoom *= ZoomStep;

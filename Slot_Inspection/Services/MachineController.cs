@@ -13,6 +13,7 @@ using Slot_Inspection.Models;
 using System.IO;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
+using static Emgu.CV.WeChatQRCode;
 
 
 namespace Slot_Inspection.Services;
@@ -366,6 +367,39 @@ public sealed class MachineController : IDisposable
         }
 
         return code;
+    }
+
+    /// <summary>
+    /// 確保讀碼器已連線後，發送 Software Trigger 讀取條碼並回傳條碼字串。
+    /// Simulation 模式下回傳模擬條碼。
+    /// </summary>
+    public async Task<string?> TriggerReadBarcodeAsync(
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        if (SimulationMode)
+        {
+            progress?.Report("[Sim] 讀碼中...");
+            await Task.Delay(300, ct);
+            string simCode = "SIM-BARCODE-001";
+            _logger.Info($"[Barcode] (Sim) code: {simCode}");
+            return simCode;
+        }
+
+        if (_barcodeDevice == null || !_barcodeDevice.IsConnected)
+        {
+            progress?.Report("初始化讀碼器...");
+            var initResult = InitBarcodeReader();
+            if (!initResult.Success)
+            {
+                _logger.Warn($"[Barcode] 讀碼器初始化失敗: {initResult.Message}");
+                progress?.Report($"讀碼器無法連線: {initResult.Message}");
+                return null;
+            }
+        }
+
+        progress?.Report("讀碼中...");
+        return await ReadBarcodeAsync(ct);
     }
 
     /// <summary>
@@ -833,22 +867,34 @@ public sealed class MachineController : IDisposable
         //}
 
         // STEP 6: Save images
+        // 命名規則：{yyyy-MM-ddTHH-mm-ss}_{barcodeId}_{C編號}_{LSlot/RSlot}{序號}.bmp
+        // 例：2026-04-10T10-34-57_SIM-LEFT-001_C1_LSlot02.bmp
         string imagePath = "";
         string pathL = "", pathR = "";
         //if (_config.SaveImages)
         //{
+        //    string ts       = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");
+        //    string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
+        //    bool sx12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12 → R側
+        //    bool sx13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 → L側
+        //    string camL   = sx12 ? "C4" : "C2";          // 左相機編號
+        //    string camR   = sx12 ? "C3" : "C1";          // 右相機編號
+        //    string slotSide = sx12 ? "RSlot" : "LSlot";  // R側 or L側
+        //    string slotNum  = (25 - slotIndex).ToString("D2");  // 01 ~ 25
+        //    string slotTag  = $"{slotSide}{slotNum}";           // e.g. LSlot02
+        //
         //    string dir = Path.Combine(
         //        _config.ImageSavePath,
         //        DateTime.Now.ToString("yyyyMMdd"),
-        //        barcode);
+        //        barcodeId);
         //    Directory.CreateDirectory(dir);
-
-        //    pathL = Path.Combine(dir, $"{slotName}_L.tif");
-        //    pathR = Path.Combine(dir, $"{slotName}_R.tif");
-
-        //    _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotName}_L");
-        //    _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotName}_R");
-
+        //
+        //    pathL = Path.Combine(dir, $"{ts}_{barcodeId}_{camL}_{slotTag}.bmp");
+        //    pathR = Path.Combine(dir, $"{ts}_{barcodeId}_{camR}_{slotTag}.bmp");
+        //
+        //    _cameraManager.SaveCameraImage(_cameraKeyLeft,  pathL, barcode, $"{slotTag}_{camL}");
+        //    _cameraManager.SaveCameraImage(_cameraKeyRight, pathR, barcode, $"{slotTag}_{camR}");
+        //
         //    imagePath = pathL;
         //}
 
@@ -1171,14 +1217,22 @@ public sealed class MachineController : IDisposable
             if (devices.Count == 0)
                 return DeviceInitResult.Fail(name, "No MvCodeReader device found (請確認讀碼器 GigE 連線)");
 
-            _logger.Info($"[S01] 找到 {devices.Count} 台讀碼器，使用第一台: {devices[0].DisplayName}");
+            int devId = 0;
+            foreach(var dev in devices)
+            {
+                if (dev.UserDefinedName == "Barcode")
+                    break;
+                 devId++;
+            }
+
+            _logger.Info($"[S01] 找到 {devices.Count} 台讀碼器，使用第一台: {devices[devId].DisplayName}");
 
             // 建立 BarcodeReader 專案的 SDK 封裝物件
             _barcodeDevice = new MvCodeReaderDevice();
             _barcodeParser = new MvBarcodeResultParser();
 
             // 建立 Handle
-            int ret = _barcodeDevice.CreateHandle(devices[0].RawDeviceInfo!);
+            int ret = _barcodeDevice.CreateHandle(devices[devId].RawDeviceInfo!);
             if (ret != 0)
                 return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
 
@@ -1201,7 +1255,7 @@ public sealed class MachineController : IDisposable
             if (ret != 0)
                 return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
 
-            _logger.Info($"{name}: OK ({devices[0].DisplayName})");
+            _logger.Info($"{name}: OK ({devices[devId].DisplayName})");
             return DeviceInitResult.Ok(name);
         }
         catch (Exception ex)
@@ -1288,10 +1342,10 @@ public sealed class MachineController : IDisposable
             await DryRunSimAsync(progress, ct, slotProgress);
             return;
         }
-        Axes["AxisX"].SetMaxVel(8000);
-        Axes["AxisY"].SetMaxVel(8000);
-        Axes["AxisZL"].SetMaxVel(4000);
-        Axes["AxisZR"].SetMaxVel(4000);
+        Axes["AxisX"].SetMaxVel(10000);
+        Axes["AxisY"].SetMaxVel(10000);
+        Axes["AxisZL"].SetMaxVel(6000);
+        Axes["AxisZR"].SetMaxVel(6000);
 
         // ── Y0 閃爍：空跑測試進行中指示燈（1s 亮 / 1s 暗）──
         using var blinkCts = new CancellationTokenSource();
@@ -1417,6 +1471,10 @@ public sealed class MachineController : IDisposable
                 progress?.Report("相機 ?");
             }
 
+
+            _cameraRight.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
+            _cameraLeft.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
+
             // ── 依 X12 / X13 訊號選擇 R組 或 L組 Z 軸高度 ──
             bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12 → R組
             bool boardX13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 → L組
@@ -1441,7 +1499,7 @@ public sealed class MachineController : IDisposable
 
             foreach (var (target, count) in rows)
             {
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < count; i=i+1)
                 {
                     ct.ThrowIfCancellationRequested();
                     await CheckPauseAsync(progress, ct);
@@ -1627,14 +1685,17 @@ public sealed class MachineController : IDisposable
         int currentSlot,
         int totalSlots,
         int slotIndex,
-        string barcode,
+        string barcode ,
         IProgress<string>? progress,
         CancellationToken ct,
         SlotInspectionProgress.TargetCollection targetA = SlotInspectionProgress.TargetCollection.AreaA_Row1,
         SlotInspectionProgress.TargetCollection targetB = SlotInspectionProgress.TargetCollection.AreaB_Row1,
         IProgress<SlotInspectionProgress>? slotProgress = null)
     {
-        const string SaveRoot = @"D:\CameraLightTest";
+
+      
+
+        const string SaveRoot = @"D:\CameraTestImage";
         const int LightChLeft = 1;    // 左相機光源通道
         const int LightChRight = 2;    // 右相機光源通道
         const int LightPct = 100;  // 亮度 100%（可依需求調整）
@@ -1774,7 +1835,7 @@ public sealed class MachineController : IDisposable
                 {
                     Target = targetA,
                     SlotIndex = slotIndex,
-                    Value = detectedAreaL,
+                    Value = detectedAreaL*0.0069*0.0069,
                     Image = uiImageLeft,
                     StatusText = statusText
                 });
@@ -1786,7 +1847,7 @@ public sealed class MachineController : IDisposable
                 {
                     Target = targetB,
                     SlotIndex = slotIndex,
-                    Value = detectedAreaR,
+                    Value = detectedAreaR * 0.0069 * 0.0069,
                     Image = uiImageRight,
                     StatusText = statusText
                 });

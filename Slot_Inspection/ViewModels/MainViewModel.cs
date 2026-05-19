@@ -501,7 +501,22 @@ public sealed class MainViewModel : ObservableObject
 
             StatusMessage = $"X 軸已到位 ({targetX} mm)，準備讀碼...";
 
-            // TODO: 觸發讀碼器讀取條碼
+            // STEP 4: 觸發讀碼器讀取條碼並顯示到 UI
+            var statusProgress = new Progress<string>(msg => StatusMessage = msg);
+            string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
+
+            if (string.IsNullOrEmpty(code))
+            {
+                StatusMessage = "讀碼失敗 (NoRead)";
+                _confirmedBarcode = "";
+                Barcode = "NoRead";
+            }
+            else
+            {
+                _confirmedBarcode = code;
+                Barcode = code;
+                StatusMessage = $"條碼讀取成功: {code}";
+            }
         }
         catch (OperationCanceledException)
         {
@@ -593,8 +608,18 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnOpenImageViewer(SlotItem? slot)
     {
-        if (slot?.ImageSource is not System.Windows.Media.Imaging.BitmapSource bmp) return;
-        var viewer = new Slot_Inspection.Views.ImageViewerWindow(bmp, slot.Name)
+        if (slot?.ImageSource is not System.Windows.Media.Imaging.BitmapSource) return;
+
+        // 收集所有有圖片的 Slot（AreaA + AreaB）
+        var allSlots = AreaA_Row1.Concat(AreaB_Row1)
+            .Where(s => s.ImageSource is System.Windows.Media.Imaging.BitmapSource)
+            .Select(s => ((System.Windows.Media.Imaging.BitmapSource)s.ImageSource!, s.Name))
+            .ToList();
+
+        int startIndex = allSlots.FindIndex(x => x.Name == slot.Name);
+        if (startIndex < 0) startIndex = 0;
+
+        var viewer = new Slot_Inspection.Views.ImageViewerWindow(allSlots, startIndex)
         {
             Owner = Application.Current.MainWindow
         };
