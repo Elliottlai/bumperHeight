@@ -11,7 +11,10 @@ namespace Slot_Inspection.ViewModels;
 public sealed class MainViewModel : ObservableObject
 {
     private string _barcode = "";
-    private string _confirmedBarcode = ""; // 上一次已確認的條碼（用於重複判斷）
+    private string _carrierSide = "";
+    private string _areaATitle = "Area A";
+    private string _areaBTitle = "Area B";
+    private string _confirmedBarcode = "";
     private string _currentDate = DateTime.Now.ToString("yyyy/MM/dd");
     private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
     private bool _isRunning;
@@ -23,6 +26,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
     private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
     private bool _prevX10 = false; // X10 上一次狀態（預設 0）
+    private int _x7LowCount = 0;   // X7 連續 LOW 計數（防抖用）
+    private const int X7DebounceCount = 3; // 連續 3 次（300ms）才確認暫停
     private readonly MachineController _machine = new();
     private CancellationTokenSource? _cts;
 
@@ -36,6 +41,24 @@ public sealed class MainViewModel : ObservableObject
     {
         get => _barcode;
         set => SetProperty(ref _barcode, value);
+    }
+
+    public string CarrierSide
+    {
+        get => _carrierSide;
+        set => SetProperty(ref _carrierSide, value);
+    }
+
+    public string AreaATitle
+    {
+        get => _areaATitle;
+        set => SetProperty(ref _areaATitle, value);
+    }
+
+    public string AreaBTitle
+    {
+        get => _areaBTitle;
+        set => SetProperty(ref _areaBTitle, value);
     }
 
     public string CurrentDate
@@ -77,6 +100,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand MoveToPickPositionCommand { get; }
     public ICommand PositionSettingsCommand { get; }
     public ICommand CropSettingsCommand { get; }
+    public ICommand LightSettingsCommand { get; }
     public ICommand OpenImageViewerCommand { get; }
 
     private bool _isDryRunning;
@@ -149,6 +173,9 @@ public sealed class MainViewModel : ObservableObject
         // 裁切設定：任何時候都可開啟
         CropSettingsCommand = new RelayCommand(OnCropSettings);
 
+        // 亮度設定：任何時候都可開啟
+        LightSettingsCommand = new RelayCommand(OnLightSettings);
+
         // 點擊圖像放大預覽
         OpenImageViewerCommand = new RelayCommand<SlotItem>(OnOpenImageViewer);
 
@@ -173,24 +200,40 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
     {
-        // X7/X10 光閘暫停/繼續（暫時停用）
-        //if (IsDryRunning)
-        //{
-        //    bool x7 = _machine.GetPlcXOctal(7) ?? true;
-        //    if (!x7)
-        //        _machine.PauseDryRun();
-        //    if (_machine.IsDryRunPaused)
-        //    {
-        //        bool x10 = _machine.GetPlcXOctal(10) ?? false;
-        //        if (!_prevX10 && x10 && x7)
-        //            _machine.ResumeDryRun();
-        //        _prevX10 = x10;
-        //    }
-        //    else
-        //    {
-        //        _prevX10 = false;
-        //    }
-        //}
+        // X7/X10 光閘暫停/繼續（含防抖：連續 3 次 LOW 才暫停）
+        if (IsDryRunning)
+        {
+            bool x7 = _machine.GetPlcXOctal(7) ?? true;
+            if (!x7)
+            {
+                _x7LowCount++;
+                if (_x7LowCount >= X7DebounceCount)
+                    _machine.PauseDryRun();
+            }
+            else
+            {
+                _x7LowCount = 0; // X7 恢復 HIGH，重置計數
+            }
+
+            if (_machine.IsDryRunPaused)
+            {
+                bool x10 = _machine.GetPlcXOctal(10) ?? false;
+                if (!_prevX10 && x10 && x7)
+                {
+                    _x7LowCount = 0;
+                    _machine.ResumeDryRun();
+                }
+                _prevX10 = x10;
+            }
+            else
+            {
+                _prevX10 = false;
+            }
+        }
+        else
+        {
+            _x7LowCount = 0; // 非 DryRun 時重置
+        }
 
         if (!IsDeviceReady || IsRunning || IsDryRunning) return;
 
@@ -398,6 +441,53 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
+
+
+            // ── STEP 0：讀取條碼 ──────────────────────────────────────────
+            StatusMessage = "移動至讀碼位置...";
+            var ct = _cts.Token;
+
+            // Y 軸移動到讀碼位置
+            _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
+            await MachineController.WaitUntilAsync(
+                () => _machine.Axes["AxisY"].Wait(),
+                TimeSpan.FromSeconds(30), ct);
+
+            // 偵測 X12 / X13 載台訊號
+            bool x12 = _machine.GetPlcXOctal(12) ?? false;
+            bool x13 = _machine.GetPlcXOctal(13) ?? false;
+
+            double targetX = x12 ? _machine.Config.BarcodePositionLeftX : _machine.Config.BarcodePositionRightX;
+            CarrierSide = x12 ? "R" : "L";
+            // X12=ON: 左相機=C4, 右相機=C3；X13=ON: 左相機=C2, 右相機=C1
+            AreaATitle = x12 ? "Area A  (C4)" : "Area A  (C2)";
+            AreaBTitle = x12 ? "Area B  (C3)" : "Area B  (C1)";
+            StatusMessage = $"偵測到 {(x12 ? "X12" : "X13")} → X 軸移至 {targetX} mm...";
+
+            _machine.Axes["AxisX"].MotMoveAbs(targetX);
+            await MachineController.WaitUntilAsync(
+                () => _machine.Axes["AxisX"].Wait(),
+                TimeSpan.FromSeconds(30), ct);
+
+            // 觸發讀碼器，等待條碼（含讀碼器回應時間）
+            StatusMessage = "讀取條碼中...";
+            string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
+
+            if (string.IsNullOrEmpty(code))
+            {
+                _confirmedBarcode = "";
+                Barcode = "NoRead";
+                CarrierSide = "";
+                AreaATitle = "Area A";
+                AreaBTitle = "Area B";
+                StatusMessage = "條碼讀取失敗 (NoRead)，流程中止";
+                return;
+            }
+
+            _confirmedBarcode = code;
+            Barcode = code;
+            StatusMessage = $"條碼讀取成功: {code}，開始取像...";
+            // ─────────────────────────────────────────────────────────────
             StatusMessage = "主流程啟動...逐 Slot 取像中";
 
             var dryRunSlotProgress = new Progress<SlotInspectionProgress>(report =>
@@ -423,8 +513,16 @@ public sealed class MainViewModel : ObservableObject
                     StatusMessage = report.StatusText;
             });
 
-            await Task.Run(() => _machine.DryRunAsync(statusProgress, _cts.Token, _confirmedBarcode, dryRunSlotProgress));
-            StatusMessage = "主流程完成 ?";
+            await Task.Run(() => _machine.DryRunAsync(statusProgress, ct, _confirmedBarcode, dryRunSlotProgress));
+
+            // 計算統計並寫入 CSV
+            AreaA_Stats.Calculate(AreaA_Row1);
+            AreaB_Stats.Calculate(AreaB_Row1);
+
+            bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
+            InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
+
+            StatusMessage = $"主流程完成 {(pass ? "? PASS" : "? FAIL")}";
         }
         catch (OperationCanceledException)
         {
@@ -624,6 +722,24 @@ public sealed class MainViewModel : ObservableObject
             Owner = Application.Current.MainWindow
         };
         viewer.Show();
+    }
+
+    /// <summary>
+    /// 開啟相機亮度設定對話視窗；按 OK 後寫回 InspectionConfig 並儲存至 JSON。
+    /// </summary>
+    private void OnLightSettings()
+    {
+        var vm = new LightSettingsViewModel(_machine.Config);
+        var win = new Views.LightSettingsWindow
+        {
+            DataContext = vm,
+            Owner = Application.Current.MainWindow
+        };
+        if (win.ShowDialog() == true)
+        {
+            vm.ApplyTo(_machine.Config);
+            StatusMessage = $"亮度設定已儲存（左={vm.LightIntensityLeft}, 右={vm.LightIntensityRight}）";
+        }
     }
 
     /// <summary>

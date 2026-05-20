@@ -87,11 +87,19 @@ public sealed class BumperAlgService
             double detectedArea = 0.0;
             if (mainData != null && mainData.TryGetValue("DetectedArea", out var areaVal))
             {
-                try { detectedArea = Convert.ToDouble(areaVal); } catch { }
+                try
+                {
+                    // 原始值為像素面積，換算為 mm?（像素尺寸 0.0069 mm/px）
+                    double pixelArea = Convert.ToDouble(areaVal);
+                    detectedArea = pixelArea * 0.0069 * 0.0069;
+                    // 回寫換算後的值，讓 DLL WriteResultToCsv 寫出 mm? 而非像素數
+                    mainData["DetectedArea"] = detectedArea;
+                }
+                catch { }
             }
             var bitmapSource = MatToBitmapSource(overlay);
             bitmapSource.Freeze();
-            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource, detectedArea);
+            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource, detectedArea, result);
         }
         catch (Exception ex)
         {
@@ -338,8 +346,9 @@ public readonly record struct BumperAlgResult(
     bool IsNg,
     string Message,
     BitmapSource? Image,
-    double DetectedArea = 0.0)
+    double DetectedArea = 0.0,
+    ProcessingResult? RawResult = null)
 {
     public static BumperAlgResult Fail(string message)
-        => new(false, true, message, null, 0.0);
+        => new(false, true, message, null, 0.0, null);
 }

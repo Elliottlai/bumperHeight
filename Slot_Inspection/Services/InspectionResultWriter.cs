@@ -8,9 +8,17 @@ namespace Slot_Inspection.Services;
 
 /// <summary>
 /// 檢測結果輸出服務 — 將每個 Slot 的影像演算法結果寫入 CSV 報表。
-/// FoupID 欄位寫入條碼讀取器所讀到的 barcode 值。
+/// 
 /// CSV 欄位：Date, FoupID, Bumper Position, Layer, Item Name, Value,
 ///           LowerSpecLimit, UpperSpecLimit, Judgment, ProcessStartTime, ProcessEndTime, DuringTime
+/// 
+/// 資料來源：
+///   - Date / ProcessStartTime / ProcessEndTime / DuringTime → DLL 執行演算法時自動填入 ProcessingResult
+///   - FoupID → 由呼叫端傳入的 foupId（條碼讀取器讀值）
+///   - Bumper Position → 由呼叫端傳入的 bumperPosition 字串
+///   - Layer / Item Name / Value / LowerSpecLimit / UpperSpecLimit / Judgment
+///       → DLL 執行 BumpFlatDetection / DefectDetection 後自動寫入 ProcessingResult.AdditionalData，
+///         再由 WriteResultToCsv 負責寫出到 CSV
 /// </summary>
 public static class InspectionResultWriter
 {
@@ -21,21 +29,21 @@ public static class InspectionResultWriter
         @"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}",
         RegexOptions.Compiled);
 
-    // CSV 標頭 — FoupID 欄位填入條碼讀取器讀到的值
-    private const string CsvHeader =
-        "Date,FoupID,Bumper Position,Layer,Item Name,Value," +
-        "LowerSpecLimit,UpperSpecLimit,Judgment,ProcessStartTime,ProcessEndTime,DuringTime";
-
     // ---------------------------------------------------------------
     // 公開方法
     // ---------------------------------------------------------------
 
     /// <summary>
-    /// 使用 BumperFlat.ImageProcessing 的 CSV 功能，
+    /// 主要寫入方法：使用 BumperFlat.ImageProcessing 的 CSV 功能，
     /// 將 ProcessingResult（含 AdditionalData）寫入 CSV。
+    /// 
+    /// DLL 會自動從 ProcessingResult 中取出：
+    /// Layer, Item Name, Value, LowerSpecLimit, UpperSpecLimit, Judgment,
+    /// Date, ProcessStartTime, ProcessEndTime, DuringTime
+    /// 並寫入對應的 CSV 欄位。
     /// </summary>
     /// <param name="foupId">條碼讀取器讀到的 barcode 值，對應 CSV 的 FoupID 欄位。</param>
-    /// <param name="bumperPosition">Bumper 位置字串。</param>
+    /// <param name="bumperPosition">Bumper 位置字串，對應 CSV 的 Bumper Position 欄位。</param>
     /// <param name="imagePath">來源影像完整路徑。</param>
     /// <param name="flatProcessingResult">Flat 演算法結果；null 時略過。</param>
     /// <param name="defectProcessingResult">Defect 演算法結果；null 時略過。</param>
@@ -51,10 +59,11 @@ public static class InspectionResultWriter
             return;
 
         var now = DateTime.Now;
+        string sanitizedImagePath = SanitizeImagePath(imagePath);
 
         lock (_csvLock)
         {
-            string csvPath = GetOrCreateCsvPath(foupId, imagePath, now);
+            string csvPath = GetOrCreateCsvPath(foupId, sanitizedImagePath, now);
             EnsureCsvInitialized(csvPath);
 
             var processor = new ImageProcessor();
@@ -63,7 +72,7 @@ public static class InspectionResultWriter
             if (flatProcessingResult != null)
             {
                 flatWritten = processor.WriteResultToCsv(
-                    imagePath, csvPath, flatProcessingResult,
+                    sanitizedImagePath, csvPath, flatProcessingResult,
                     bumperPosition, null, null, null);
             }
 
@@ -71,9 +80,11 @@ public static class InspectionResultWriter
             if (defectProcessingResult != null)
             {
                 defectWritten = processor.WriteResultToCsv(
-                    imagePath, csvPath, defectProcessingResult,
+                    sanitizedImagePath, csvPath, defectProcessingResult,
                     bumperPosition, null, null, null);
             }
+
+            PatchFoupIdInCsv(csvPath, foupId);
 
             System.Diagnostics.Debug.WriteLine(
                 $"[ResultWriter] AnalyzeCSV FoupID={foupId} | {bumperPosition} | " +
@@ -82,79 +93,59 @@ public static class InspectionResultWriter
     }
 
     /// <summary>
-    /// Fallback 手動寫入：不依賴 DLL，直接以標準欄位格式寫入一行資料。
+    /// Fallback 手動寫入：當 DLL 無法正常執行時，以最少資訊寫入一行資料。
+    /// 僅填入 Date, FoupID, Item Name, Value, Judgment 等基本欄位。
     /// </summary>
-    /// <param name="barcode">條碼讀取器讀到的值，寫入 CSV 的 FoupID 欄位。</param>
+    /// <param name="foupId">條碼讀取器讀到的值，寫入 CSV 的 FoupID 欄位。</param>
     /// <param name="slotName">Slot 名稱，寫入 Item Name 欄位。</param>
     /// <param name="value">量測值。</param>
     /// <param name="isNg">是否 NG，寫入 Judgment 欄位。</param>
-    /// <param name="imagePath">來源影像完整路徑（用於抽取時間戳記）。</param>
-    /// <param name="bumperPosition">Bumper 位置（選填）。</param>
-    /// <param name="layer">層別（選填）。</param>
-    /// <param name="lowerSpec">規格下限（選填）。</param>
-    /// <param name="upperSpec">規格上限（選填）。</param>
-    /// <param name="processStartTime">處理開始時間（選填，用於計算 DuringTime）。</param>
+    /// <param name="imagePath">來源影像完整路徑（用於決定 CSV 路徑）。</param>
     public static void WriteSlotResult(
-        string barcode,
+        string foupId,
         string slotName,
         double value,
         bool isNg,
-        string imagePath,
-        string bumperPosition = "",
-        string layer = "",
-        double? lowerSpec = null,
-        double? upperSpec = null,
-        DateTime? processStartTime = null)
+        string imagePath)
     {
         var now = DateTime.Now;
 
         lock (_csvLock)
         {
-            string csvPath = GetOrCreateCsvPath(barcode, imagePath, now);
-            bool needsHeader = !File.Exists(csvPath) || new FileInfo(csvPath).Length == 0;
+            string csvPath = GetOrCreateCsvPath(foupId, imagePath, now);
+            EnsureCsvInitialized(csvPath);
 
-            using var sw = new StreamWriter(csvPath, append: true, System.Text.Encoding.UTF8);
+            var processor = new ImageProcessor();
+            var items = new List<CsvResultWriter.MeasurementItem>
+            {
+                new() { SequenceNo = 1, ItemName = slotName, Value = value }
+            };
 
-            if (needsHeader)
-                sw.WriteLine(CsvHeader);
+            string label = isNg ? "NG" : "OK";
 
-            var start = processStartTime ?? now;
-            var duration = (now - start).TotalSeconds;
+            int written = processor.WriteCustomResultToCsv(
+                imagePath, csvPath, items, label,
+                null, null, null);
 
-            // barcode（讀碼器讀值）直接寫入 FoupID 欄位
-            sw.WriteLine(string.Join(",",
-                CsvEscape(now.ToString("yyyy-MM-dd")),
-                CsvEscape(barcode),           // FoupID = barcode 讀取值
-                CsvEscape(bumperPosition),
-                CsvEscape(layer),
-                CsvEscape(slotName),
-                value.ToString("F4"),
-                lowerSpec.HasValue ? lowerSpec.Value.ToString("F4") : "",
-                upperSpec.HasValue ? upperSpec.Value.ToString("F4") : "",
-                isNg ? "NG" : "OK",
-                CsvEscape(start.ToString("HH:mm:ss.fff")),
-                CsvEscape(now.ToString("HH:mm:ss.fff")),
-                processStartTime.HasValue ? duration.ToString("F3") : ""
-            ));
+            PatchFoupIdInCsv(csvPath, foupId);
 
             System.Diagnostics.Debug.WriteLine(
-                $"[ResultWriter] FoupID={barcode} | {slotName} | {value:F4} | " +
-                $"{(isNg ? "NG" : "OK")} | CSV: {csvPath}");
+                $"[ResultWriter] Fallback FoupID={foupId} | {label} | written={written} | CSV: {csvPath}");
         }
     }
 
     /// <summary>
     /// 批次結束後寫入彙總結果（SUMMARY 行），並清除該 FoupId 的快取。
     /// </summary>
-    /// <param name="barcode">條碼讀取器讀到的值（對應 FoupID）。</param>
+    /// <param name="foupId">條碼讀取器讀到的值（對應 FoupID）。</param>
     /// <param name="overallPass">整批是否 PASS。</param>
-    public static void WriteSummary(string barcode, bool overallPass)
+    public static void WriteSummary(string foupId, bool overallPass)
     {
         var now = DateTime.Now;
 
         lock (_csvLock)
         {
-            string csvPath = GetOrCreateCsvPath(barcode, null, now);
+            string csvPath = GetOrCreateCsvPath(foupId, null, now);
             EnsureCsvInitialized(csvPath);
 
             var processor = new ImageProcessor();
@@ -168,16 +159,45 @@ public static class InspectionResultWriter
                 null, null, null);
 
             System.Diagnostics.Debug.WriteLine(
-                $"[ResultWriter] SUMMARY FoupID={barcode} = {(overallPass ? "PASS" : "FAIL")} " +
+                $"[ResultWriter] SUMMARY FoupID={foupId} = {(overallPass ? "PASS" : "FAIL")} " +
                 $"| written={written} | CSV: {csvPath}");
 
-            _csvPathByFoupId.Remove(SanitizeFileName(barcode));
+            _csvPathByFoupId.Remove(SanitizeFileName(foupId));
         }
     }
 
     // ---------------------------------------------------------------
     // 私有輔助方法
     // ---------------------------------------------------------------
+
+    /// <summary>
+    /// 清理 imagePath 檔名中 FoupID 區段多餘的底線，
+    /// 確保檔名符合 4 段格式：{日期}_{FoupID}_{BumperPosition}_{LayerToken}。
+    /// </summary>
+    private static string SanitizeImagePath(string imagePath)
+    {
+        string dir = Path.GetDirectoryName(imagePath) ?? string.Empty;
+        string ext = Path.GetExtension(imagePath);
+        string nameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
+
+        string[] parts = nameWithoutExt.Split('_');
+
+        // 需要至少 4 段才有清理的必要
+        if (parts.Length <= 4)
+            return imagePath;
+
+        // 第 1 段 = 日期（固定格式），最後 2 段 = BumperPosition + LayerToken
+        // 中間剩餘所有段合併（不加底線）= FoupID
+        string datePart      = parts[0];
+        string bumperPart    = parts[parts.Length - 2];
+        string layerPart     = parts[parts.Length - 1];
+        string foupIdPart    = string.Concat(parts[1..(parts.Length - 2)]);
+
+        string sanitizedName = $"{datePart}_{foupIdPart}_{bumperPart}_{layerPart}{ext}";
+        return string.IsNullOrEmpty(dir)
+            ? sanitizedName
+            : Path.Combine(dir, sanitizedName);
+    }
 
     /// <summary>
     /// 確保 CSV 已初始化（只呼叫一次 DLL InitializeCsvFile）。
@@ -240,14 +260,38 @@ public static class InspectionResultWriter
     }
 
     /// <summary>
-    /// RFC 4180 CSV 逸出：含逗號、雙引號或換行時以雙引號包裹。
+    /// 讀取 CSV 並將 FoupID 欄位空白的資料列填入指定的 barcode 值。
+    /// 不依賴 DLL，直接對 CSV 檔案操作。
     /// </summary>
-    private static string CsvEscape(string? value)
+    private static void PatchFoupIdInCsv(string csvPath, string foupId)
     {
-        if (string.IsNullOrEmpty(value)) return string.Empty;
-        if (value.Contains(',') || value.Contains('"')
-            || value.Contains('\n') || value.Contains('\r'))
-            return $"\"{value.Replace("\"", "\"\"")}\"";
-        return value;
+        if (!File.Exists(csvPath) || string.IsNullOrWhiteSpace(foupId)) return;
+
+        var lines = File.ReadAllLines(csvPath);
+        if (lines.Length == 0) return;
+
+        // 找出 FoupID 欄位索引
+        var headers = lines[0].Split(',');
+        int foupIdIndex = Array.FindIndex(headers, h =>
+            h.Trim().Equals("FoupID", StringComparison.OrdinalIgnoreCase));
+
+        if (foupIdIndex < 0) return;
+
+        bool changed = false;
+        for (int i = 1; i < lines.Length; i++)
+        {
+            var cols = lines[i].Split(',');
+            if (cols.Length <= foupIdIndex) continue;
+
+            if (string.IsNullOrWhiteSpace(cols[foupIdIndex]))
+            {
+                cols[foupIdIndex] = foupId;
+                lines[i] = string.Join(",", cols);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            File.WriteAllLines(csvPath, lines);
     }
 }

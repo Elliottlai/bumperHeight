@@ -1835,7 +1835,7 @@ public sealed class MachineController : IDisposable
                 {
                     Target = targetA,
                     SlotIndex = slotIndex,
-                    Value = detectedAreaL*0.0069*0.0069,
+                    Value = detectedAreaL,
                     Image = uiImageLeft,
                     StatusText = statusText
                 });
@@ -1847,7 +1847,7 @@ public sealed class MachineController : IDisposable
                 {
                     Target = targetB,
                     SlotIndex = slotIndex,
-                    Value = detectedAreaR * 0.0069 * 0.0069,
+                    Value = detectedAreaR,
                     Image = uiImageRight,
                     StatusText = statusText
                 });

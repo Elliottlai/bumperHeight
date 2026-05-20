@@ -54,6 +54,10 @@ public sealed class InspectionConfig
     public double NgThresholdLow { get; set; } = 0.40;
     public double NgThresholdHigh { get; set; } = 0.60;
 
+    // -- Value limit (mm^2) --
+    public double ValueLimitLow  { get; set; } = 0.0;
+    public double ValueLimitHigh { get; set; } = 999.0;
+
     // -- Axis move timeout --
     public TimeSpan MoveTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
