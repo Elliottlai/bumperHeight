@@ -440,7 +440,9 @@
                         Background="#FFF9C4" FontWeight="Bold"
                         ToolTip="調整左/右相機亮度並儲存至 config.json"/>
                 <Button Content="IO table" FontSize="11" Padding="4,4"/>
-                <Button Content="CSV Result" FontSize="11" Padding="4,4" Click="ResultButton_Click"/>
+                <Button Content="CSV Result" FontSize="11" Padding="4,4"
+                        Command="{Binding OpenResultFolderCommand}"
+                        ToolTip="開啟 CSV 報表資料夾"/>
                 <Button Content="Alarm History" FontSize="11" Padding="4,4"/>
                 <CheckBox Content="模擬模式"
                           IsChecked="{Binding IsSimulationMode}"

@@ -447,11 +447,20 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = "移動至讀碼位置...";
             var ct = _cts.Token;
 
-            // Y 軸移動到讀碼位置
+            // Y 軸移動至讀碼位置
+            StatusMessage = $"Y 軸移動至讀碼位置 {_machine.Config.BarcodePositionY:F1} mm...";
+            await Task.Yield();
             _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
-            await MachineController.WaitUntilAsync(
+            await Task.Delay(150, ct);
+            bool yArrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisY"].Wait(),
                 TimeSpan.FromSeconds(30), ct);
+            if (!yArrived)
+            {
+                StatusMessage = "Y 軸移動超時，流程中斷";
+                return;
+            }
+            StatusMessage = $"Y 軸已到位 ({_machine.Config.BarcodePositionY:F1} mm) ?";
 
             // 偵測 X12 / X13 載台訊號
             bool x12 = _machine.GetPlcXOctal(12) ?? false;
@@ -462,15 +471,23 @@ public sealed class MainViewModel : ObservableObject
             // X12=ON: 左相機=C4, 右相機=C3；X13=ON: 左相機=C2, 右相機=C1
             AreaATitle = x12 ? "Area A  (C4)" : "Area A  (C2)";
             AreaBTitle = x12 ? "Area B  (C3)" : "Area B  (C1)";
-            StatusMessage = $"偵測到 {(x12 ? "X12" : "X13")} → X 軸移至 {targetX} mm...";
-
+            string detectedSig = x12 ? "X12" : "X13";
+            StatusMessage = $"偵測到 {detectedSig}，X 軸移動至 {targetX:F1} mm...";
+            await Task.Yield();
             _machine.Axes["AxisX"].MotMoveAbs(targetX);
-            await MachineController.WaitUntilAsync(
+            await Task.Delay(150, ct);
+            bool xArrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisX"].Wait(),
                 TimeSpan.FromSeconds(30), ct);
+            if (!xArrived)
+            {
+                StatusMessage = "X 軸移動超時，流程中斷";
+                return;
+            }
+            StatusMessage = $"X 軸已到位 ({targetX:F1} mm) ?";
 
             // 觸發讀碼器，等待條碼（含讀碼器回應時間）
-            StatusMessage = "讀取條碼中...";
+            StatusMessage = "觸發讀取條碼中...";
             string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
 
             if (string.IsNullOrEmpty(code))

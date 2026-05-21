@@ -682,8 +682,11 @@ public sealed class MachineController : IDisposable
         Axes["AxisZL"].SetMaxVel(2000);
         Axes["AxisZR"].SetMaxVel(2000);
 
-
-
+        // 全程開燈（Slot 迴圈開始前開一次，減少每格重複開關）
+        _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
+        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
+        await Task.Delay(_config.LightStabilizeMs, ct);
+        _logger.Info("[S03] Lights ON (all-slots mode)");
 
         foreach (var (areaA, areaB, count) in rows)
         {
@@ -696,14 +699,26 @@ public sealed class MachineController : IDisposable
                 var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
                 await Task.WhenAll(taskA, taskB);
 
-                var (valueA, isNgA, imagePathA, imageA) = taskA.Result;
-                var (valueB, isNgB, imagePathB, imageB) = taskB.Result;
+                var (valueA, isNgA, imagePathA, imageA, startTimeA) = taskA.Result;
+                var (valueB, isNgB, imagePathB, imageB, startTimeB) = taskB.Result;
 
-                // 寫入結果
-                string slotNameA = $"{areaA}_Slot{i + 1}";
-                string slotNameB = $"{areaB}_Slot{i + 1}";
-                InspectionResultWriter.WriteSlotResult(barcode, slotNameA, valueA, isNgA, imagePathA);
-                InspectionResultWriter.WriteSlotResult(barcode, slotNameB, valueB, isNgB, imagePathB);
+                // 依 X12/X13 判斷 Bumper Position（不透過 DLL）
+                // X12=true → 右側載台 → 右相機=C3 / 左相機=C4
+                // X13=true → 左側載台 → 右相機=C1 / 左相機=C2
+                bool bpX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
+                string bumperPosRight = bpX12 ? "C3" : "C1";
+                string bumperPosLeft  = bpX12 ? "C4" : "C2";
+
+                // valueA / valueB 已是 mm?，LowerSpec/UpperSpec 來自 JSON 設定，processStartTime 計算 DuringTime
+                string layerNum = (i + 1).ToString();
+                InspectionResultWriter.WriteSlotResult(barcode, valueA, isNgA, imagePathA,
+                    bumperPosition: bumperPosLeft,  layer: layerNum,
+                    lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
+                    processStartTime: startTimeA);
+                InspectionResultWriter.WriteSlotResult(barcode, valueB, isNgB, imagePathB,
+                    bumperPosition: bumperPosRight, layer: layerNum,
+                    lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
+                    processStartTime: startTimeB);
 
                 // 同時回報 AreaA 和 AreaB 的進度（UI 同時顯示兩張圖）
                 progress?.Report(new SlotInspectionProgress
@@ -731,6 +746,11 @@ public sealed class MachineController : IDisposable
             }
         }
 
+        // 全程關燈（所有 Slot 完成後，Y 軸回取料位前）
+        _light!.SetValue(_config.LightChannelLeft,  0);
+        _light.SetValue(_config.LightChannelRight, 0);
+        _logger.Info("[S03] Lights OFF before returning to pick position");
+
         _logger.Info($"===== S03 Inspection Done | Barcode: {barcode} =====");
     }
 
@@ -739,7 +759,7 @@ public sealed class MachineController : IDisposable
     ///   Move axis -> Light on -> Capture -> Save -> Light off -> Measure -> NG judge
     /// Simulation: bypass all hardware, generate fake data + test image.
     /// </summary>
-    private async Task<(double value, bool isNg, string imagePath, System.Windows.Media.ImageSource? image)>
+    private async Task<(double value, bool isNg, string imagePath, System.Windows.Media.ImageSource? image, DateTime startTime)>
         InspectOneSlotAsync(
             string barcode,
             SlotInspectionProgress.TargetCollection target,
@@ -749,6 +769,8 @@ public sealed class MachineController : IDisposable
         // ==================================
         //  Simulation mode
         // ==================================
+        var slotStartTime = DateTime.Now;
+
         if (SimulationMode)
         {
             await Task.Delay(150, ct);
@@ -771,9 +793,9 @@ public sealed class MachineController : IDisposable
 
                 if (algResult.Success && algResult.Image != null)
                 {
-                    double simValueOk = algResult.IsNg ? 0.0 : 1.0;
+                    double simValueOk = algResult.DetectedArea > 0 ? algResult.DetectedArea : (algResult.IsNg ? 0.0 : 1.0);
                     _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, isNg={algResult.IsNg}");
-                    return (simValueOk, algResult.IsNg, simPath, algResult.Image);
+                    return (simValueOk, algResult.IsNg, simPath, algResult.Image, slotStartTime);
                 }
 
                 _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
@@ -787,7 +809,7 @@ public sealed class MachineController : IDisposable
                 {
                     System.Diagnostics.Debug.WriteLine(
                         $"[S03-Sim] {slotLabel} fallback: 顯示原圖 {Path.GetFileName(simPath)}");
-                    return (1.0, false, simPath, fallbackImage);
+                    return (1.0, false, simPath, fallbackImage, slotStartTime);
                 }
             }
 
@@ -800,7 +822,7 @@ public sealed class MachineController : IDisposable
                       || simValue > _config.NgThresholdHigh;
 
             System.Windows.Media.ImageSource? simImage = SimImageGenerator.Generate(slotLabel, simValue, simNg);
-            return (simValue, simNg, "", simImage);
+            return (simValue, simNg, "", simImage, slotStartTime);
         }
 
         // ==================================
@@ -839,10 +861,7 @@ public sealed class MachineController : IDisposable
             await Task.Delay(_config.AxisSettleDelayMs, ct);
         }
 
-        // STEP 2: Both lights ON simultaneously
-        _light!.SetValue(_config.LightChannelLeft, _config.LightIntensityLeft);
-        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
-        await Task.Delay(_config.LightStabilizeMs, ct);
+        // STEP 2: (燈源已在 RunInspectionAsync 全程開啟，此處不重複開燈)
 
         // STEP 3: Both cameras trigger simultaneously
         //_cameraManager!.CameraStart(_cameraKeyLeft);
@@ -853,9 +872,7 @@ public sealed class MachineController : IDisposable
         //var imageLeft  = _cameraManager.GetCameraImage(_cameraKeyLeft);
         //var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
 
-        // STEP 5: Both lights OFF
-        _light.SetValue(_config.LightChannelLeft, 0);
-        _light.SetValue(_config.LightChannelRight, 0);
+        // STEP 5: (燈源將在 RunInspectionAsync 結束時統一關閉，此處不重複關燈)
 
         // Capture failure check
         //if (imageLeft == null || imageRight == null)
@@ -907,13 +924,14 @@ public sealed class MachineController : IDisposable
         _logger.Debug($"[S03] {slotName} ALG L={algResultL.Message} R={algResultR.Message}");
 
         // STEP 8: NG 判斷（左右任一 NG 即為 NG）
+        // DetectedArea 在 BumperAlgService.Analyze() 內已乘過 0.0069?，此處直接加總即可
         bool isNg = algResultL.IsNg || algResultR.IsNg;
-        double measuredValue = isNg ? 0.0 : 1.0;
+        double measuredValue = algResultL.DetectedArea + algResultR.DetectedArea;
 
         // 優先顯示左側疊加結果影像
         System.Windows.Media.ImageSource? displayImage = algResultL.Image ?? algResultR.Image;
 
-        return (measuredValue, isNg, imagePath, displayImage);
+        return (measuredValue, isNg, imagePath, displayImage, slotStartTime);
     }
 
     // =========================================
@@ -1499,7 +1517,7 @@ public sealed class MachineController : IDisposable
 
             foreach (var (target, count) in rows)
             {
-                for (int i = 0; i < count; i=i+1)
+                for (int i = 0; i < count; i=i+4)
                 {
                     ct.ThrowIfCancellationRequested();
                     await CheckPauseAsync(progress, ct);
@@ -1755,7 +1773,9 @@ public sealed class MachineController : IDisposable
         string ts = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");   // 2026-04-10T10-34-57
         string slotNum = (25 - slotIndex).ToString("D2");                 // 25, 26 ...
         string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
-        string slotTag = $"{slotSide}{slotNum}";                          // LSlot01 or RSlot01
+        string slotTag = $"{slotSide}{slotNum}";                          // LSlot25 or RSlot25
+        // 取 slotTag 尾端純數字作為 Layer，例如 LSlot25 → "25"
+        string layerNum = System.Text.RegularExpressions.Regex.Match(slotTag, @"\d+$").Value;
 
         bool anySaved = false;
 
@@ -1764,6 +1784,8 @@ public sealed class MachineController : IDisposable
         System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // → targetB (AreaB)
 
         const string DrawImageRoot = @"D:\CameraDrawImage";
+        // Value 換算係數：pixel? → mm?（1 pixel = 0.0069 mm）
+        // DetectedArea 在 BumperAlgService.Analyze() 內已換算為 mm?，此處不再乘係數
         double detectedAreaR = 0.0;
         double detectedAreaL = 0.0;
 
@@ -1776,8 +1798,21 @@ public sealed class MachineController : IDisposable
 
             // 右相機圖片 → AreaB：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
+            var slotStartR = DateTime.Now;
             var algR = await Task.Run(() => _bumperAlg.Analyze(path, algKeyR, $"{slotLabel}_R"), ct);
+            // DetectedArea 已在 BumperAlgService 內換算為 mm?，直接使用
             detectedAreaR = algR.DetectedArea;
+            // 寫入 CSV（FoupID=barcode，BumperPosition=camRight，Layer=純數字，Value 已換算）
+            InspectionResultWriter.WriteSlotResult(
+                barcodeId,
+                detectedAreaR,
+                algR.IsNg,
+                path,
+                bumperPosition: camRight,
+                layer: layerNum,
+                lowerSpec: _config.ValueLimitLow,
+                upperSpec: _config.ValueLimitHigh,
+                processStartTime: slotStartR);
             if (algR.Success && algR.Image is System.Windows.Media.Imaging.BitmapSource bsR)
             {
                 uiImageRight = bsR;
@@ -1804,8 +1839,20 @@ public sealed class MachineController : IDisposable
 
             // 左相機圖片 → AreaA：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
+            var slotStartL = DateTime.Now;
             var algL = await Task.Run(() => _bumperAlg.Analyze(path, algKeyL, $"{slotLabel}_L"), ct);
             detectedAreaL = algL.DetectedArea;
+            // 寫入 CSV（FoupID=barcode，BumperPosition=camLeft，Layer=純數字，Value 已換算）
+            InspectionResultWriter.WriteSlotResult(
+                barcodeId,
+                detectedAreaL,
+                algL.IsNg,
+                path,
+                bumperPosition: camLeft,
+                layer: layerNum,
+                lowerSpec: _config.ValueLimitLow,
+                upperSpec: _config.ValueLimitHigh,
+                processStartTime: slotStartL);
             if (algL.Success && algL.Image is System.Windows.Media.Imaging.BitmapSource bsL)
             {
                 uiImageLeft = bsL;
