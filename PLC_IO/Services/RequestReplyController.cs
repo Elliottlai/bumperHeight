@@ -1,10 +1,10 @@
-using System.Collections.Concurrent;
+ï»¿using System.Collections.Concurrent;
 using PLC_IO.Interfaces;
 
 namespace PLC_IO.Services;
 
 /// <summary>
-/// ½Ð¨D/¦^ÂÐ¬yµ{±±¨î¾¹ ¡X ºÞ²z©R¥O¦î¦C»P½ü¸ß´`Àô
+/// ï¿½Ð¨D/ï¿½^ï¿½Ð¬yï¿½{ï¿½ï¿½ï¿½î¾¹ ï¿½X ï¿½Þ²zï¿½Rï¿½Oï¿½ï¿½Cï¿½Pï¿½ï¿½ï¿½ß´`ï¿½ï¿½
 /// </summary>
 public sealed class RequestReplyController<T> : IDisposable
 {
@@ -18,6 +18,7 @@ public sealed class RequestReplyController<T> : IDisposable
     private int _timeoutMs = 200;
 
     public event Action<T>? OnTimeout;
+    public event Action<Exception>? OnError;
 
     public int CycleInterval
     {
@@ -57,35 +58,43 @@ public sealed class RequestReplyController<T> : IDisposable
 
         while (!_stopping)
         {
-            // ¦î¦C¦³©R¥O¥B«e¤@­Ó¤w¦^ÂÐ ¡÷ °e¥X¤U¤@­Ó
-            if (_commandQueue.Count > 0 && answerGot)
+            try
             {
-                if (_commandQueue.TryDequeue(out T? commandToSend))
+                // å‰ä¸€å€‹å‘½ä»¤å·²å›žè¦†ï¼Œé€å‡ºä¸‹ä¸€å€‹
+                if (_commandQueue.Count > 0 && answerGot)
                 {
-                    answerGot = false;
-                    _handler.SendCommand(commandToSend);
-                    Thread.Sleep(20);
-                    currentCommand = commandToSend;
-                    commandSendTicks = DateTime.Now.Ticks;
-                    Thread.Sleep(30);
+                    if (_commandQueue.TryDequeue(out T? commandToSend))
+                    {
+                        answerGot = false;
+                        _handler.SendCommand(commandToSend);
+                        Thread.Sleep(20);
+                        currentCommand = commandToSend;
+                        commandSendTicks = DateTime.Now.Ticks;
+                        Thread.Sleep(30);
+                    }
+                }
+
+                // æª¢æŸ¥å›žè¦†èˆ‡é€¾æ™‚
+                if (!answerGot && currentCommand is not null)
+                {
+                    answerGot = _handler.CheckIsCommandAnswered(currentCommand);
+                    if (DateTime.Now.Ticks - commandSendTicks > _timeoutMs * TimeSpan.TicksPerMillisecond)
+                    {
+                        OnTimeout?.Invoke(currentCommand);
+                        answerGot = true;
+                    }
+                }
+
+                // ç©ºé–’æ™‚è§¸ç™¼è¼ªè©¢è®€å–
+                if (answerGot && _commandQueue.IsEmpty)
+                {
+                    _handler.IdleProcess();
                 }
             }
-
-            // ÀË¬d¦^ÂÐ©Î¹O®É
-            if (!answerGot && currentCommand is not null)
+            catch (Exception ex) when (!_stopping)
             {
-                answerGot = _handler.CheckIsCommandAnswered(currentCommand);
-                if (DateTime.Now.Ticks - commandSendTicks > _timeoutMs * TimeSpan.TicksPerMillisecond)
-                {
-                    OnTimeout?.Invoke(currentCommand);
-                    answerGot = true;
-                }
-            }
-
-            // ªÅ¶¢®ÉÄ²µo¶g´ÁÅª¨ú
-            if (answerGot && _commandQueue.IsEmpty)
-            {
-                _handler.IdleProcess();
+                OnError?.Invoke(ex);
+                answerGot = true;
             }
 
             Thread.Sleep(_cycleInterval);

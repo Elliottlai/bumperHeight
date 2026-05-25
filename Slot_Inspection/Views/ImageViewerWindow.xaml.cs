@@ -1,8 +1,12 @@
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Slot_Inspection.Models;
 
 namespace Slot_Inspection.Views;
 
@@ -18,53 +22,127 @@ public partial class ImageViewerWindow : Window
     private double _translateX;
     private double _translateY;
 
-    // ── 多張導覽 ──
-    private readonly IReadOnlyList<(BitmapSource Image, string Name)> _images;
+    // ── 即時更新：持有活的 Slot 來源 ──
+    private readonly IReadOnlyList<ObservableCollection<SlotItem>> _sources;
+    private SlotItem? _currentSlot;
+    private List<SlotItem> _snapshot = [];
     private int _currentIndex;
 
-    /// <summary>單張模式（不顯示上一張/下一張）</summary>
-    public ImageViewerWindow(BitmapSource image, string slotName)
-        : this([(image, slotName)], 0) { }
-
-    /// <summary>多張模式，傳入完整清單與起始索引</summary>
+    /// <summary>
+    /// 即時模式：傳入活的 ObservableCollection 清單與起始 Slot 物件。
+    /// RUN 過程中新圖拍完會自動更新顯示。
+    /// </summary>
     public ImageViewerWindow(
-        IReadOnlyList<(BitmapSource Image, string Name)> images,
-        int startIndex)
+        IReadOnlyList<ObservableCollection<SlotItem>> sources,
+        SlotItem startSlot)
     {
         InitializeComponent();
-        _images = images;
-        _currentIndex = Math.Clamp(startIndex, 0, Math.Max(0, images.Count - 1));
+        _sources     = sources;
+        _currentSlot = startSlot;
+
+        foreach (var col in sources)
+        {
+            col.CollectionChanged += OnCollectionChanged;
+            foreach (var s in col)
+                s.PropertyChanged += OnSlotPropertyChanged;
+        }
+
+        Closed += (_, _) =>
+        {
+            foreach (var col in _sources)
+            {
+                col.CollectionChanged -= OnCollectionChanged;
+                foreach (var s in col)
+                    s.PropertyChanged -= OnSlotPropertyChanged;
+            }
+        };
 
         Loaded += (_, _) =>
         {
-            ShowImage(_currentIndex);
-            UpdateNavButtons();
+            RefreshSnapshot();
+            int idx = _snapshot.IndexOf(startSlot);
+            NavigateTo(idx < 0 ? 0 : idx);
         };
     }
 
-    private void ShowImage(int index)
+    // ── Collection / Property 變動回調 ──
+
+    private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        if (_images.Count == 0) return;
-        _currentIndex = Math.Clamp(index, 0, _images.Count - 1);
+        if (e.NewItems != null)
+            foreach (SlotItem s in e.NewItems)
+                s.PropertyChanged += OnSlotPropertyChanged;
+        if (e.OldItems != null)
+            foreach (SlotItem s in e.OldItems)
+                s.PropertyChanged -= OnSlotPropertyChanged;
+        Dispatcher.InvokeAsync(OnSourceUpdated);
+    }
 
-        var (bmp, name) = _images[_currentIndex];
-        PreviewImage.Source = bmp;
-        TitleText.Text = name;
-        IndexText.Text = _images.Count > 1 ? $"{_currentIndex + 1} / {_images.Count}" : "";
+    private void OnSlotPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(SlotItem.ImageSource)) return;
+        Dispatcher.InvokeAsync(OnSourceUpdated);
+    }
 
-        FitToWindow();
+    private void OnSourceUpdated()
+    {
+        int prevCount = _snapshot.Count;
+        RefreshSnapshot();
+
+        // 目前正在看的 Slot 圖片有更新 → 重新顯示
+        if (_currentSlot != null)
+        {
+            int idx = _snapshot.IndexOf(_currentSlot);
+            if (idx >= 0)
+            {
+                _currentIndex = idx;
+                ShowCurrentSlot();
+                UpdateNavButtons();
+                return;
+            }
+        }
+
+        // 有新圖拍入 → 自動跳到最新那張
+        if (_snapshot.Count > prevCount)
+            NavigateTo(_snapshot.Count - 1);
+        else
+            UpdateNavButtons();
+    }
+
+    private void RefreshSnapshot()
+    {
+        _snapshot = _sources
+            .SelectMany(c => c)
+            .Where(s => s.ImageSource is BitmapSource)
+            .ToList();
+    }
+
+    private void NavigateTo(int index)
+    {
+        if (_snapshot.Count == 0) return;
+        _currentIndex = Math.Clamp(index, 0, _snapshot.Count - 1);
+        _currentSlot  = _snapshot[_currentIndex];
+        ShowCurrentSlot();
         UpdateNavButtons();
+    }
+
+    private void ShowCurrentSlot()
+    {
+        if (_snapshot.Count == 0 || _currentSlot == null) return;
+        PreviewImage.Source = (BitmapSource)_currentSlot.ImageSource!;
+        TitleText.Text      = _currentSlot.Name;
+        IndexText.Text      = _snapshot.Count > 1 ? $"{_currentIndex + 1} / {_snapshot.Count}" : "";
+        FitToWindow();
     }
 
     private void UpdateNavButtons()
     {
-        bool multi = _images.Count > 1;
+        bool multi = _snapshot.Count > 1;
         PrevButton.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
         NextButton.Visibility = multi ? Visibility.Visible : Visibility.Collapsed;
         IndexText.Visibility  = multi ? Visibility.Visible : Visibility.Collapsed;
-
-        PrevButton.IsEnabled = _currentIndex > 0;
-        NextButton.IsEnabled = _currentIndex < _images.Count - 1;
+        PrevButton.IsEnabled  = _currentIndex > 0;
+        NextButton.IsEnabled  = _currentIndex < _snapshot.Count - 1;
     }
 
     private void FitToWindow()
@@ -94,14 +172,14 @@ public partial class ImageViewerWindow : Window
     }
 
     // ── 導覽按鈕 ──
-    private void Prev_Click(object sender, RoutedEventArgs e) => ShowImage(_currentIndex - 1);
-    private void Next_Click(object sender, RoutedEventArgs e) => ShowImage(_currentIndex + 1);
+    private void Prev_Click(object sender, RoutedEventArgs e) => NavigateTo(_currentIndex - 1);
+    private void Next_Click(object sender, RoutedEventArgs e) => NavigateTo(_currentIndex + 1);
 
     // ── 鍵盤左/右鍵切換 ──
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Left)  { ShowImage(_currentIndex - 1); e.Handled = true; }
-        if (e.Key == Key.Right) { ShowImage(_currentIndex + 1); e.Handled = true; }
+        if (e.Key == Key.Left)  { NavigateTo(_currentIndex - 1); e.Handled = true; }
+        if (e.Key == Key.Right) { NavigateTo(_currentIndex + 1); e.Handled = true; }
     }
 
     // ── 滾輪縮放（以滑鼠位置為中心） ──

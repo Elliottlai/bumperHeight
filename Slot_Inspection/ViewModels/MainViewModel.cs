@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+ï»¿using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -18,18 +18,47 @@ public sealed class MainViewModel : ObservableObject
     private string _currentDate = DateTime.Now.ToString("yyyy/MM/dd");
     private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
     private bool _isRunning;
-    private string _statusMessage = "¥¿¦b±Ò°Ê...";
+    private string _statusMessage = "ç³»çµ±å•Ÿå‹•ä¸­ï¼Œè«‹ç¨å€™...";
     private bool _isInitialized;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
     private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
-    private bool _prevX10 = false; // X10 ¤W¤@¦¸ª¬ºA¡]¹w³] 0¡^
-    private int _x7LowCount = 0;   // X7 ³sÄò LOW ­p¼Æ¡]¨¾§İ¥Î¡^
-    private const int X7DebounceCount = 3; // ³sÄò 3 ¦¸¡]300ms¡^¤~½T»{¼È°±
+    private bool _prevX10 = false; // X10 ä¸Šä¸€æ¬¡ç‹€æ…‹ï¼ˆé è¨­ 0ï¼Œä¿ç•™ä¾›æœªä¾†ä½¿ç”¨ï¼‰
+    private bool _isLightGateBlocked; // X7=LOWï¼šå…‰é–˜é®æ–·ä¸­
+    private int _lightGateBlockedCount = 0; // é€£çºŒè®€åˆ° LOW çš„æ¬¡æ•¸ï¼ˆé˜²æŠ–ç”¨ï¼‰
+    private const int LightGateDebounceCount = 3; // éœ€é€£çºŒ N æ¬¡ï¼ˆÃ—100msï¼‰LOW æ‰è¦–ç‚ºçœŸæ­£è§¸ç™¼
+    private bool _isLightGateBypassActive; // å–æ–™æš«åœå…‰é–˜æ——æ¨™
     private readonly MachineController _machine = new();
     private CancellationTokenSource? _cts;
+    private TaskCompletionSource<string>? _barcodeTcs; // ç­‰å¾…ä½¿ç”¨è€…æ‰‹å‹•è¼¸å…¥æ¢ç¢¼
+    private readonly CimApiClient _mesClient = new();
+
+    private MesConnectionStatus _mesStatus = MesConnectionStatus.Unknown;
+    public MesConnectionStatus MesStatus
+    {
+        get => _mesStatus;
+        private set
+        {
+            if (SetProperty(ref _mesStatus, value))
+            {
+                OnPropertyChanged(nameof(MesStatusText));
+                OnPropertyChanged(nameof(MesStatusKey));
+            }
+        }
+    }
+
+    /// <summary>ä¾› UI é¡¯ç¤ºçš„ MES é€£ç·šç‹€æ…‹æ–‡å­—ã€‚</summary>
+    public string MesStatusText => _mesStatus switch
+    {
+        MesConnectionStatus.Connected    => "MES ? å·²é€£ç·š",
+        MesConnectionStatus.Disconnected => "MES ? æœªé€£ç·š",
+        _                                => "MES â€” æœªå˜—è©¦"
+    };
+
+    /// <summary>ä¾› XAML DataTrigger æ¯”å°ç”¨çš„å­—ä¸²ï¼ˆé¿å… enum å‹åˆ¥å¼•ç”¨ï¼‰ã€‚</summary>
+    public string MesStatusKey => _mesStatus.ToString();
 
     public ObservableCollection<SlotItem> AreaA_Row1 { get; } = [];
     public ObservableCollection<SlotItem> AreaB_Row1 { get; } = [];
@@ -91,6 +120,19 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref _isInitialized, value);
     }
 
+    /// <summary>
+    /// X7 å…‰é–˜é®æ–·ä¸­ï¼ˆLOWï¼‰â†’ ç¦æ­¢æŒ‰ RUNã€‚
+    /// </summary>
+    public bool IsLightGateBlocked
+    {
+        get => _isLightGateBlocked;
+        private set
+        {
+            if (SetProperty(ref _isLightGateBlocked, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand RunCommand { get; }
@@ -102,6 +144,30 @@ public sealed class MainViewModel : ObservableObject
     public ICommand CropSettingsCommand { get; }
     public ICommand LightSettingsCommand { get; }
     public ICommand OpenImageViewerCommand { get; }
+    public ICommand OpenResultFolderCommand { get; }
+    public ICommand ConfirmBarcodeCommand { get; }
+    public ICommand ToggleLightGateBypassCommand { get; }
+    public ICommand SlcResetCommand { get; }
+
+    /// <summary>
+    /// å–æ–™æš«åœå…‰é–˜ï¼šå•Ÿç”¨æ™‚å…‰é–˜è§¸ç™¼ä¸ä¸­æ–·æµç¨‹ï¼Œä½† RUN èˆ‡åŸé»è³¦æ­¸åŒæ™‚é–å®šã€‚
+    /// </summary>
+    public bool IsLightGateBypassActive
+    {
+        get => _isLightGateBypassActive;
+        private set
+        {
+            if (SetProperty(ref _isLightGateBypassActive, value))
+            {
+                OnPropertyChanged(nameof(LightGateBypassButtonText));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>æŒ‰éˆ•é¡¯ç¤ºæ–‡å­—ï¼Œéš¨ç‹€æ…‹åˆ‡æ›ã€‚</summary>
+    public string LightGateBypassButtonText =>
+        IsLightGateBypassActive ? "å–æ¶ˆæš«åœå…‰é–˜" : "å–æ–™æš«åœå…‰é–˜";
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -112,7 +178,7 @@ public sealed class MainViewModel : ObservableObject
 
     private bool _isDeviceReady;
     /// <summary>
-    /// ¸Ë¸m¤wªì©l¤Æ¡]Config+Servo+PLC¡^¡A¦ı©|¥¼§¹¦¨­ìÂI½áÂk¡C
+    /// è£ç½®å·²åˆå§‹åŒ–ï¼ˆConfig+Servo+PLCï¼‰ï¼Œä½†å°šæœªå®ŒæˆåŸé»è³¦æ­¸ã€‚
     /// </summary>
     public bool IsDeviceReady
     {
@@ -121,8 +187,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ¼ÒÀÀ¼Ò¦¡¶}Ãö¡CDebug-Sim ²ÕºA¹w³] true¡A¨ä¥L²ÕºA¹w³] false¡C
-    /// ¥i¦b UI °ÊºA¤Á´«¡C
+    /// æ¨¡æ“¬æ¨¡å¼é–‹é—œã€‚Debug-Sim çµ„æ…‹é è¨­ trueï¼Œå…¶ä»–çµ„æ…‹é è¨­ falseã€‚
+    /// å¯åœ¨ UI å‹•æ…‹åˆ‡æ›ã€‚
     /// </summary>
     public bool IsSimulationMode
     {
@@ -136,8 +202,8 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ZL/ZR ¨ì¦ì«á¬O§_±Ò¥Î¦w©w©µ¿ğ¡]¨¾¤î®¶°Ê©ç·Ó¼Ò½k¡^¡C
-    /// ÅÜ§ó®É¦P¨BÀx¦s Config¡C
+    /// ZL/ZR åˆ°ä½å¾Œæ˜¯å¦å•Ÿç”¨å®‰å®šå»¶é²ï¼ˆé˜²æ­¢æŒ¯å‹•æ‹ç…§æ¨¡ç³Šï¼‰ã€‚
+    /// è®Šæ›´æ™‚åŒæ­¥å„²å­˜ Configã€‚
     /// </summary>
     public bool EnableAxisSettleDelay
     {
@@ -151,35 +217,93 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// é‡æ¸¬å€¼ä¸Šé™ï¼Œç›´æ¥ä»£ç† InspectionConfig.ValueLimitHighã€‚
+    /// è®Šæ›´æ™‚åŒæ­¥å„²å­˜ Config ä¸¦é‡æ–°è©•ä¼°æ‰€æœ‰ Slotã€‚
+    /// </summary>
+    public double UpperLimit
+    {
+        get => _machine.Config.ValueLimitHigh;
+        set
+        {
+            if (_machine.Config.ValueLimitHigh == value) return;
+            _machine.Config.ValueLimitHigh = value;
+            _machine.Config.Save();
+            OnPropertyChanged();
+            EvaluateAllSlots();
+        }
+    }
+
+    /// <summary>
+    /// é‡æ¸¬å€¼ä¸‹é™ï¼Œç›´æ¥ä»£ç† InspectionConfig.ValueLimitLowã€‚
+    /// è®Šæ›´æ™‚åŒæ­¥å„²å­˜ Config ä¸¦é‡æ–°è©•ä¼°æ‰€æœ‰ Slotã€‚
+    /// </summary>
+    public double LowerLimit
+    {
+        get => _machine.Config.ValueLimitLow;
+        set
+        {
+            if (_machine.Config.ValueLimitLow == value) return;
+            _machine.Config.ValueLimitLow = value;
+            _machine.Config.Save();
+            OnPropertyChanged();
+            EvaluateAllSlots();
+        }
+    }
+
+    /// <summary>
+    /// ä¾ç›®å‰ä¸Šä¸‹é™é‡æ–°è©•ä¼°æ‰€æœ‰ Slot çš„ IsNgï¼Œä¸¦æ›´æ–°çµ±è¨ˆã€‚
+    /// </summary>
+    private void EvaluateAllSlots()
+    {
+        foreach (var slot in AreaA_Row1.Concat(AreaB_Row1))
+            slot.IsNg = !(LowerLimit <= slot.Value && slot.Value <= UpperLimit);
+
+        AreaA_Stats.Calculate(AreaA_Row1);
+        AreaB_Stats.Calculate(AreaB_Row1);
+    }
+
     public MainViewModel()
     {
-        // START ¥u»İ¡Gªì©l¤Æ§¹¦¨¡]§t­ìÂI½áÂk¡^ + ©|¥¼¹B¦æ
+        // START
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
         StopCommand = new RelayCommand(OnStop);
-        // ¥D¬yµ{¡G³v Slot ²¾°Ê¡B¨ú¹³¡B¦s¹Ï
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && !IsRunning && !IsDryRunning);
-        // ªì©l¤Æ¡GConfig + Servo + PLC¡]¤£§t­ìÂI½áÂk¡^
+        // ä¸»æµç¨‹ï¼šé€ Slot ç§»å‹•ã€å–åƒã€å­˜åœ–ï¼ˆéœ€å·²å®ŒæˆåŸé»è³¦æ­¸ + å…‰é–˜æœªé®æ–· + bypass æœªå•Ÿç”¨ï¼‰
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && IsInitialized && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsLightGateBypassActive);
+        // åˆå§‹åŒ–ï¼šConfig + Servo + PLCï¼ˆä¸å«åŸé»è³¦æ­¸ï¼‰
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
-        // ­ìÂI½áÂk¡G¸Ë¸m´Nºü«áÀH®É¥i«ö¡]¤£Âê©w¡^
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning);
-        // Åª¨ú±ø½X¡GY¡÷491 ¡÷ °»´ú X12/X13 ¡÷ ²¾°Ê X ¶b
+        // åŸé»è³¦æ­¸ï¼šå…‰é–˜å¿…é ˆæœªé®æ–·ä¸” bypass æœªå•Ÿç”¨æ‰å¯æŒ‰
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsLightGateBypassActive);
+        // è®€å–æ¢ç¢¼ï¼šYâ†’491 â†’ åµæ¸¬ X12/X13 â†’ ç§»å‹• X è»¸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
-        // ²¾¦Ü¨ú®Æ¦ì¡GY ¶b²¾°Ê¨ì¨ú®Æ¦ì®y¼Ğ
+        // ç§»è‡³å–æ–™ä½ï¼šY è»¸ç§»å‹•åˆ°å–æ–™ä½åº§æ¨™
         MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning);
-        // ®y¼Ğ³]©w¡G¥ô¦ó®É­Ô³£¥i¶}±Ò
+        // åº§æ¨™è¨­å®šï¼šä»»ä½•æ™‚å€™éƒ½å¯é–‹å•Ÿ
         PositionSettingsCommand = new RelayCommand(OnPositionSettings);
 
 
-        // µô¤Á³]©w¡G¥ô¦ó®É­Ô³£¥i¶}±Ò
+        // è£åˆ‡è¨­å®šï¼šä»»ä½•æ™‚å€™éƒ½å¯é–‹å•Ÿ
         CropSettingsCommand = new RelayCommand(OnCropSettings);
 
-        // «G«×³]©w¡G¥ô¦ó®É­Ô³£¥i¶}±Ò
+        // äº®åº¦è¨­å®šï¼šä»»ä½•æ™‚å€™éƒ½å¯é–‹å•Ÿ
         LightSettingsCommand = new RelayCommand(OnLightSettings);
 
-        // ÂIÀ»¹Ï¹³©ñ¤j¹wÄı
+        // é»æ“Šåœ–åƒæ”¾å¤§é è¦½
         OpenImageViewerCommand = new RelayCommand<SlotItem>(OnOpenImageViewer);
 
-        // ¥ı¶ñ¤JªÅ¥Õ Slot ¦û¦ì¡]UI ¤£·|¬OªÅªº¡^
+        // é–‹å•Ÿ CSV å ±è¡¨è³‡æ–™å¤¾
+        OpenResultFolderCommand = new RelayCommand(OnOpenResultFolder);
+
+        // æ¢ç¢¼ TextBox Enter ç¢ºèª
+        ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
+
+        // å–æ–™æš«åœå…‰é–˜ toggle
+        ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass);
+
+        // SLC Reset
+        SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+
+        // å…ˆå¡«å…¥ç©ºç™½ Slot ä½”ä½ï¼ˆUI ä¸æœƒæ˜¯ç©ºçš„ï¼‰
         FillSlots(AreaA_Row1, 25, 25);
         FillSlots(AreaB_Row1, 25, 25);
 
@@ -195,45 +319,44 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ¨C 100ms ½ü¸ß¤@¦¸ PLC X1+X2 °T¸¹¡C
-    /// ¨â­Ó°T¸¹¦P®É¬° true ¥B«ùÄò 0.5 ¬í«á¡A¦Û°ÊÄ²µoªÅ¶]µ{¦¡¡C
+    /// æ¯ 100ms è¼ªè©¢ä¸€æ¬¡ PLC X1+X2 è¨Šè™Ÿã€‚
+    /// å…©å€‹è¨Šè™ŸåŒæ™‚ç‚º true ä¸”æŒçºŒ 0.5 ç§’å¾Œï¼Œè‡ªå‹•è§¸ç™¼ç©ºè·‘ç¨‹å¼ã€‚
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
     {
-        // X7/X10 ¥ú¹h¼È°±/Ä~Äò¡]§t¨¾§İ¡G³sÄò 3 ¦¸ LOW ¤~¼È°±¡^
-        if (IsDryRunning)
-        {
-            bool x7 = _machine.GetPlcXOctal(7) ?? true;
-            if (!x7)
-            {
-                _x7LowCount++;
-                if (_x7LowCount >= X7DebounceCount)
-                    _machine.PauseDryRun();
-            }
-            else
-            {
-                _x7LowCount = 0; // X7 «ì´_ HIGH¡A­«¸m­p¼Æ
-            }
+        // X7 å…‰é–˜ç‹€æ…‹ï¼šä¸è«–ä»»ä½•æ¨¡å¼éƒ½è¿½è¹¤ï¼ŒLOW = é®æ–·ï¼ˆåŠ å…¥é˜²æŠ–ï¼šéœ€é€£çºŒ LightGateDebounceCount æ¬¡æ‰è§¸ç™¼ï¼‰
+        bool x7 = _machine.GetPlcXOctal(7) ?? true;
+        bool rawBlocked = !x7;
 
-            if (_machine.IsDryRunPaused)
-            {
-                bool x10 = _machine.GetPlcXOctal(10) ?? false;
-                if (!_prevX10 && x10 && x7)
-                {
-                    _x7LowCount = 0;
-                    _machine.ResumeDryRun();
-                }
-                _prevX10 = x10;
-            }
-            else
-            {
-                _prevX10 = false;
-            }
+        if (rawBlocked)
+        {
+            _lightGateBlockedCount = Math.Min(_lightGateBlockedCount + 1, LightGateDebounceCount + 1);
         }
         else
         {
-            _x7LowCount = 0; // «D DryRun ®É­«¸m
+            _lightGateBlockedCount = 0;
         }
+
+        bool blocked = _lightGateBlockedCount >= LightGateDebounceCount;
+
+        // å…‰é–˜ç¢ºèªè§¸ç™¼ï¼ˆå¾æœªé®æ–· â†’ é®æ–·ï¼Œä¸”å·²é€šéé˜²æŠ–ç¢ºèªï¼‰
+        if (blocked && !_isLightGateBlocked)
+        {
+            if (!IsLightGateBypassActive)
+            {
+                // æ­£å¸¸æ¨¡å¼ï¼šå–æ¶ˆæµç¨‹ä¸¦å¼·åˆ¶é‡æ–°åŸé»è³¦æ­¸
+                _cts?.Cancel();
+                IsInitialized = false;
+                StatusMessage = "âš  å…‰é–˜è§¸ç™¼ï¼è«‹è§£é™¤å…‰é–˜å¾ŒåŸ·è¡ŒåŸé»è³¦æ­¸æ‰å¯ç¹¼çºŒ RUN";
+            }
+            else
+            {
+                // å–æ–™æš«åœå…‰é–˜æ¨¡å¼ï¼šåƒ…é¡¯ç¤ºæç¤ºï¼Œä¸ä¸­æ–·æµç¨‹
+                StatusMessage = "âš  å…‰é–˜è§¸ç™¼ï¼ˆå–æ–™æš«åœæ¨¡å¼ï¼Œæµç¨‹ä¸ä¸­æ–·ï¼‰";
+            }
+        }
+
+        IsLightGateBlocked = blocked;
 
         if (!IsDeviceReady || IsRunning || IsDryRunning) return;
 
@@ -258,18 +381,18 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// S00¡G¶}¾÷¦Û°Êªì©l¤Æ¡]¥Ñ MainWindow.Loaded ©I¥s¡^
+    /// S00ï¼šé–‹æ©Ÿè‡ªå‹•åˆå§‹åŒ–ï¼ˆç”± MainWindow.Loaded å‘¼å«ï¼‰
     /// </summary>
     public async Task InitializeAsync()
     {
-        // ¨¾¤î­«½Æªì©l¤Æ
+        // é˜²æ­¢é‡è¤‡åˆå§‹åŒ–
         if (IsInitialized || IsRunning || IsDryRunning)
             return;
 
-        StatusMessage = "¥¿¦bªì©l¤Æ...";
+        StatusMessage = "æ­£åœ¨åˆå§‹åŒ–è¨­å‚™ï¼ˆè¨­å®šæª” / ä¼ºæœè»¸ / PLCï¼‰ï¼Œè«‹ç¨å€™...";
         _cts = new CancellationTokenSource();
 
-        // Progress ¦^³ø·|¦Û°Ê¦^¨ì UI °õ¦æºü
+        // Progress å›å ±æœƒè‡ªå‹•å›åˆ° UI åŸ·è¡Œç·’
         var progress = new Progress<string>(msg => StatusMessage = msg);
 
         try
@@ -281,22 +404,22 @@ public sealed class MainViewModel : ObservableObject
 
             if (result.AllPassed)
             {
-                // S00 §¹¦¨ ¡÷ µ¥«İ¨Ï¥ÎªÌ«ö START
-                StatusMessage = "ªì©l¤Æ§¹¦¨¡A½Ğ«ö START ¶}©l";
+                // S00 å®Œæˆ â†’ ç­‰å¾…ä½¿ç”¨è€…æŒ‰ START
+                StatusMessage = "âœ” åˆå§‹åŒ–å®Œæˆï¼è«‹æŒ‰ RUN é–‹å§‹ä½œæ¥­";
             }
             else
             {
-                StatusMessage = "ªì©l¤Æ¥¢±Ñ";
+                StatusMessage = "âœ˜ åˆå§‹åŒ–å¤±æ•—ï¼Œè«‹æª¢æŸ¥è¨­å‚™å¾Œé‡è©¦";
             }
 
-            // ³qª¾ WPF ­«·s§PÂ_©Ò¦³«ö¶sªº CanExecute
+            // é€šçŸ¥ WPF é‡æ–°åˆ¤æ–·æ‰€æœ‰æŒ‰éˆ•çš„ CanExecute
             CommandManager.InvalidateRequerySuggested();
 
             System.Diagnostics.Debug.WriteLine(result.GetSummary());
         }
         catch (Exception ex)
         {
-            StatusMessage = $"ªì©l¤Æ¨Ò¥~: {ex.Message}";
+            StatusMessage = $"âœ˜ åˆå§‹åŒ–ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -306,10 +429,10 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    // ùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùù
-    //  START¡G§¹¾ã¦Û°Ê¬yµ{
-    //  S01a ¸ü¥x¦b®u°»´ú(=¦³®Æ) ¡÷ S01b ²¾°ÊÅª½X ¡÷ S01c ¶b´_Âk ¡÷ S03 ÀË´ú ¡÷ S04 µ²ªG
-    // ùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùùù
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    //  STARTï¼šå®Œæ•´è‡ªå‹•æµç¨‹
+    //  S01a è¼‰å°åœ¨å¸­åµæ¸¬(=æœ‰æ–™) â†’ S01b ç§»å‹•è®€ç¢¼ â†’ S01c è»¸å¾©æ­¸ â†’ S03 æª¢æ¸¬ â†’ S04 çµæœ
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     private async void OnStart()
     {
@@ -324,50 +447,55 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            // ¢w¢w S01a¡GÀË¬d¸ü¥x¦b®u·P´ú¾¹¡]PLC X12/X13¡^¢w¢w
-            // ¸ü¥x¦b®u = ®Æ¤w¨ì¦ì¡A¤£»İÃB¥~µ¥«İ©ñ®Æ
-            StatusMessage = "ÀË¬d¸ü¥x¦b®u·P´ú¾¹...";
+            // â”€â”€ S01aï¼šæª¢æŸ¥è¼‰å°åœ¨å¸­æ„Ÿæ¸¬å™¨ï¼ˆPLC X12/X13ï¼‰â”€â”€
+            // è¼‰å°åœ¨å¸­ = æ–™å·²åˆ°ä½ï¼Œä¸éœ€é¡å¤–ç­‰å¾…æ”¾æ–™
+            StatusMessage = "æ­£åœ¨ç¢ºèªè¼‰å…·ä½ç½®ï¼Œè«‹ç¨å€™...";
             var carrierPos = await Task.Run(() => _machine.DetectCarrierPosition());
 
             if (carrierPos == MachineController.CarrierPosition.None)
             {
-                StatusMessage = "¥¼°»´ú¨ì¸ü¥x¡A½Ğ½T»{¸ü¥x¦ì¸m«á­«·s START";
+                StatusMessage = "âš  æœªåµæ¸¬åˆ°è¼‰å…·ï¼Œè«‹ç¢ºèªè¼‰å…·å·²æ”¾ç½®æ­£ç¢ºå¾Œå†æŒ‰ RUN";
                 return;
             }
 
-            StatusMessage = $"°»´ú¨ì¸ü¥x¦ì¸m¡G{carrierPos}";
+            StatusMessage = $"âœ” åµæ¸¬åˆ°è¼‰å…·ä½ç½®ï¼š{carrierPos}";
 
-            // ¢w¢w S01b¡G²¾°Ê¨ìÅª½X¦ì¸m ¡÷ ¦Û°ÊÅª½X ¢w¢w
+            // â”€â”€ S01bï¼šç§»å‹•åˆ°è®€ç¢¼ä½ç½® â†’ è‡ªå‹•è®€ç¢¼ â”€â”€
             string? code = await Task.Run(
                 () => _machine.MoveAndReadBarcodeAsync(carrierPos, statusProgress, _cts.Token));
 
             if (string.IsNullOrEmpty(code))
             {
-                StatusMessage = "Åª½X¥¢±Ñ¡]NoRead¡^¡A±ø½X¶b¦^Âk­ìÂI...";
+                StatusMessage = "æ¢ç¢¼è®€å–å¤±æ•—ï¼Œæ­£åœ¨å°‡è»¸é€€å›åŸé»...";
                 await Task.Run(() => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
-                StatusMessage = "Åª½X¥¢±Ñ¡A±ø½X¶b¤w¦^­ìÂI¡A½Ğ«ö START ­«·s¶}©l";
+                StatusMessage = "âš  æ¢ç¢¼è®€å–å¤±æ•—ï¼Œè»¸å·²å›åŸé»ï¼Œè«‹é‡æ–°æ”¾ç½®å¾ŒæŒ‰ RUN";
                 return;
             }
 
-            // ÅçÃÒ±ø½X®æ¦¡
+            // é©—è­‰æ¢ç¢¼æ ¼å¼
             var validation = BarcodeValidator.Validate(code);
             if (!validation.IsValid)
             {
-                StatusMessage = $"±ø½X®æ¦¡¿ù»~¡G{validation.Message}";
+                StatusMessage = $"âš  æ¢ç¢¼æ ¼å¼ä¸ç¬¦ï¼š{validation.Message}";
                 return;
             }
 
             _confirmedBarcode = code;
             Barcode = code;
-            StatusMessage = $"±ø½X½T»{¡G{code}";
-            System.Diagnostics.Debug.WriteLine($"[S01] ¦Û°ÊÅª½X¦¨¥\: {code}");
+            StatusMessage = $"âœ” æ¢ç¢¼ç¢ºèªï¼š{code}";
+            System.Diagnostics.Debug.WriteLine($"[S01] è‡ªå‹•è®€ç¢¼æˆåŠŸ: {code}");
 
-            // ¢w¢w S01c¡GÅª½X¶b¦^Âk­ìÂI ¢w¢w
+            // â”€â”€ MES QuerySerialNoDataï¼ˆéé˜»å¡ï¼Œå¤±æ•—ä¸ä¸­æ­¢æµç¨‹ï¼‰â”€â”€
+            _ = _mesClient.QueryWorkOrderAsync("SlotInspection", _confirmedBarcode)
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+
+            // â”€â”€ S01cï¼šè®€ç¢¼è»¸å›æ­¸åŸé» â”€â”€
             await Task.Run(
                 () => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
 
-            // ¢w¢w S03¡G¶}©lÀË´ú¡]¸ü¥x¦b®u¤w½T»{¦³®Æ¡Aª½±µ¶i¤JÀË´ú¡^¢w¢w
-            StatusMessage = $"ÀË´ú¤¤¡G{_confirmedBarcode}";
+            // â”€â”€ S03ï¼šé–‹å§‹æª¢æ¸¬ï¼ˆè¼‰å°åœ¨å¸­å·²ç¢ºèªæœ‰æ–™ï¼Œç›´æ¥é€²å…¥æª¢æ¸¬ï¼‰â”€â”€
+            StatusMessage = $"â–¶ é–‹å§‹é‡æ¸¬ Slotï¼Œæ¢ç¢¼ï¼š{_confirmedBarcode}";
 
             var slotProgress = new Progress<SlotInspectionProgress>(report =>
             {
@@ -383,7 +511,7 @@ public sealed class MainViewModel : ObservableObject
                 if (collection != null && report.SlotIndex < collection.Count)
                 {
                     collection[report.SlotIndex].Value       = report.Value;
-                    collection[report.SlotIndex].IsNg        = report.IsNg;
+                    collection[report.SlotIndex].IsNg        = !(LowerLimit <= report.Value && report.Value <= UpperLimit);
                     collection[report.SlotIndex].ImageSource = report.Image;
                 }
 
@@ -393,26 +521,33 @@ public sealed class MainViewModel : ObservableObject
             await Task.Run(
                 () => _machine.RunInspectionAsync(_confirmedBarcode, slotProgress, _cts.Token));
 
-            // ¥ş³¡§¹¦¨ ¡÷ ­pºâ²Î­p
+            // å…¨éƒ¨å®Œæˆ â†’ è¨ˆç®—çµ±è¨ˆ
             AreaA_Stats.Calculate(AreaA_Row1);
             AreaB_Stats.Calculate(AreaB_Row1);
 
             bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
 
-            // S04¡G¼g·JÁ`µ²ªG
+            // S04ï¼šå¯«å½™ç¸½çµæœ
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
-            StatusMessage = $"{_confirmedBarcode} ¡X {(pass ? "? PASS" : "? FAIL")}";
+            // â”€â”€ MES MeasureResultUploadï¼ˆéé˜»å¡ï¼Œå¤±æ•—ä¸ä¸­æ­¢æµç¨‹ï¼‰â”€â”€
+            _ = _mesClient.UploadResultAsync("SlotInspection", _confirmedBarcode, pass)
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+
+            StatusMessage = $"é‡æ¸¬å®Œæˆ  {_confirmedBarcode}  â†’  {(pass ? "âœ” PASS" : "âœ˜ FAIL")}";
             System.Diagnostics.Debug.WriteLine(
-                $"[S04] §¹¦¨: {_confirmedBarcode} = {(pass ? "PASS" : "FAIL")}");
+                $"[S04] å®Œæˆ: {_confirmedBarcode} = {(pass ? "PASS" : "FAIL")}");
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "¤w°±¤î";
+            IsInitialized = false;
+            StatusMessage = "â¹ ä½œæ¥­å·²ç”±ä½¿ç”¨è€…å–æ¶ˆï¼Œè«‹åŸ·è¡ŒåŸé»è³¦æ­¸å¾Œå†ç¹¼çºŒ RUN";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"ÀË´ú¨Ò¥~: {ex.Message}";
+            IsInitialized = false;
+            StatusMessage = $"âœ˜ é‡æ¸¬ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}ï¼Œè«‹åŸ·è¡ŒåŸé»è³¦æ­¸å¾Œå†ç¹¼çºŒ RUN";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -431,10 +566,10 @@ public sealed class MainViewModel : ObservableObject
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
 
-        // X10 Ãä½t°»´úª¬ºA­«¸m¡]X7 §ï¬°¹q¥­Ä²µo¡A¤£»İ _prevX7¡^
+        // X10 é‚Šç·£åµæ¸¬ç‹€æ…‹é‡ç½®ï¼ˆX7 æ”¹ç‚ºé›»å¹³è§¸ç™¼ï¼Œä¸éœ€ _prevX7ï¼‰
         _prevX10 = false;
 
-        // ²M°£¤W¤@½üªº¼v¹³ / ¼Æ­È / ª¬ºA
+        // æ¸…é™¤ä¸Šä¸€è¼ªçš„å½±åƒ / æ•¸å€¼ / ç‹€æ…‹
         ResetAllSlots();
 
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
@@ -443,12 +578,12 @@ public sealed class MainViewModel : ObservableObject
         {
 
 
-            // ¢w¢w STEP 0¡GÅª¨ú±ø½X ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
-            StatusMessage = "²¾°Ê¦ÜÅª½X¦ì¸m...";
+            // â”€â”€ STEP 0ï¼šè®€å–æ¢ç¢¼ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            StatusMessage = "æ­£åœ¨ç§»å‹•è‡³æ¢ç¢¼è®€å–ä½ç½®...";
             var ct = _cts.Token;
 
-            // Y ¶b²¾°Ê¦ÜÅª½X¦ì¸m
-            StatusMessage = $"Y ¶b²¾°Ê¦ÜÅª½X¦ì¸m {_machine.Config.BarcodePositionY:F1} mm...";
+            // Y è»¸ç§»å‹•è‡³è®€ç¢¼ä½ç½®
+            StatusMessage = $"Y è»¸ç§»å‹•è‡³æ¢ç¢¼è®€å–ä½ç½® {_machine.Config.BarcodePositionY:F1} mmï¼Œè«‹ç¨å€™...";
             await Task.Yield();
             _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
             await Task.Delay(150, ct);
@@ -457,22 +592,22 @@ public sealed class MainViewModel : ObservableObject
                 TimeSpan.FromSeconds(30), ct);
             if (!yArrived)
             {
-                StatusMessage = "Y ¶b²¾°Ê¶W®É¡A¬yµ{¤¤Â_";
+                StatusMessage = "âš  Y è»¸ç§»å‹•è¶…æ™‚ï¼Œæµç¨‹ä¸­æ­¢ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹";
                 return;
             }
-            StatusMessage = $"Y ¶b¤w¨ì¦ì ({_machine.Config.BarcodePositionY:F1} mm) ?";
+            StatusMessage = $"âœ” Y è»¸å·²åˆ°é”æŒ‡å®šä½ç½®ï¼ˆ{_machine.Config.BarcodePositionY:F1} mmï¼‰";
 
-            // °»´ú X12 / X13 ¸ü¥x°T¸¹
+            // åµæ¸¬ X12 / X13 è¼‰å°è¨Šè™Ÿ
             bool x12 = _machine.GetPlcXOctal(12) ?? false;
             bool x13 = _machine.GetPlcXOctal(13) ?? false;
 
             double targetX = x12 ? _machine.Config.BarcodePositionLeftX : _machine.Config.BarcodePositionRightX;
             CarrierSide = x12 ? "R" : "L";
-            // X12=ON: ¥ª¬Û¾÷=C4, ¥k¬Û¾÷=C3¡FX13=ON: ¥ª¬Û¾÷=C2, ¥k¬Û¾÷=C1
+            // X12=ON: å·¦ç›¸æ©Ÿ=C4, å³ç›¸æ©Ÿ=C3ï¼›X13=ON: å·¦ç›¸æ©Ÿ=C2, å³ç›¸æ©Ÿ=C1
             AreaATitle = x12 ? "Area A  (C4)" : "Area A  (C2)";
             AreaBTitle = x12 ? "Area B  (C3)" : "Area B  (C1)";
             string detectedSig = x12 ? "X12" : "X13";
-            StatusMessage = $"°»´ú¨ì {detectedSig}¡AX ¶b²¾°Ê¦Ü {targetX:F1} mm...";
+            StatusMessage = $"åµæ¸¬åˆ° {detectedSig} è¨Šè™Ÿï¼ŒX è»¸ç§»å‹•è‡³ {targetX:F1} mmï¼Œè«‹ç¨å€™...";
             await Task.Yield();
             _machine.Axes["AxisX"].MotMoveAbs(targetX);
             await Task.Delay(150, ct);
@@ -481,31 +616,50 @@ public sealed class MainViewModel : ObservableObject
                 TimeSpan.FromSeconds(30), ct);
             if (!xArrived)
             {
-                StatusMessage = "X ¶b²¾°Ê¶W®É¡A¬yµ{¤¤Â_";
+                StatusMessage = "âš  X è»¸ç§»å‹•è¶…æ™‚ï¼Œæµç¨‹ä¸­æ­¢ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹";
                 return;
             }
-            StatusMessage = $"X ¶b¤w¨ì¦ì ({targetX:F1} mm) ?";
+            StatusMessage = $"âœ” X è»¸å·²åˆ°é”æŒ‡å®šä½ç½®ï¼ˆ{targetX:F1} mmï¼‰";
 
-            // Ä²µoÅª½X¾¹¡Aµ¥«İ±ø½X¡]§tÅª½X¾¹¦^À³®É¶¡¡^
-            StatusMessage = "Ä²µoÅª¨ú±ø½X¤¤...";
+            // è§¸ç™¼è®€ç¢¼å™¨ï¼Œç­‰å¾…æ¢ç¢¼ï¼ˆå«è®€ç¢¼å™¨å›æ‡‰æ™‚é–“ï¼‰
+            StatusMessage = "æ­£åœ¨è®€å–æ¢ç¢¼ï¼Œè«‹ç¨å€™...";
             string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
 
             if (string.IsNullOrEmpty(code))
             {
-                _confirmedBarcode = "";
-                Barcode = "NoRead";
-                CarrierSide = "";
-                AreaATitle = "Area A";
-                AreaBTitle = "Area B";
-                StatusMessage = "±ø½XÅª¨ú¥¢±Ñ (NoRead)¡A¬yµ{¤¤¤î";
-                return;
+                Barcode = "";
+                StatusMessage = "âš  æ¢ç¢¼è®€å–å¤±æ•—ï¼Œè«‹åœ¨æ¢ç¢¼æ¬„ä½æ‰‹å‹•è¼¸å…¥å¾ŒæŒ‰ Enter ç¹¼çºŒ...";
+                _barcodeTcs = new TaskCompletionSource<string>();
+                using var ctr = ct.Register(() => _barcodeTcs.TrySetCanceled());
+                try
+                {
+                    code = await _barcodeTcs.Task;
+                }
+                catch (OperationCanceledException)
+                {
+                    _confirmedBarcode = "";
+                    CarrierSide = "";
+                    AreaATitle = "Area A";
+                    AreaBTitle = "Area B";
+                    StatusMessage = "âš  ä½¿ç”¨è€…å–æ¶ˆæ‰‹å‹•è¼¸å…¥ï¼Œæµç¨‹ä¸­æ­¢";
+                    return;
+                }
+                finally
+                {
+                    _barcodeTcs = null;
+                }
             }
 
             _confirmedBarcode = code;
             Barcode = code;
-            StatusMessage = $"±ø½XÅª¨ú¦¨¥\: {code}¡A¶}©l¨ú¹³...";
-            // ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
-            StatusMessage = "¥D¬yµ{±Ò°Ê...³v Slot ¨ú¹³¤¤";
+            StatusMessage = $"âœ” æ¢ç¢¼ç¢ºèªï¼š{code}ï¼Œæº–å‚™é–‹å§‹é‡æ¸¬...";
+
+            // â”€â”€ MES QuerySerialNoDataï¼ˆéé˜»å¡ï¼Œå¤±æ•—ä¸ä¸­æ­¢æµç¨‹ï¼‰â”€â”€
+            _ = _mesClient.QueryWorkOrderAsync("SlotInspection", _confirmedBarcode)
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+            // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            StatusMessage = "ä¸»æµç¨‹é€²è¡Œä¸­ï¼Œæ­£åœ¨é‡æ¸¬å„ Slot...";
 
             var dryRunSlotProgress = new Progress<SlotInspectionProgress>(report =>
             {
@@ -523,7 +677,10 @@ public sealed class MainViewModel : ObservableObject
                     if (report.Image != null)
                         collection[report.SlotIndex].ImageSource = report.Image;
                     if (report.Value != 0)
+                    {
                         collection[report.SlotIndex].Value = report.Value;
+                        collection[report.SlotIndex].IsNg  = !(LowerLimit <= report.Value && report.Value <= UpperLimit);
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(report.StatusText))
@@ -532,22 +689,29 @@ public sealed class MainViewModel : ObservableObject
 
             await Task.Run(() => _machine.DryRunAsync(statusProgress, ct, _confirmedBarcode, dryRunSlotProgress));
 
-            // ­pºâ²Î­p¨Ã¼g¤J CSV
+            // è¨ˆç®—çµ±è¨ˆä¸¦å¯«å…¥ CSV
             AreaA_Stats.Calculate(AreaA_Row1);
             AreaB_Stats.Calculate(AreaB_Row1);
 
             bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
-            StatusMessage = $"¥D¬yµ{§¹¦¨ {(pass ? "? PASS" : "? FAIL")}";
+            // â”€â”€ MES MeasureResultUploadï¼ˆéé˜»å¡ï¼Œå¤±æ•—ä¸ä¸­æ­¢æµç¨‹ï¼‰â”€â”€
+            _ = _mesClient.UploadResultAsync("SlotInspection", _confirmedBarcode, pass)
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+
+            StatusMessage = $"ä¸»æµç¨‹å®Œæˆ  â†’  {(pass ? "âœ” PASS" : "âœ˜ FAIL")}";
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "¥D¬yµ{¤w¨ú®ø";
+            IsInitialized = false;
+            StatusMessage = "â¹ ä¸»æµç¨‹å·²ç”±ä½¿ç”¨è€…å–æ¶ˆï¼Œè«‹åŸ·è¡ŒåŸé»è³¦æ­¸å¾Œå†ç¹¼çºŒ RUN";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"¥D¬yµ{²§±`: {ex.Message}";
+            IsInitialized = false;
+            StatusMessage = $"âœ˜ ä¸»æµç¨‹ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}ï¼Œè«‹åŸ·è¡ŒåŸé»è³¦æ­¸å¾Œå†ç¹¼çºŒ RUN";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -567,41 +731,41 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = $"Y ¶b²¾°Ê¦Ü {_machine.Config.BarcodePositionY} mm...";
+            StatusMessage = $"Y è»¸ç§»å‹•è‡³æ¢ç¢¼è®€å–ä½ç½® {_machine.Config.BarcodePositionY} mmï¼Œè«‹ç¨å€™...";
 
-            // STEP 1: Y ¶b²¾°Ê¨ì³]©w¦ì¸m
+            // STEP 1: Y è»¸ç§»å‹•åˆ°è¨­å®šä½ç½®
             _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
             bool yArrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisY"].Wait(),
                 TimeSpan.FromSeconds(30), ct);
             if (!yArrived)
             {
-                StatusMessage = "Y ¶b²¾°Ê¹O®É";
+                StatusMessage = "âš  Y è»¸ç§»å‹•é€¾æ™‚ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹";
                 return;
             }
-            StatusMessage = $"Y ¶b¤w¨ì¦ì ({_machine.Config.BarcodePositionY} mm)";
+            StatusMessage = $"âœ” Y è»¸å·²åˆ°é”æŒ‡å®šä½ç½®ï¼ˆ{_machine.Config.BarcodePositionY} mmï¼‰";
 
-            // STEP 2: °»´ú X12 / X13 IO °T¸¹
+            // STEP 2: åµæ¸¬ X12 / X13 IO è¨Šè™Ÿ
             bool x12 = _machine.GetPlcXOctal(12) ?? false;
             bool x13 = _machine.GetPlcXOctal(13) ?? false;
 
             if (!x12 && !x13)
             {
-                StatusMessage = "¥¼°»´ú¨ì¸ü¥x (X12/X13 ¬ÒµL°T¸¹)";
+                StatusMessage = "âš  æœªåµæ¸¬åˆ°è¼‰å…·è¨Šè™Ÿ (X12/X13)ï¼Œè«‹ç¢ºèªè¼‰å…·ä½ç½®";
                 return;
             }
 
-            // STEP 3: ¨Ì¾Ú°T¸¹²¾°Ê X ¶b
+            // STEP 3: ä¾æ“šè¨Šè™Ÿç§»å‹• X è»¸
             double targetX;
             if (x12)
             {
                 targetX = _machine.Config.BarcodePositionLeftX;
-                StatusMessage = $"°»´ú¨ì X12=ON ¡÷ X ¶b²¾°Ê¦Ü {targetX} mm...";
+                StatusMessage = $"åµæ¸¬åˆ° X12 è¨Šè™Ÿï¼ŒX è»¸ç§»å‹•è‡³ {targetX} mmï¼Œè«‹ç¨å€™...";
             }
             else
             {
                 targetX = _machine.Config.BarcodePositionRightX;
-                StatusMessage = $"°»´ú¨ì X13=ON ¡÷ X ¶b²¾°Ê¦Ü {targetX} mm...";
+                StatusMessage = $"åµæ¸¬åˆ° X13 è¨Šè™Ÿï¼ŒX è»¸ç§»å‹•è‡³ {targetX} mmï¼Œè«‹ç¨å€™...";
             }
 
             _machine.Axes["AxisX"].MotMoveAbs(targetX);
@@ -610,36 +774,53 @@ public sealed class MainViewModel : ObservableObject
                 TimeSpan.FromSeconds(30), ct);
             if (!xArrived)
             {
-                StatusMessage = "X ¶b²¾°Ê¹O®É";
+                StatusMessage = "âš  X è»¸ç§»å‹•é€¾æ™‚ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹";
                 return;
             }
 
-            StatusMessage = $"X ¶b¤w¨ì¦ì ({targetX} mm)¡A·Ç³ÆÅª½X...";
+            StatusMessage = $"âœ” X è»¸å·²åˆ°ä½ï¼ˆ{targetX} mmï¼‰ï¼Œæ­£åœ¨è§¸ç™¼è®€ç¢¼...";
 
-            // STEP 4: Ä²µoÅª½X¾¹Åª¨ú±ø½X¨ÃÅã¥Ü¨ì UI
+            // STEP 4: è§¸ç™¼è®€ç¢¼å™¨è®€å–æ¢ç¢¼ä¸¦é¡¯ç¤ºåˆ° UI
             var statusProgress = new Progress<string>(msg => StatusMessage = msg);
             string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
 
             if (string.IsNullOrEmpty(code))
             {
-                StatusMessage = "Åª½X¥¢±Ñ (NoRead)";
-                _confirmedBarcode = "";
-                Barcode = "NoRead";
+                Barcode = "";
+                StatusMessage = "âš  æ¢ç¢¼è®€å–å¤±æ•—ï¼Œè«‹åœ¨æ¢ç¢¼æ¬„ä½æ‰‹å‹•è¼¸å…¥å¾ŒæŒ‰ Enter ç¢ºèª...";
+                _barcodeTcs = new TaskCompletionSource<string>();
+                using var ctr = ct.Register(() => _barcodeTcs.TrySetCanceled());
+                try
+                {
+                    code = await _barcodeTcs.Task;
+                    _confirmedBarcode = code;
+                    Barcode = code;
+                    StatusMessage = $"âœ” æ¢ç¢¼å·²ç¢ºèªï¼ˆæ‰‹å‹•ï¼‰ï¼š{code}";
+                }
+                catch (OperationCanceledException)
+                {
+                    _confirmedBarcode = "";
+                    StatusMessage = "âš  ä½¿ç”¨è€…å–æ¶ˆæ‰‹å‹•è¼¸å…¥";
+                }
+                finally
+                {
+                    _barcodeTcs = null;
+                }
             }
             else
             {
                 _confirmedBarcode = code;
                 Barcode = code;
-                StatusMessage = $"±ø½XÅª¨ú¦¨¥\: {code}";
+                StatusMessage = $"âœ” æ¢ç¢¼è®€å–æˆåŠŸï¼š{code}";
             }
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "Åª½X¬yµ{¤w¨ú®ø";
+            StatusMessage = "â¹ è®€ç¢¼ä½œæ¥­å·²å–æ¶ˆ";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Åª½X¬yµ{²§±`: {ex.Message}";
+            StatusMessage = $"âœ˜ è®€ç¢¼ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -656,8 +837,9 @@ public sealed class MainViewModel : ObservableObject
         IsRunning = false;
         IsDryRunning = false;
         _cts?.Cancel();
-        StatusMessage = "¤w°±¤î";
-        // TODO: ±µ¤J°±¤î¬yµ{
+        // Stop å¾Œå¿…é ˆé‡æ–°åŸé»è³¦æ­¸æ‰å¯å†æŒ‰ RUN
+        IsInitialized = false;
+        StatusMessage = "â¹ ä½œæ¥­å·²ç”±ä½¿ç”¨è€…å–æ¶ˆï¼Œè«‹åŸ·è¡ŒåŸé»è³¦æ­¸å¾Œå†ç¹¼çºŒ RUN";
     }
 
     private async void OnMoveToPickPosition()
@@ -669,7 +851,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             double targetY = _machine.Config.BarcodePositionY;
-            StatusMessage = $"Y ¶b²¾°Ê¦Ü¨ú®Æ¦ì¸m {targetY} mm...";
+            StatusMessage = $"Y è»¸ç§»å‹•è‡³å–æ–™ä½ç½® {targetY} mmï¼Œè«‹ç¨å€™...";
 
             _machine.Axes["AxisY"].MotMoveAbs(targetY);
             bool arrived = await MachineController.WaitUntilAsync(
@@ -677,16 +859,16 @@ public sealed class MainViewModel : ObservableObject
                 TimeSpan.FromSeconds(30), ct);
 
             StatusMessage = arrived
-                ? $"Y ¶b¤w¨ì¹F¨ú®Æ¦ì¸m ({targetY} mm) ?"
-                : "Y ¶b²¾°Ê¹O®É";
+                ? $"âœ” Y è»¸å·²åˆ°é”å–æ–™ä½ç½®ï¼ˆ{targetY} mmï¼‰"
+                : "âš  Y è»¸ç§»å‹•é€¾æ™‚ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹";
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "²¾¦Ü¨ú®Æ¦ì¤w¨ú®ø";
+            StatusMessage = "â¹ ç§»å‹•è‡³å–æ–™ä½ç½®å·²å–æ¶ˆ";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"²¾¦Ü¨ú®Æ¦ì²§±`: {ex.Message}";
+            StatusMessage = $"âœ˜ ç§»å‹•è‡³å–æ–™ä½ç½®ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -699,7 +881,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ¶}±Ò®y¼Ğ³]©w¹ï¸Üµøµ¡¡A½T»{«á¼g¦^ InspectionConfig¡C
+    /// é–‹å•Ÿåº§æ¨™è¨­å®šå°è©±è¦–çª—ï¼Œç¢ºèªå¾Œå¯«å› InspectionConfigã€‚
     /// </summary>
     private void OnPositionSettings()
     {
@@ -717,24 +899,34 @@ public sealed class MainViewModel : ObservableObject
             vm.ApplyTo(_machine.Config);
             SlotPositionTable.Save();
             _machine.Config.Save();
-            StatusMessage = "®y¼Ğ³]©w¤w§ó·s¡]¤wÀx¦s¡^";
+            StatusMessage = "âœ” ä½ç½®è¨­å®šå·²å„²å­˜";
         }
+    }
+
+    private void OnConfirmBarcode()
+    {
+        if (_barcodeTcs is null) return;
+        string input = Barcode.Trim();
+        if (string.IsNullOrWhiteSpace(input)) return;
+        _barcodeTcs.TrySetResult(input);
+    }
+
+    private void OnOpenResultFolder()
+    {
+        string folder = Slot_Inspection.Services.InspectionResultWriter.ResultsRootDirectory;
+        if (!System.IO.Directory.Exists(folder))
+            System.IO.Directory.CreateDirectory(folder);
+        System.Diagnostics.Process.Start("explorer.exe", folder);
     }
 
     private void OnOpenImageViewer(SlotItem? slot)
     {
         if (slot?.ImageSource is not System.Windows.Media.Imaging.BitmapSource) return;
 
-        // ¦¬¶°©Ò¦³¦³¹Ï¤ùªº Slot¡]AreaA + AreaB¡^
-        var allSlots = AreaA_Row1.Concat(AreaB_Row1)
-            .Where(s => s.ImageSource is System.Windows.Media.Imaging.BitmapSource)
-            .Select(s => ((System.Windows.Media.Imaging.BitmapSource)s.ImageSource!, s.Name))
-            .ToList();
-
-        int startIndex = allSlots.FindIndex(x => x.Name == slot.Name);
-        if (startIndex < 0) startIndex = 0;
-
-        var viewer = new Slot_Inspection.Views.ImageViewerWindow(allSlots, startIndex)
+        // ç›´æ¥å‚³å…¥æ´»çš„ collectionï¼ŒImageViewerWindow å…§éƒ¨è¨‚é–±è®Šå‹•äº‹ä»¶ï¼Œå¯å³æ™‚æ›´æ–°
+        var viewer = new Slot_Inspection.Views.ImageViewerWindow(
+            [AreaA_Row1, AreaB_Row1],
+            slot)
         {
             Owner = Application.Current.MainWindow
         };
@@ -742,7 +934,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ¶}±Ò¬Û¾÷«G«×³]©w¹ï¸Üµøµ¡¡F«ö OK «á¼g¦^ InspectionConfig ¨ÃÀx¦s¦Ü JSON¡C
+    /// é–‹å•Ÿç›¸æ©Ÿäº®åº¦è¨­å®šå°è©±è¦–çª—ï¼›æŒ‰ OK å¾Œå¯«å› InspectionConfig ä¸¦å„²å­˜è‡³ JSONã€‚
     /// </summary>
     private void OnLightSettings()
     {
@@ -755,12 +947,12 @@ public sealed class MainViewModel : ObservableObject
         if (win.ShowDialog() == true)
         {
             vm.ApplyTo(_machine.Config);
-            StatusMessage = $"«G«×³]©w¤wÀx¦s¡]¥ª={vm.LightIntensityLeft}, ¥k={vm.LightIntensityRight}¡^";
+            StatusMessage = $"âœ” å…‰æºè¨­å®šå·²å„²å­˜ï¼ˆå·¦={vm.LightIntensityLeft}ï¼Œå³={vm.LightIntensityRight}ï¼‰";
         }
     }
 
     /// <summary>
-    /// ¶}±Òµô¤Á³]©w¹ï¸Üµøµ¡
+    /// é–‹å•Ÿè£åˆ‡è¨­å®šå°è©±è¦–çª—
     /// </summary>
     private void OnCropSettings()
     {
@@ -776,12 +968,12 @@ public sealed class MainViewModel : ObservableObject
         {
             vm.ApplyTo(_machine.Config);
             _machine.Config.Save();
-            StatusMessage = "µô¤Á³]©w¤w§ó·s¡]¤wÀx¦s¡^";
+            StatusMessage = "âœ” è£åˆ‡ç¯„åœè¨­å®šå·²å„²å­˜";
         }
     }
 
 
-    /// ªì©l¤Æ«ö¶s¡GConfig + Servo ¿EºÏ + PLC ³s½u¡]¤£§t­ìÂI½áÂk¡^¡C
+    /// åˆå§‹åŒ–æŒ‰éˆ•ï¼šConfig + Servo æ¿€ç£ + PLC é€£ç·šï¼ˆä¸å«åŸé»è³¦æ­¸ï¼‰ã€‚
     /// </summary>
     private async void OnInitDevices()
     {
@@ -794,7 +986,7 @@ public sealed class MainViewModel : ObservableObject
 
             SlotPositionTable.Load();
 
-            StatusMessage = "ªì©l¤Æ¤¤¡]Config + Servo + PLC¡^...";
+            StatusMessage = "æ­£åœ¨åˆå§‹åŒ–è¨­å‚™ï¼ˆè¨­å®šæª” / ä¼ºæœè»¸ / PLCï¼‰ï¼Œè«‹ç¨å€™...";
             var result = await Task.Run(
                 () => _machine.InitializeDevicesAsync(progress, _cts.Token));
 
@@ -802,23 +994,25 @@ public sealed class MainViewModel : ObservableObject
 
             if (result.AllPassed)
             {
-                StatusMessage = "ªì©l¤Æ§¹¦¨ ? ½Ğ«ö¡i­ìÂI½áÂk¡j";
+                // æ¯æ¬¡åˆå§‹åŒ–å®Œæˆå¾Œå¼·åˆ¶é‡ç½®ï¼Œå¿…é ˆé‡æ–°åŸé»è³¦æ­¸æ‰èƒ½ RUN
+                IsInitialized = false;
+                StatusMessage = "âœ” è¨­å‚™åˆå§‹åŒ–æˆåŠŸï¼è«‹æŒ‰ã€åŸé»è³¦æ­¸ã€‘æ‰å¯ç¹¼çºŒ RUN";
             }
             else
             {
                 var failed = result.Items.FirstOrDefault(x => !x.Success);
-                StatusMessage = $"ªì©l¤Æ¥¢±Ñ: {failed?.DeviceName} - {failed?.Message}";
+                StatusMessage = $"âœ˜ è¨­å‚™åˆå§‹åŒ–å¤±æ•—ï¼š{failed?.DeviceName} - {failed?.Message}";
             }
 
             System.Diagnostics.Debug.WriteLine(result.GetSummary());
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "ªì©l¤Æ¤w¨ú®ø";
+            StatusMessage = "â¹ è¨­å‚™åˆå§‹åŒ–å·²å–æ¶ˆ";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"ªì©l¤Æ²§±`: {ex.Message}";
+            StatusMessage = $"âœ˜ è¨­å‚™åˆå§‹åŒ–ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -831,7 +1025,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ­ìÂI½áÂk«ö¶s¡G©Ò¦³¶b¦^­ìÂI¡C
+    /// åŸé»è³¦æ­¸æŒ‰éˆ•ï¼šæ‰€æœ‰è»¸å›åŸé»ã€‚
     /// </summary>
     private async void OnHome()
     {
@@ -841,30 +1035,38 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = "­ìÂI½áÂk¤¤...";
+            StatusMessage = "æ­£åœ¨åŸ·è¡ŒåŸé»å¾©æ­¸ï¼Œè«‹ç¨å€™...";
             var result = await Task.Run(
                 () => _machine.HomeAllAxesPublicAsync(progress, _cts.Token));
 
             if (result.AllPassed)
             {
-                IsInitialized = true;
-                StatusMessage = "­ìÂI½áÂk§¹¦¨ ? ¥i°õ¦æªÅ¶]´ú¸Õ©Î START";
+                if (IsLightGateBlocked)
+                {
+                    // åŸé»è³¦æ­¸é›–æˆåŠŸï¼Œä½†å…‰é–˜ä»é®æ–· â†’ ä¸å…è¨± RUN
+                    StatusMessage = "âš  åŸé»è³¦æ­¸å®Œæˆï¼Œä½†å…‰é–˜ä»é®æ–·ï¼è«‹è§£é™¤å…‰é–˜å¾Œå†åŸ·è¡ŒåŸé»è³¦æ­¸";
+                }
+                else
+                {
+                    IsInitialized = true;
+                    StatusMessage = "âœ” åŸé»å¾©æ­¸å®Œæˆï¼è«‹æ”¾å…¥è¼‰å…·å¾ŒæŒ‰ RUN é–‹å§‹";
+                }
             }
             else
             {
                 var failed = result.Items.FirstOrDefault(x => !x.Success);
-                StatusMessage = $"­ìÂI½áÂk¥¢±Ñ: {failed?.DeviceName} - {failed?.Message}";
+                StatusMessage = $"âœ˜ åŸé»å¾©æ­¸å¤±æ•—ï¼š{failed?.DeviceName} - {failed?.Message}";
             }
 
             System.Diagnostics.Debug.WriteLine(result.GetSummary());
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "­ìÂI½áÂk¤w¨ú®ø";
+            StatusMessage = "â¹ åŸé»å¾©æ­¸å·²å–æ¶ˆ";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"­ìÂI½áÂk²§±`: {ex.Message}";
+            StatusMessage = $"âœ˜ åŸé»å¾©æ­¸ç™¼ç”ŸéŒ¯èª¤ï¼š{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -877,7 +1079,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ÀË´ú¶}©l«e¡A²MªÅ©Ò¦³ Slot Åã¥Ü¡]Value Âk¹s¡BNG ²M°£¡B²Î­p­«¸m¡^
+    /// æª¢æ¸¬é–‹å§‹å‰ï¼Œæ¸…ç©ºæ‰€æœ‰ Slot é¡¯ç¤ºï¼ˆValue æ­¸é›¶ã€NG æ¸…é™¤ã€çµ±è¨ˆé‡ç½®ï¼‰
     /// </summary>
     private void ResetAllSlots()
     {
@@ -893,7 +1095,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// ¶ñ¤JªÅ¥Õ Slot ¦û¦ì®æ¡]¼Æ­ÈÂk¹s¡BµL NG¡^
+    /// å¡«å…¥ç©ºç™½ Slot ä½”ä½æ ¼ï¼ˆæ•¸å€¼æ­¸é›¶ã€ç„¡ NGï¼‰
     /// </summary>
     private static void FillSlots(ObservableCollection<SlotItem> target, int startNumber, int count)
     {
@@ -905,6 +1107,48 @@ public sealed class MainViewModel : ObservableObject
                 Value = 0,
                 IsNg = false,
             });
+        }
+    }
+
+    /// <summary>
+    /// åˆ‡æ›ã€Œå–æ–™æš«åœå…‰é–˜ã€æ¨¡å¼ã€‚
+    /// å•Ÿç”¨ï¼šå…‰é–˜è§¸ç™¼ä¸ä¸­æ–·æµç¨‹ï¼ŒåŒæ™‚é–å®š RUN èˆ‡åŸé»è³¦æ­¸ã€‚
+    /// åœç”¨ï¼šæ¢å¾©æ­£å¸¸å…‰é–˜é˜²è­·ã€‚
+    /// </summary>
+    private void OnToggleLightGateBypass()
+    {
+        IsLightGateBypassActive = !IsLightGateBypassActive;
+
+        if (!IsLightGateBypassActive)
+        {
+            // åœç”¨ bypass æ™‚ï¼šé‡ç½®é˜²æŠ–è¨ˆæ•¸ï¼Œè®“å…‰é–˜ç‹€æ…‹åœ¨ä¸‹ä¸€æ¬¡ PLC è¼ªè©¢æ™‚é‡æ–°è©•ä¼°
+            // é¿å…å–æ–™æœŸé–“çš„é®æ–·æ®˜ç•™å°è‡´ RUN / åŸé»è³¦æ­¸æŒçºŒé–å®š
+            _lightGateBlockedCount = 0;
+            IsLightGateBlocked = false;
+        }
+
+        StatusMessage = IsLightGateBypassActive
+            ? "âš  å–æ–™æš«åœå…‰é–˜å·²å•Ÿç”¨ï¼šRUN èˆ‡åŸé»è³¦æ­¸æš«æ™‚é–å®š"
+            : "âœ” å–æ–™æš«åœå…‰é–˜å·²å–æ¶ˆï¼Œæ¢å¾©æ­£å¸¸å…‰é–˜é˜²è­·";
+    }
+
+    private async void OnSlcReset()
+    {
+        StatusMessage = "â³ SLC Reset åŸ·è¡Œä¸­...";
+        try
+        {
+            await _machine.SlcResetAsync();
+
+            // Reset æˆåŠŸï¼šæ¸…é™¤å…‰é–˜é®æ–·ç‹€æ…‹ï¼Œè®“ RUN / åŸé»è³¦æ­¸æ¢å¾©å¯ç”¨
+            _lightGateBlockedCount = 0;
+            IsLightGateBlocked = false;
+
+            StatusMessage = "âœ” å…‰æŸµReset OK";
+            MessageBox.Show("å…‰æŸµReset OK", "SLC Reset", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"âœ˜ SLC Reset å¤±æ•—ï¼š{ex.Message}";
         }
     }
 }

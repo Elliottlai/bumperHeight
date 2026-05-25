@@ -66,14 +66,14 @@
                     <StackPanel Grid.Row="0" Orientation="Horizontal">
                         <TextBlock Text="Value 下限 (mm²)" Style="{StaticResource RowLabel}"/>
                         <TextBox Style="{StaticResource NumBox}"
-                                 Text="{Binding ValueLimitLow, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F2}}"/>
+                                 Text="{Binding ValueLimitLow, UpdateSourceTrigger=LostFocus}"/>
                         <TextBlock Text="低於此值視為異常" Margin="12,0,0,0"
                                    VerticalAlignment="Center" Foreground="#555" FontSize="11"/>
                     </StackPanel>
                     <StackPanel Grid.Row="2" Orientation="Horizontal">
                         <TextBlock Text="Value 上限 (mm²)" Style="{StaticResource RowLabel}"/>
                         <TextBox Style="{StaticResource NumBox}"
-                                 Text="{Binding ValueLimitHigh, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:F2}}"/>
+                                 Text="{Binding ValueLimitHigh, UpdateSourceTrigger=LostFocus}"/>
                         <TextBlock Text="高於此值視為異常" Margin="12,0,0,0"
                                    VerticalAlignment="Center" Foreground="#555" FontSize="11"/>
                     </StackPanel>

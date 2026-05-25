@@ -98,6 +98,7 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
 
         _controller = new RequestReplyController<PlcCommand>(this) { CycleInterval = 20 };
         _controller.OnTimeout += cmd => Log($"⏱ TIMEOUT: {cmd.Command}");
+        _controller.OnError += ex => Log($"❌ MessageLoop error: {ex.Message}");
         _transport.AddDataArrivalEvent(OnDataArrival);
     }
 

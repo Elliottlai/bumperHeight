@@ -1,6 +1,7 @@
 using BarcodeReader.Interfaces;
 using BarcodeReader.Services;
 using Emgu.CV.XFeatures2D;
+using FoupInspecMachine.Helper;
 using FoupInspecMachine.Manager;
 using Machine.Core;
 using Machine.Core.Interfaces;
@@ -229,6 +230,34 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// 以 PLC 八進位位址設定 Y 輸出點狀態。
+    /// </summary>
+    public void SetPlcYOctal(int plcOctalAddr, bool value)
+    {
+        if (_plc == null || !_plc.IsConnected) return;
+        _plc.SetY(OctalAddrToIndex(plcOctalAddr), value);
+    }
+
+    /// <summary>
+    /// SLC Reset：對 Y0 送出 ON→(100ms)→OFF pulse。
+    /// 若需更改目標 Y 點，修改 SlcResetYAddr 常數即可。
+    /// </summary>
+    private const int SlcResetYAddr = 0; // PLC Y0（八進位位址）
+    public async Task SlcResetAsync()
+    {
+        if (SimulationMode)
+        {
+            _logger.Info("[SLC] (Sim) SLC Reset pulse");
+            await Task.Delay(200);
+            return;
+        }
+        SetPlcYOctal(SlcResetYAddr, true);
+        await Task.Delay(100);
+        SetPlcYOctal(SlcResetYAddr, false);
+        _logger.Info("[SLC] SLC Reset pulse sent (Y0 ON→OFF)");
+    }
+
+    /// <summary>
     /// 將 PLC 八進制位址（面板標示數字）轉為 _xData 十進制索引。
     /// 例：10（X10） → 8、12（X12） → 10、13（X13） → 11
     /// </summary>
@@ -386,6 +415,7 @@ public sealed class MachineController : IDisposable
             return simCode;
         }
 
+        bool justInitialized = false;
         if (_barcodeDevice == null || !_barcodeDevice.IsConnected)
         {
             progress?.Report("初始化讀碼器...");
@@ -396,6 +426,13 @@ public sealed class MachineController : IDisposable
                 progress?.Report($"讀碼器無法連線: {initResult.Message}");
                 return null;
             }
+            justInitialized = true;
+        }
+
+        if (justInitialized)
+        {
+            _logger.Info("[Barcode] 讀碼器剛完成初始化，等待相機穩定 1500ms...");
+            await Task.Delay(1500, ct);
         }
 
         progress?.Report("讀碼中...");
@@ -1517,7 +1554,7 @@ public sealed class MachineController : IDisposable
 
             foreach (var (target, count) in rows)
             {
-                for (int i = 0; i < count; i=i+4)
+                for (int i = 0; i < count; i=i+1)
                 {
                     ct.ThrowIfCancellationRequested();
                     await CheckPauseAsync(progress, ct);
@@ -1713,7 +1750,7 @@ public sealed class MachineController : IDisposable
 
       
 
-        const string SaveRoot = @"D:\CameraTestImage";
+        // 影像路徑改由 ImagePathHelper.GetImagePath 統一管理
         const int LightChLeft = 1;    // 左相機光源通道
         const int LightChRight = 2;    // 右相機光源通道
         const int LightPct = 100;  // 亮度 100%（可依需求調整）
@@ -1765,12 +1802,12 @@ public sealed class MachineController : IDisposable
         var bufRight = _cameraRight?.GetBufAddress();
         var bufLeft = _cameraLeft?.GetBufAddress();
 
-        // STEP 8: 存 BMP 至 D:\CameraLightTest\yyyyMMdd\
-        // 命名規則：yyyy-MM-ddTHH-mm-ss_條碼_C編號_LSlot01.bmp (X13=L側) / RSlot01.bmp (X12=R側)
-        // 同一次取像的兩支相機使用相同的 LSlot/RSlot 前綴
-        string dir = Path.Combine(SaveRoot, DateTime.Now.ToString("yyyyMMdd"));
-        Directory.CreateDirectory(dir);
-        string ts = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");   // 2026-04-10T10-34-57
+        // STEP 8: save BMP - Original_image / Draw_image
+        // filename: yyyy-MM-ddTHH-mm-ss_{barcode}_{Camera}_{SlotTag}.bmp
+        // path managed by ImagePathHelper.GetImagePath
+ 
+        string ts = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");
+        // (timestamp defined above)
         string slotNum = (25 - slotIndex).ToString("D2");                 // 25, 26 ...
         string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
         string slotTag = $"{slotSide}{slotNum}";                          // LSlot25 or RSlot25
@@ -1783,7 +1820,7 @@ public sealed class MachineController : IDisposable
         System.Windows.Media.Imaging.BitmapSource? uiImageLeft = null;  // → targetA (AreaA)
         System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // → targetB (AreaB)
 
-        const string DrawImageRoot = @"D:\CameraDrawImage";
+
         // Value 換算係數：pixel? → mm?（1 pixel = 0.0069 mm）
         // DetectedArea 在 BumperAlgService.Analyze() 內已換算為 mm?，此處不再乘係數
         double detectedAreaR = 0.0;
@@ -1791,7 +1828,7 @@ public sealed class MachineController : IDisposable
 
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camRight}_{slotTag}.bmp");
+            string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
             DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
             _logger.Info($"[DryRun] {slotLabel} 已存 R({camRight}): {path}");
             anySaved = true;
@@ -1818,10 +1855,10 @@ public sealed class MachineController : IDisposable
                 uiImageRight = bsR;
                 _logger.Info($"[DryRun] {slotLabel} R ALG 畫線 OK (json={algKeyR}) Area={detectedAreaR:F2}");
 
-                // 存有畫線的影像到 D:\CameraDrawImage
-                string drawDir = Path.Combine(DrawImageRoot, DateTime.Now.ToString("yyyyMMdd"));
-                string drawPath = Path.Combine(drawDir, $"{ts}_{barcodeId}_{camRight}_{slotTag}_draw.bmp");
+                // save draw image via ImagePathHelper
+                string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
                 SaveBitmapSource(bsR, drawPath);
+ 
                 _logger.Info($"[DryRun] {slotLabel} R 畫線圖已存: {drawPath}");
             }
             else
@@ -1832,7 +1869,7 @@ public sealed class MachineController : IDisposable
         }
         if (_cameraLeft != null && bufLeft != null && bufLeft.Length > 0 && bufLeft[0] != IntPtr.Zero)
         {
-            string path = Path.Combine(dir, $"{ts}_{barcodeId}_{camLeft}_{slotTag}.bmp");
+            string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
             DryRunSaveBmp(_cameraLeft, bufLeft[0], path, _config.GetRoi(camLeft));
             _logger.Info($"[DryRun] {slotLabel} 已存 L({camLeft}): {path}");
             anySaved = true;
@@ -1858,10 +1895,10 @@ public sealed class MachineController : IDisposable
                 uiImageLeft = bsL;
                 _logger.Info($"[DryRun] {slotLabel} L ALG 畫線 OK (json={algKeyL}) Area={detectedAreaL:F2}");
 
-                // 存有畫線的影像到 D:\CameraDrawImage
-                string drawDir = Path.Combine(DrawImageRoot, DateTime.Now.ToString("yyyyMMdd"));
-                string drawPath = Path.Combine(drawDir, $"{ts}_{barcodeId}_{camLeft}_{slotTag}_draw.bmp");
+                // save draw image via ImagePathHelper
+                string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
                 SaveBitmapSource(bsL, drawPath);
+ 
                 _logger.Info($"[DryRun] {slotLabel} L 畫線圖已存: {drawPath}");
             }
             else
@@ -1908,7 +1945,7 @@ public sealed class MachineController : IDisposable
         }
         else
         {
-            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: 取像完成 ? → {dir}");
+            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: images saved");
         }
 
         // STEP 9: 補足剩餘停留時間（確保整體 ? 2 秒）
