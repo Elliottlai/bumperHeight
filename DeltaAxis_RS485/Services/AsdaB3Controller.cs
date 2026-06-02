@@ -444,7 +444,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return (diStatus & AsdaB3RegisterMap.DI8_Bit) == 0; // B contact: 低電位 = 觸發
     }
 
-    /// <summary>原點復歸是否完成（P0.046 Bit8）</summary>
+    /// <summary>原點賦歸是否完成（P0.046 Bit8）</summary>
     public bool IsHomeCompleted()
     {
         ThrowIfDisposed();
@@ -461,7 +461,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     /// <summary>
-    /// 執行原點復歸動作（觸發 PR#0 = Homing）
+    /// 執行原點賦歸動作（觸發 PR#0 = Homing）
     /// </summary>
     public void ExecuteHoming()
     {
@@ -469,22 +469,22 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         EnsureNoAlarm();
 
         if (!IsServoOn)
-            throw new InvalidOperationException("請先激磁 (Servo ON) 再執行原點復歸");
+            throw new InvalidOperationException("請先激磁 (Servo ON) 再執行原點賦歸");
 
-        // 觸發 Homing: 寫 P5.007 = 0 (PR#0 為原點復歸路徑)
+        // 觸發 Homing: 寫 P5.007 = 0 (PR#0 為原點賦歸路徑)
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
 
-        // 等待原點復歸完成
+        // 等待原點賦歸完成
         WaitForCondition(
             () =>
             {
                 var status = ReadDriverStatus();
                 if (status.HasFlag(DriverStatusFlags.Alarm))
-                    throw new ServoAlarmException(0, "原點復歸期間發生警報");
+                    throw new ServoAlarmException(0, "原點賦歸期間發生警報");
                 return status.HasFlag(DriverStatusFlags.HomeComplete);
             },
             timeoutMs: InPositionTimeout * 3,
-            errorMessage: $"原點復歸逾時（超過 {InPositionTimeout * 3} ms）"
+            errorMessage: $"原點賦歸逾時（超過 {InPositionTimeout * 3} ms）"
         );
     }
 

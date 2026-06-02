@@ -33,7 +33,7 @@ public enum DriverStatusFlags : ushort
     /// <summary>Bit 7  BRKR (筿合焚ó北块)</summary>
     BrakeRelease = 1 << 7,
 
-    /// <summary>Bit 8  HOME (翴確耴ЧΘ)</summary>
+    /// <summary>Bit 8  HOME (翴结耴ЧΘ)</summary>
     HomeComplete = 1 << 8,
 
     /// <summary>Bit 9  OLW (皑笷筁璽更箇牡)</summary>

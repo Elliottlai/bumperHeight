@@ -224,7 +224,7 @@ public static class AsdaB3RegisterMap
     /// 驅動器狀態字 — 使用 P4.006 軟體 DO 暫存器
     /// <para>DO1 Bit0: 伺服準備完畢 (Servo Ready, DO code 0x01)</para>
     /// <para>DO2 Bit1: 馬達零速度 (Zero Speed, DO code 0x03)</para>
-    /// <para>DO3 Bit2: 原點復歸完成 (Home Complete, DO code 0x09)</para>
+    /// <para>DO3 Bit2: 原點賦歸完成 (Home Complete, DO code 0x09)</para>
     /// <para>DO4 Bit3: 目標位置到達 (In Position, DO code 0x05)</para>
     /// <para>DO5 Bit4: 電磁煞車控制 (Brake, DO code 0x08)</para>
     /// <para>DO6 Bit5: 伺服警示 B contact (Alarm, DO code 0x07)</para>
@@ -244,7 +244,7 @@ public static class AsdaB3RegisterMap
     /// <summary>DO2 Bit1 — 馬達零速度</summary>
     public const ushort StatusBit_ZeroSpeed = 0x0002;
 
-    /// <summary>DO3 Bit2 — 原點復歸完成</summary>
+    /// <summary>DO3 Bit2 — 原點賦歸完成</summary>
     public const ushort StatusBit_HomeComplete = 0x0004;
 
     /// <summary>DO4 Bit3 — 目標位置到達 (In Position)</summary>

@@ -33,7 +33,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         /// <summary>Bit 7 — BRKR (電磁煞車輸出)</summary>
         BrakeRelease = 1 << 7,
 
-        /// <summary>Bit 8 — HOME (原點復歸完成)</summary>
+        /// <summary>Bit 8 — HOME (原點賦歸完成)</summary>
         HomeComplete = 1 << 8,
 
         /// <summary>Bit 9 — OLW (過負載預警)</summary>

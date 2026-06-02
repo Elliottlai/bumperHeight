@@ -26,8 +26,15 @@ public static class InspectionResultWriter
     private static readonly HashSet<string> _initializedCsvPaths = new();
     private static readonly Dictionary<string, string> _csvPathByFoupId = new();
 
-    /// <summary>CSV 報表根目錄（Results 資料夾）。</summary>
-    public static string ResultsRootDirectory =>
+    /// <summary>CSV 報表根目錄（預設為 exe 同層的 Results 資料夾，可由設定視窗覆寫）。</summary>
+    public static string ResultsRootDirectory
+    {
+        get => _resultsRootDirectory;
+        set => _resultsRootDirectory = string.IsNullOrWhiteSpace(value)
+            ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Results")
+            : value;
+    }
+    private static string _resultsRootDirectory =
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Results");
     private static readonly Regex _timestampRegex = new(
         @"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}",

@@ -2,6 +2,8 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
+using JsonType;
+using Slot_Inspection.Helper;
 using Slot_Inspection.Models;
 using Slot_Inspection.Services;
 using Slot_Inspection.Views;
@@ -22,14 +24,23 @@ public sealed class MainViewModel : ObservableObject
     private bool _isInitialized;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(100) };
+    private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    // MES 重試計時器：失敗時每 15 秒自動重試，連線成功後停止
+    private readonly DispatcherTimer _mesRetryTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
     private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
+    private DateTime _runStartTime;  // 主流程開始時間（用於 MES 上傳 ProcessStartTime）
     private bool _prevX10 = false; // X10 上一次狀態（預設 0，保留供未來使用）
     private bool _isLightGateBlocked; // X7=LOW：光閘遮斷中
-    private int _lightGateBlockedCount = 0; // 連續讀到 LOW 的次數（防抖用）
-    private const int LightGateDebounceCount = 3; // 需連續 N 次（×100ms）LOW 才視為真正觸發
+    private int _lightGateBlockedCount = 0; // 連續讀到 LOW 的次數（觸發防抖用）
+    private int _lightGateClearCount = 0;  // 連續讀到 HIGH 的次數（釋放防抖用）
+    private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
+    private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
     private bool _isLightGateBypassActive; // 取料暫停光閘旗標
+
+    // X7 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，觸發遮斷時一起寫 log
+    private readonly Queue<(DateTime Time, bool X7Raw, bool Blocked, int Count)> _x7SignalHistory = new();
+    private const int X7HistorySize = 10;
     private readonly MachineController _machine = new();
     private CancellationTokenSource? _cts;
     private TaskCompletionSource<string>? _barcodeTcs; // 等待使用者手動輸入條碼
@@ -148,9 +159,10 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ConfirmBarcodeCommand { get; }
     public ICommand ToggleLightGateBypassCommand { get; }
     public ICommand SlcResetCommand { get; }
+    public ICommand WebApiTestCommand { get; }
 
     /// <summary>
-    /// 取料暫停光閘：啟用時光閘觸發不中斷流程，但 RUN 與原點賦歸同時鎖定。
+    /// 暫停光閘：啟用時光閘觸發不中斷流程，但 RUN 與原點賦歸會同時鎖定。
     /// </summary>
     public bool IsLightGateBypassActive
     {
@@ -165,15 +177,45 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>按鈕顯示文字，隨狀態切換。</summary>
+    /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消暫停光閘」，停用時顯示「暫停光閘」。</summary>
     public string LightGateBypassButtonText =>
-        IsLightGateBypassActive ? "取消暫停光閘" : "取料暫停光閘";
+        IsLightGateBypassActive ? "取消暫停光閘" : "暫停光閘";
 
     private bool _isDryRunning;
     public bool IsDryRunning
     {
         get => _isDryRunning;
         set => SetProperty(ref _isDryRunning, value);
+    }
+
+    /// <summary>
+    /// ZL/ZR 是否已在安全高度範圍內（可允許直接按 RUN 而不需已完成原點賦歸）。
+    /// 判斷依據為 InspectionConfig 中的 GetZLSafeHeight / GetZRSafeHeight 以及 ZSafeTolerance。
+    /// </summary>
+    public bool IsZAtSafeHeight
+    {
+        get
+        {
+            try
+            {
+                bool x12 = _machine.GetPlcXOctal(12) ?? false;
+                bool x13 = _machine.GetPlcXOctal(13) ?? false;
+                double safeZL = _machine.Config.GetZLSafeHeight(x12, x13);
+                double safeZR = _machine.Config.GetZRSafeHeight(x12, x13);
+                double tol = _machine.Config.ZSafeTolerance;
+
+                double currentZL = _machine.Axes.TryGetValue("AxisZL", out var zl) ? zl.GetRealPosition() : double.MaxValue;
+                double currentZR = _machine.Axes.TryGetValue("AxisZR", out var zr) ? zr.GetRealPosition() : double.MaxValue;
+
+                bool zlSafe = currentZL <= safeZL + tol;
+                bool zrSafe = currentZR <= safeZR + tol;
+                return zlSafe && zrSafe;
+            }
+            catch
+            {
+                return false;
+            }
+        }
     }
 
     private bool _isDeviceReady;
@@ -265,15 +307,17 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel()
     {
+        _mesClient.Load();
         // START
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
         StopCommand = new RelayCommand(OnStop);
-        // 主流程：逐 Slot 移動、取像、存圖（需已完成原點賦歸 + 光閘未遮斷 + bypass 未啟用）
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && IsInitialized && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsLightGateBypassActive);
+        // 主流程：逐 Slot 移動、取像、存圖
+        // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷。
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked);
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
-        // 原點賦歸：光閘必須未遮斷且 bypass 未啟用才可按
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsLightGateBypassActive);
+        // 原點賦歸：光閘必須未遮斷才可按（不因暫停光閘而全域禁用）
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked);
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
         // 移至取料位：Y 軸移動到取料位座標
@@ -297,11 +341,14 @@ public sealed class MainViewModel : ObservableObject
         // 條碼 TextBox Enter 確認
         ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
 
-        // 取料暫停光閘 toggle
+        // 暫停光閘 toggle
         ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass);
 
         // SLC Reset
         SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+
+        // WebAPI 模擬測試
+        WebApiTestCommand = new RelayCommand(OnWebApiTest);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 25, 25);
@@ -316,7 +363,62 @@ public sealed class MainViewModel : ObservableObject
 
         _plcTimer.Tick += OnPlcTick;
         _plcTimer.Start();
+
+        // MES 重試計時器訂閱
+        _mesRetryTimer.Tick += OnMesRetryTick;
+
+        // ★ 程式啟動後非同步連線 MES（不阻塞 UI）
+        _ = InitMesAsync();
     }
+
+    /// <summary>程式啟動：建立 WebApidll 並上報 Idle 狀態。</summary>
+    private async Task InitMesAsync()
+    {
+        StatusMessage = "正在連線 MES...";
+        await _mesClient.ConnectAsync();
+        MesStatus = _mesClient.LastStatus;
+
+        if (MesStatus == MesConnectionStatus.Connected)
+        {
+            StatusMessage = "MES 連線成功，系統就緒。";
+            _mesRetryTimer.Stop();
+        }
+        else
+        {
+            StatusMessage = "MES 未連線，將每 15 秒自動重試...";
+            _mesRetryTimer.Start();
+        }
+    }
+
+    /// <summary>MES 重試計時器 Tick：尚未連線時每 15 秒自動重試。</summary>
+    private async void OnMesRetryTick(object? sender, EventArgs e)
+    {
+        // 已連線則停止計時器，不重複發送
+        if (_mesClient.LastStatus == MesConnectionStatus.Connected)
+        {
+            _mesRetryTimer.Stop();
+            return;
+        }
+
+        // ★ 重試記錄會透過 CimApiClient.ConnectAsync() 內的 WriteLog 寫入 WebApiLog/
+        StatusMessage = "MES 重試連線中...";
+        await _mesClient.ConnectAsync();
+        MesStatus = _mesClient.LastStatus;
+
+        if (MesStatus == MesConnectionStatus.Connected)
+        {
+            StatusMessage = "MES 重試連線成功！";
+            _mesRetryTimer.Stop();
+        }
+        else
+        {
+            StatusMessage = "MES 重試失敗，將在 15 秒後再次嘗試...";
+        }
+    }
+
+    /// <summary>程式關閉時呼叫，上報 MES Disconnected。</summary>
+    public async Task DisconnectMesAsync()
+        => await _mesClient.DisconnectAsync();
 
     /// <summary>
     /// 每 100ms 輪詢一次 PLC X1+X2 訊號。
@@ -328,16 +430,26 @@ public sealed class MainViewModel : ObservableObject
         bool x7 = _machine.GetPlcXOctal(7) ?? true;
         bool rawBlocked = !x7;
 
+        // 先更新防抖計數，再 Enqueue，確保歷史裡的 Count 是當下真實值
         if (rawBlocked)
         {
-            _lightGateBlockedCount = Math.Min(_lightGateBlockedCount + 1, LightGateDebounceCount + 1);
+            _lightGateBlockedCount++;
         }
         else
         {
             _lightGateBlockedCount = 0;
         }
 
-        bool blocked = _lightGateBlockedCount >= LightGateDebounceCount;
+        // 每次 Tick 都將原始訊號與當下 count 存入歷史佇列（最多 X7HistorySize 筆）
+        _x7SignalHistory.Enqueue((DateTime.Now, x7, rawBlocked, _lightGateBlockedCount));
+        if (_x7SignalHistory.Count > X7HistorySize)
+            _x7SignalHistory.Dequeue();
+
+        bool blocked = (_lightGateBlockedCount >= LightGateDebounceCount);
+         
+
+
+          //  bool blocked = _lightGateBlockedCount >= LightGateDebounceCount;
 
         // 光閘確認觸發（從未遮斷 → 遮斷，且已通過防抖確認）
         if (blocked && !_isLightGateBlocked)
@@ -348,6 +460,22 @@ public sealed class MainViewModel : ObservableObject
                 _cts?.Cancel();
                 IsInitialized = false;
                 StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
+
+                // 組合前 N 筆 X7 訊號歷史一併寫入 log
+                var historySb = new System.Text.StringBuilder();
+                historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 10 筆，門檻={LightGateDebounceCount}）---");
+                int idx = 1;
+                foreach (var entry in _x7SignalHistory)
+                {
+                    string countInfo = entry.Blocked ? $"count={entry.Count}" : "正常";
+                    string trigger  = (entry.Blocked && entry.Count >= LightGateDebounceCount) ? " ✅ 本筆觸發" : "";
+                    historySb.AppendLine(
+                        $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X7={entry.X7Raw,-5} | rawBlocked={entry.Blocked,-5} | {countInfo}{trigger}");
+                }
+
+                CancelEventLogger.Write(
+                    "光閘X7",
+                    "X7 光閘遮斷觸發，流程已取消，等待原點賦歸\n" + historySb);
             }
             else
             {
@@ -358,7 +486,12 @@ public sealed class MainViewModel : ObservableObject
 
         IsLightGateBlocked = blocked;
 
+        // PLC/位置狀態變動可能影響按鈕可用性（例如 Z 到位），通知 WPF 重新查詢 CanExecute
+        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+
         if (!IsDeviceReady || IsRunning || IsDryRunning) return;
+
+        if (IsLightGateBlocked) return;
 
         bool x1 = _machine.GetPlcXOctal(1) ?? false; // X1
         bool x2 = _machine.GetPlcXOctal(2) ?? false; // X2
@@ -445,6 +578,11 @@ public sealed class MainViewModel : ObservableObject
 
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
 
+        // ── MES 上報 Run（非阻塞）──
+        _ = _mesClient.ReportRunAsync()
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
+
         try
         {
             // ── S01a：檢查載台在席感測器（PLC X12/X13）──
@@ -486,7 +624,7 @@ public sealed class MainViewModel : ObservableObject
             System.Diagnostics.Debug.WriteLine($"[S01] 自動讀碼成功: {code}");
 
             // ── MES QuerySerialNoData（非阻塞，失敗不中止流程）──
-            _ = _mesClient.QueryWorkOrderAsync("SlotInspection", _confirmedBarcode)
+            _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                     TaskScheduler.FromCurrentSynchronizationContext());
 
@@ -531,7 +669,15 @@ public sealed class MainViewModel : ObservableObject
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
-            _ = _mesClient.UploadResultAsync("SlotInspection", _confirmedBarcode, pass)
+            var (recipeId1, productId1) = SplitBarcode(_confirmedBarcode);
+            var endTime1     = DateTime.Now;
+            var bumperListStart = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
+                LowerLimit, UpperLimit, _runStartTime, endTime1);
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productId1, recipeId1, pass,
+                    bumperListStart, InspectionResultWriter.ResultsRootDirectory,
+                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    endTime1.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    (endTime1 - _runStartTime).TotalSeconds.ToString("F3"))
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                     TaskScheduler.FromCurrentSynchronizationContext());
 
@@ -539,16 +685,22 @@ public sealed class MainViewModel : ObservableObject
             System.Diagnostics.Debug.WriteLine(
                 $"[S04] 完成: {_confirmedBarcode} = {(pass ? "PASS" : "FAIL")}");
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
             IsInitialized = false;
             StatusMessage = "⏹ 作業已由使用者取消，請執行原點賦歸後再繼續 RUN";
+            CancelEventLogger.Write("OnStart", "流程被取消（OperationCanceledException）", oce);
         }
         catch (Exception ex)
         {
             IsInitialized = false;
             StatusMessage = $"✘ 量測發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
+            CancelEventLogger.Write("OnStart", $"流程例外：{ex.Message}", ex);
+            // ── MES 上報 Alarm（非阻塞）──
+            _ = _mesClient.ReportAlarmAsync()
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
         }
         finally
         {
@@ -565,6 +717,7 @@ public sealed class MainViewModel : ObservableObject
     {
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
+        _runStartTime = DateTime.Now;
 
         // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
         _prevX10 = false;
@@ -574,13 +727,25 @@ public sealed class MainViewModel : ObservableObject
 
         var statusProgress = new Progress<string>(msg => StatusMessage = msg);
 
+        // ── MES 上報 Run（非阻塞）──
+        _ = _mesClient.ReportRunAsync()
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
+
         try
         {
+            var ct = _cts.Token;
 
+            // ── 模擬模式：跳過所有機台動作，使用假資料直接走 WebAPI 流程 ──
+            if (IsSimulationMode)
+            {
+                await RunSimulationAsync(ct);
+                return;
+            }
 
             // ── STEP 0：讀取條碼 ──────────────────────────────────────────
             StatusMessage = "正在移動至條碼讀取位置...";
-            var ct = _cts.Token;
+
 
             // Y 軸移動至讀碼位置
             StatusMessage = $"Y 軸移動至條碼讀取位置 {_machine.Config.BarcodePositionY:F1} mm，請稍候...";
@@ -655,7 +820,7 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"✔ 條碼確認：{code}，準備開始量測...";
 
             // ── MES QuerySerialNoData（非阻塞，失敗不中止流程）──
-            _ = _mesClient.QueryWorkOrderAsync("SlotInspection", _confirmedBarcode)
+            _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                     TaskScheduler.FromCurrentSynchronizationContext());
             // ─────────────────────────────────────────────────────────────
@@ -697,22 +862,36 @@ public sealed class MainViewModel : ObservableObject
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
-            _ = _mesClient.UploadResultAsync("SlotInspection", _confirmedBarcode, pass)
+            var (recipeId2, productId2) = SplitBarcode(_confirmedBarcode);
+            var endTime2     = DateTime.Now;
+            var bumperListRun = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
+                LowerLimit, UpperLimit, _runStartTime, endTime2);
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productId2, recipeId2, pass,
+                    bumperListRun, InspectionResultWriter.ResultsRootDirectory,
+                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    (endTime2 - _runStartTime).TotalSeconds.ToString("F3"))
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                     TaskScheduler.FromCurrentSynchronizationContext());
 
             StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException oce)
         {
             IsInitialized = false;
             StatusMessage = "⏹ 主流程已由使用者取消，請執行原點賦歸後再繼續 RUN";
+            CancelEventLogger.Write("OnRunInspection", "主流程被取消（OperationCanceledException）", oce);
         }
         catch (Exception ex)
         {
             IsInitialized = false;
             StatusMessage = $"✘ 主流程發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
+            CancelEventLogger.Write("OnRunInspection", $"主流程例外：{ex.Message}", ex);
+            // ── MES 上報 Alarm（非阻塞）──
+            _ = _mesClient.ReportAlarmAsync()
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
         }
         finally
         {
@@ -840,6 +1019,7 @@ public sealed class MainViewModel : ObservableObject
         // Stop 後必須重新原點賦歸才可再按 RUN
         IsInitialized = false;
         StatusMessage = "⏹ 作業已由使用者取消，請執行原點賦歸後再繼續 RUN";
+        CancelEventLogger.Write("OnStop", "使用者按下 STOP 按鈕，流程已中止");
     }
 
     private async void OnMoveToPickPosition()
@@ -1035,7 +1215,7 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            StatusMessage = "正在執行原點復歸，請稍候...";
+            StatusMessage = "正在執行原點賦歸，請稍候...";
             var result = await Task.Run(
                 () => _machine.HomeAllAxesPublicAsync(progress, _cts.Token));
 
@@ -1049,24 +1229,24 @@ public sealed class MainViewModel : ObservableObject
                 else
                 {
                     IsInitialized = true;
-                    StatusMessage = "✔ 原點復歸完成！請放入載具後按 RUN 開始";
+                    StatusMessage = "✔ 原點賦歸完成！請放入載具後按 RUN 開始";
                 }
             }
             else
             {
                 var failed = result.Items.FirstOrDefault(x => !x.Success);
-                StatusMessage = $"✘ 原點復歸失敗：{failed?.DeviceName} - {failed?.Message}";
+                StatusMessage = $"✘ 原點賦歸失敗：{failed?.DeviceName} - {failed?.Message}";
             }
 
             System.Diagnostics.Debug.WriteLine(result.GetSummary());
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "⏹ 原點復歸已取消";
+            StatusMessage = "⏹ 原點賦歸已取消";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"✘ 原點復歸發生錯誤：{ex.Message}";
+            StatusMessage = $"✘ 原點賦歸發生錯誤：{ex.Message}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -1111,7 +1291,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 切換「取料暫停光閘」模式。
+    /// 切換「暫停光閘」模式。
     /// 啟用：光閘觸發不中斷流程，同時鎖定 RUN 與原點賦歸。
     /// 停用：恢復正常光閘防護。
     /// </summary>
@@ -1128,8 +1308,8 @@ public sealed class MainViewModel : ObservableObject
         }
 
         StatusMessage = IsLightGateBypassActive
-            ? "⚠ 取料暫停光閘已啟用：RUN 與原點賦歸暫時鎖定"
-            : "✔ 取料暫停光閘已取消，恢復正常光閘防護";
+            ? "⚠ 暫停光閘已啟用：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
+            : "✔ 暫停光閘已取消，恢復正常光閘防護";
     }
 
     private async void OnSlcReset()
@@ -1150,5 +1330,154 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = $"✘ SLC Reset 失敗：{ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// WebAPI 連線設定：設定 BaseUrl / EquipmentId 並套用至 CimApiClient。
+    /// </summary>
+    private async void OnWebApiTest()
+    {
+        try
+        {
+            var win = new Views.WebApiTestWindow();
+            try { win.Owner = Application.Current.MainWindow; } catch { /* Owner 設定失敗不影響開啟 */ }
+            win.LoadFrom(_mesClient);
+            bool saved = win.ShowDialog() == true;
+
+            // 儲存後自動重連：停止舊的重試計時器，重新建立連線
+            if (saved)
+            {
+                _mesRetryTimer.Stop();
+                await InitMesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"WebAPI 設定視窗開啟失敗：{ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// 將 AreaA / AreaB 的 SlotItem 轉換成 WebApidll 所需的 BumperResultsData 列表。
+    /// </summary>
+    /// <summary>
+    /// 模擬模式專用流程：跳過所有機台動作，以假資料驗證 WebAPI 送出是否正確。
+    /// </summary>
+    private async Task RunSimulationAsync(CancellationToken ct)
+    {
+        // ── STEP 1：條碼 ──────────────────────────────────────────────────
+        StatusMessage = "[SIM] 略過機台移動，直接使用條碼欄位值...";
+        await Task.Delay(300, ct);
+
+        string simBarcode = string.IsNullOrWhiteSpace(Barcode) ? "001400037514_00214" : Barcode;
+        _confirmedBarcode = simBarcode;
+        Barcode = simBarcode;
+        StatusMessage = $"[SIM] 條碼確認：{simBarcode}";
+
+        // ── MES QueryWorkOrder（非阻塞）──────────────────────────────────
+        _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
+
+        // ── STEP 2：產生假量測資料（共 50 筆）────────────────────────────
+        StatusMessage = "[SIM] 產生假量測資料...";
+        await Task.Delay(300, ct);
+
+        var rng = new Random();
+        int totalSlots = AreaA_Row1.Count + AreaB_Row1.Count; // 通常 50
+
+        // 前 25 筆 → AreaA_Row1，後 25 筆 → AreaB_Row1
+        for (int i = 0; i < totalSlots; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            double val = Math.Round(9.5 + rng.NextDouble(), 4);   // 9.5 ~ 10.5
+            bool ng = !(LowerLimit <= val && val <= UpperLimit);
+            string loc = $"FL_{(i + 1):D2}";
+
+            if (i < AreaA_Row1.Count)
+            {
+                AreaA_Row1[i].Name  = loc;
+                AreaA_Row1[i].Value = val;
+                AreaA_Row1[i].IsNg  = ng;
+            }
+            else
+            {
+                int j = i - AreaA_Row1.Count;
+                AreaB_Row1[j].Name  = loc;
+                AreaB_Row1[j].Value = val;
+                AreaB_Row1[j].IsNg  = ng;
+            }
+        }
+
+        // ── 統計 & CSV ────────────────────────────────────────────────────
+        AreaA_Stats.Calculate(AreaA_Row1);
+        AreaB_Stats.Calculate(AreaB_Row1);
+
+        bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
+        InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
+
+        // ── STEP 3：WebAPI UploadResult（非阻塞）─────────────────────────
+        StatusMessage = "[SIM] 正在呼叫 WebAPI UploadResult...";
+        var (recipeIdSim, productIdSim) = SplitBarcode(_confirmedBarcode);
+        var simEndTime = DateTime.Now;
+        var bumperList = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
+            LowerLimit, UpperLimit, _runStartTime, simEndTime);
+        _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productIdSim, recipeIdSim, pass,
+                bumperList, InspectionResultWriter.ResultsRootDirectory,
+                _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                (simEndTime - _runStartTime).TotalSeconds.ToString("F3"))
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
+
+        StatusMessage = $"[SIM] 模擬流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
+    }
+
+    /// <summary>切割 Barcode，回傳 (RecipeId, ProductId)。
+    /// 格式：RecipeId_ProductId（例：001400037514_00214），
+    /// 若無底綫線則整個当 RecipeId，ProductId 為空字串。</summary>
+    private static (string RecipeId, string ProductId) SplitBarcode(string barcode)
+    {
+        int idx = barcode.LastIndexOf('_');
+        if (idx > 0 && idx < barcode.Length - 1)
+            return (barcode[..idx], barcode[(idx + 1)..]);
+        return (barcode, "");
+    }
+
+    private List<BumperResultsData> BuildBumperResultsData(
+        IEnumerable<Models.SlotItem> areaA,
+        IEnumerable<Models.SlotItem> areaB,
+        string barcode,
+        double lowerLimit  = 0,
+        double upperLimit  = 0,
+        DateTime? startTime = null,
+        DateTime? endTime   = null)
+    {
+        var list = new List<BumperResultsData>();
+        var start = startTime ?? DateTime.Now;
+        var end   = endTime   ?? DateTime.Now;
+        string startStr  = start.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        string endStr    = end.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        string duringStr = (end - start).TotalSeconds.ToString("F3");
+
+        foreach (var slot in areaA.Concat(areaB))
+        {
+            list.Add(new BumperResultsData
+            {
+                Barcode          = barcode,
+                BumperLocation   = slot.Name,
+                Grade            = slot.IsNg ? "NG" : "OK",
+                ItemName         = _mesClient.ItemName,
+                ItemValue        = slot.Value.ToString("F4"),
+                UpperSpecLimit   = upperLimit.ToString("F4"),
+                LowerSpecLimit   = lowerLimit.ToString("F4"),
+                ItemJudge        = slot.IsNg ? "Fail" : "Pass",
+                ProcessStartTime = startStr,
+                ProcessEndTime   = endStr,
+                DuringTime       = duringStr
+            });
+        }
+
+        return list;
     }
 }

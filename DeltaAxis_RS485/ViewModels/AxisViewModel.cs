@@ -471,7 +471,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
             // 觸發 Homing PR#0，不阻塞等待
             _modbus!.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
             IsMoving = true;
-            StatusMessage = "原點復歸中...";
+            StatusMessage = "原點賦歸中...";
         });
     }
 

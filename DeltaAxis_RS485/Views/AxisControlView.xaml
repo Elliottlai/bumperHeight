@@ -58,7 +58,7 @@
                         Width="100" Margin="0,0,4,0" />
                 <Button Content="Servo OFF" Command="{Binding ServoOffCommand}"
                         Width="100" Margin="0,0,4,0" />
-                <Button Content="原點復歸" Command="{Binding HomingCommand}"
+                <Button Content="原點賦歸" Command="{Binding HomingCommand}"
                         Width="100" Margin="0,0,4,0" />
                 <Button Content="清除警報" Command="{Binding ClearAlarmCommand}"
                         Width="100" Margin="0,0,4,0" />
@@ -733,7 +733,7 @@
                     </StackPanel>
                   </UniformGrid>
                   <WrapPanel>
-                    <Button Content="原點復歸" Command="{Binding HomingCommand}"
+                    <Button Content="原點賦歸" Command="{Binding HomingCommand}"
                             Width="90" Margin="0,0,4,0" />
                     <Button Content="煞車釋放" Command="{Binding BrakeReleaseCommand}"
                             Width="90" Margin="0,0,4,0" />

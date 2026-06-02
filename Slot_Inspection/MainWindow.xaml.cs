@@ -11,4 +11,11 @@ public partial class MainWindow : Window
         DataContext = new MainViewModel();
     }
 
+    // ★ 程式關閉時上報 MES Disconnected
+    protected override async void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        if (DataContext is MainViewModel vm)
+            await vm.DisconnectMesAsync();
+    }
 }

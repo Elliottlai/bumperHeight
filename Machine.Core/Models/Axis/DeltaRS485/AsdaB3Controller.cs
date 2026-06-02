@@ -288,7 +288,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             return (ReadDiStatus() & AsdaB3RegisterMap.DI8_Bit) == 0;
         }
 
-        /// <summary>原點復歸是否完成 (P0.046 Bit8)</summary>
+        /// <summary>原點賦歸是否完成 (P0.046 Bit8)</summary>
         public bool IsHomeCompleted() => ReadDriverStatus().HasFlag(DriverStatusFlags.HomeComplete);
 
         /// <summary>是否到位 (P0.046 Bit4)</summary>
@@ -312,9 +312,9 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             ThrowIfDisposed();
             EnsureNoAlarm();
             if (!IsServoOn)
-                throw new InvalidOperationException("請先激磁 (Servo ON) 再執行原點復歸");
+                throw new InvalidOperationException("請先激磁 (Servo ON) 再執行原點賦歸");
 
-            // 觸發 Homing: 寫 P5.007 = 0 (PR#0 為原點復歸路徑)
+            // 觸發 Homing: 寫 P5.007 = 0 (PR#0 為原點賦歸路徑)
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
 
             WaitForCondition(
@@ -322,11 +322,11 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                 {
                     var status = ReadDriverStatus();
                     if (status.HasFlag(DriverStatusFlags.Alarm))
-                        throw new ServoAlarmException(0, "原點復歸期間發生警報");
+                        throw new ServoAlarmException(0, "原點賦歸期間發生警報");
                     return status.HasFlag(DriverStatusFlags.HomeComplete);
                 },
                 InPositionTimeout * 3,
-                $"原點復歸逾時（超過 {InPositionTimeout * 3} ms）");
+                $"原點賦歸逾時（超過 {InPositionTimeout * 3} ms）");
         }
 
         /// <summary>
