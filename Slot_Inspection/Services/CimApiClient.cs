@@ -33,7 +33,7 @@ public class CimApiClient
         set => _equipmentId = value ?? _equipmentId;
     }
 
-    private string _productType = "SlotInspection";
+    private string _productType = "";
 
     /// <summary>產品類型，對應 MES MeasureResultUpload 的 ProductType 欄位。</summary>
     public string ProductType
@@ -152,7 +152,7 @@ public class CimApiClient
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  ③ 量測完成後：MeasureResultUpload + 匯出 CSV
+    //  ③ 量測完成後：MeasureResultUpload
     // ═══════════════════════════════════════════════════════════
     public async Task UploadResultAsync(
         string equipmentId,
@@ -160,10 +160,8 @@ public class CimApiClient
         string recipeId,
         bool pass,
         List<BumperResultsData> bumperResultsList,
-        string csvFolderPath,
         string processStartTime = "",
-        string processEndTime   = "",
-        string duringTime       = "")
+        string processEndTime   = "")
     {
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 UploadResult"); return; }
         string judge    = pass ? "Pass" : "Fail";
@@ -171,10 +169,12 @@ public class CimApiClient
             ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") : processStartTime;
         string endStr   = string.IsNullOrEmpty(processEndTime)
             ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") : processEndTime;
-        WriteLog("INFO", $"→ MeasureResultUpload | ProductId={productId} | RecipeId={recipeId} | Judge={judge}");
+        // IsItemName：ItemName 欄位是否填入，設定有值時為 true
+        bool isItemName = !string.IsNullOrWhiteSpace(_itemName);
+        WriteLog("INFO", $"→ MeasureResultUpload | ProductId={productId} | RecipeId={recipeId} | Judge={judge} | IsItemName={isItemName}");
         try
         {
-            // ★ 呼叫 WebApidll.MeasureResultUploadAsync()
+            // ★ 呼叫 WebApidll.MeasureResultUploadAsync()（新 DLL：最後一個參數改為 bool IsItemName）
             var resp = await _api.MeasureResultUploadAsync(
                 EquipmentId      : equipmentId,
                 ProductId        : productId,
@@ -184,7 +184,7 @@ public class CimApiClient
                 ProcessStartTime : startStr,
                 ProcessEndTime   : endStr,
                 BumperResultsData: bumperResultsList,
-                FliePath         : csvFolderPath);
+                IsItemName       : isItemName);
             LastStatus = resp != null ? MesConnectionStatus.Connected : MesConnectionStatus.Disconnected;
             WriteLog("INFO", $"← MeasureResultUpload | {LastStatus}");
         }
@@ -228,6 +228,20 @@ public class CimApiClient
     }
 
     // ═══════════════════════════════════════════════════════════
+    //  ⑦ 量測完成：上報 Idle 狀態
+    // ═══════════════════════════════════════════════════════════
+    public async Task ReportIdleAsync()
+    {
+        if (_api is null) { WriteLog("WARN", "尚未連線，略過 ReportIdle"); return; }
+        WriteLog("INFO", $"→ BumperSoftwareProcessIdle | EquipmentId={_equipmentId}");
+        try
+        {
+            var resp = await _api.BumperSoftwareProcessIdle(_equipmentId);
+            LastStatus = resp != null ? MesConnectionStatus.Connected : MesConnectionStatus.Disconnected;
+            WriteLog("INFO", $"← BumperSoftwareProcessIdle | {LastStatus}");
+        }
+        catch (Exception ex) { WriteLog("ERROR", $"ReportIdleAsync 失敗：{ex.Message}"); }
+    }
     //  ④ 程式關閉：上報 Disconnected
     // ═══════════════════════════════════════════════════════════
     public async Task DisconnectAsync()
@@ -273,6 +287,6 @@ internal sealed class CimApiSettings
 {
     public string BaseUrl     { get; set; } = "http://192.168.61.28:8069";
     public string EquipmentId { get; set; } = "SlotInspection";
-    public string ProductType { get; set; } = "SlotInspection";
+    public string ProductType { get; set; } = "";
     public string ItemName    { get; set; } = "Height";
 }

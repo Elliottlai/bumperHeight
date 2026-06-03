@@ -1,7 +1,7 @@
 ﻿<Window x:Class="Slot_Inspection.Views.WebApiTestWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="🌐 WebAPI 設定" Height="280" Width="460"
+        Title="🌐 WebAPI 設定" Height="210" Width="460"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize">
     <Grid Margin="16">
@@ -11,7 +11,7 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- URL + EquipmentId 輸入 -->
+        <!-- URL + EquipmentId + 開關 -->
         <Grid Grid.Row="0" Margin="0,0,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="100"/>
@@ -21,24 +21,20 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Label Content="BaseUrl：" VerticalAlignment="Center"/>
-            <TextBox x:Name="TxtBaseUrl" Grid.Column="1"
+            <Label Content="WebAPI 啟用：" VerticalAlignment="Center"/>
+            <CheckBox x:Name="ChkEnabled" Grid.Column="1"
+                      Margin="0,4,0,4" VerticalAlignment="Center"
+                      Content="啟用 MES WebAPI 功能"/>
+
+            <Label Grid.Row="1" Content="BaseUrl：" VerticalAlignment="Center"/>
+            <TextBox x:Name="TxtBaseUrl" Grid.Row="1" Grid.Column="1"
                      Margin="0,4,0,4" Padding="4,3" VerticalAlignment="Center"
                      FontFamily="Consolas" FontSize="12"/>
 
-            <Label Grid.Row="1" Content="EquipmentId：" VerticalAlignment="Center"/>
-            <TextBox x:Name="TxtEquipmentId" Grid.Row="1" Grid.Column="1"
-                     Margin="0,4,0,4" Padding="4,3" VerticalAlignment="Center"/>
-
-            <Label Grid.Row="2" Content="ProductType：" VerticalAlignment="Center"/>
-            <TextBox x:Name="TxtProductType" Grid.Row="2" Grid.Column="1"
-                     Margin="0,4,0,4" Padding="4,3" VerticalAlignment="Center"/>
-
-            <Label Grid.Row="3" Content="ItemName：" VerticalAlignment="Center"/>
-            <TextBox x:Name="TxtItemName" Grid.Row="3" Grid.Column="1"
+            <Label Grid.Row="2" Content="EquipmentId：" VerticalAlignment="Center"/>
+            <TextBox x:Name="TxtEquipmentId" Grid.Row="2" Grid.Column="1"
                      Margin="0,4,0,4" Padding="4,3" VerticalAlignment="Center"/>
         </Grid>
 

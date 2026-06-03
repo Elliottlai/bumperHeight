@@ -16,20 +16,18 @@ public partial class WebApiTestWindow : Window
     public void LoadFrom(CimApiClient client)
     {
         _mesClient          = client;
+        ChkEnabled.IsChecked = client.IsEnabled;
         TxtBaseUrl.Text     = client.BaseUrl;
         TxtEquipmentId.Text = client.EquipmentId;
-        TxtProductType.Text = client.ProductType;
-        TxtItemName.Text    = client.ItemName;
     }
 
     private void BtnSave_Click(object sender, RoutedEventArgs e)
     {
         if (_mesClient != null)
         {
+            _mesClient.IsEnabled   = ChkEnabled.IsChecked == true;
             _mesClient.BaseUrl     = TxtBaseUrl.Text.Trim();
             _mesClient.EquipmentId = TxtEquipmentId.Text.Trim();
-            _mesClient.ProductType = TxtProductType.Text.Trim();
-            _mesClient.ItemName    = TxtItemName.Text.Trim();
             _mesClient.Save();
         }
         DialogResult = true;

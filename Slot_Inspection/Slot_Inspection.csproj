@@ -25,12 +25,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Webapi_PD330\SlotBumper\BumperWebApiTestTool\WebApiTestTool.csproj" />
     <ProjectReference Include="..\BarcodeReader\BarcodeReader.csproj" />
     <ProjectReference Include="..\DeltaAxis_RS485\DeltaAxis_RS485.csproj" />
     <ProjectReference Include="..\Machine.Core\Machine.Core.csproj" />
     <ProjectReference Include="..\PLC_IO\PLC_IO.csproj" />
     <ProjectReference Include="..\TestALG\TestALG\TestALG.csproj" />
+    <ProjectReference Include="..\webapidll\WebApidll.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -40,9 +40,7 @@
     <Reference Include="MvCodeReaderSDK.Net">
       <HintPath>..\BarcodeReader\Lib\MvCodeReaderSDK.Net.dll</HintPath>
     </Reference>
-    <Reference Include="WebApidll">
-      <HintPath>..\..\Webapi_PD330\SlotBumper\BumperWebApiTestTool\bin\Debug\net8.0-windows\WebApidll.dll</HintPath>
-    </Reference>
+    <!-- WebApidll 由 ProjectReference webapidll\WebApidll.csproj 帶入，無需重複引用 -->
   </ItemGroup>
 
   <ItemGroup>

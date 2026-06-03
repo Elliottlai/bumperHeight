@@ -63,8 +63,9 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>供 UI 顯示的 MES 連線狀態文字。</summary>
     public string MesStatusText => _mesStatus switch
     {
-        MesConnectionStatus.Connected    => "MES ? 已連線",
-        MesConnectionStatus.Disconnected => "MES ? 未連線",
+        MesConnectionStatus.Connected    => "MES ✅ 已連線",
+        MesConnectionStatus.Disconnected => "MES ❌ 未連線",
+        MesConnectionStatus.Disabled     => "MES ■ 已關閉",
         _                                => "MES — 未嘗試"
     };
 
@@ -461,6 +462,11 @@ public sealed class MainViewModel : ObservableObject
                 IsInitialized = false;
                 StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
 
+                // ── MES 上報 Alarm（光閘觸發事件）──
+                _ = _mesClient.ReportAlarmAsync()
+                    .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                        TaskScheduler.FromCurrentSynchronizationContext());
+
                 // 組合前 N 筆 X7 訊號歷史一併寫入 log
                 var historySb = new System.Text.StringBuilder();
                 historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 10 筆，門檻={LightGateDebounceCount}）---");
@@ -669,15 +675,14 @@ public sealed class MainViewModel : ObservableObject
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
-            var (recipeId1, productId1) = SplitBarcode(_confirmedBarcode);
+            // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
             var endTime1     = DateTime.Now;
             var bumperListStart = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
-                LowerLimit, UpperLimit, _runStartTime, endTime1);
-            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productId1, recipeId1, pass,
-                    bumperListStart, InspectionResultWriter.ResultsRootDirectory,
+                CarrierSide, LowerLimit, UpperLimit, _runStartTime, endTime1);
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                    bumperListStart,
                     _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    endTime1.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    (endTime1 - _runStartTime).TotalSeconds.ToString("F3"))
+                    endTime1.ToString("yyyy-MM-dd HH:mm:ss.fff"))
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                     TaskScheduler.FromCurrentSynchronizationContext());
 
@@ -862,20 +867,24 @@ public sealed class MainViewModel : ObservableObject
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
-            var (recipeId2, productId2) = SplitBarcode(_confirmedBarcode);
+            // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
             var endTime2     = DateTime.Now;
             var bumperListRun = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
-                LowerLimit, UpperLimit, _runStartTime, endTime2);
-            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productId2, recipeId2, pass,
-                    bumperListRun, InspectionResultWriter.ResultsRootDirectory,
+                CarrierSide, LowerLimit, UpperLimit, _runStartTime, endTime2);
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                    bumperListRun,
                     _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    (endTime2 - _runStartTime).TotalSeconds.ToString("F3"))
-                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                    TaskScheduler.FromCurrentSynchronizationContext());
+                    endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+                            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                                TaskScheduler.FromCurrentSynchronizationContext());
 
-            StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
-        }
+                        StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
+
+                        // ── MES 上報 Idle（RUN 成功完成）──
+                        _ = _mesClient.ReportIdleAsync()
+                            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                                TaskScheduler.FromCurrentSynchronizationContext());
+                    }
         catch (OperationCanceledException oce)
         {
             IsInitialized = false;
@@ -1344,11 +1353,22 @@ public sealed class MainViewModel : ObservableObject
             win.LoadFrom(_mesClient);
             bool saved = win.ShowDialog() == true;
 
-            // 儲存後自動重連：停止舊的重試計時器，重新建立連線
+            // 儲存後：依 IsEnabled 決定是否重連
             if (saved)
             {
-                _mesRetryTimer.Stop();
-                await InitMesAsync();
+                if (!_mesClient.IsEnabled)
+                {
+                    // 關閉功能：停止重試計時器，直接更新狀態顯示
+                    _mesRetryTimer.Stop();
+                    MesStatus = MesConnectionStatus.Disabled;
+                    StatusMessage = "MES WebAPI 已關閉";
+                }
+                else
+                {
+                    // 開啟功能：重新連線
+                    _mesRetryTimer.Stop();
+                    await InitMesAsync();
+                }
             }
         }
         catch (Exception ex)
@@ -1372,7 +1392,9 @@ public sealed class MainViewModel : ObservableObject
         string simBarcode = string.IsNullOrWhiteSpace(Barcode) ? "001400037514_00214" : Barcode;
         _confirmedBarcode = simBarcode;
         Barcode = simBarcode;
-        StatusMessage = $"[SIM] 條碼確認：{simBarcode}";
+        // 模擬模式：CarrierSide 預設 "L"（若 UI 未設定）
+        if (string.IsNullOrEmpty(CarrierSide)) CarrierSide = "L";
+        StatusMessage = $"[SIM] 條碼確認：{simBarcode}，CarrierSide={CarrierSide}";
 
         // ── MES QueryWorkOrder（非阻塞）──────────────────────────────────
         _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
@@ -1418,19 +1440,23 @@ public sealed class MainViewModel : ObservableObject
 
         // ── STEP 3：WebAPI UploadResult（非阻塞）─────────────────────────
         StatusMessage = "[SIM] 正在呼叫 WebAPI UploadResult...";
-        var (recipeIdSim, productIdSim) = SplitBarcode(_confirmedBarcode);
         var simEndTime = DateTime.Now;
         var bumperList = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
-            LowerLimit, UpperLimit, _runStartTime, simEndTime);
-        _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, productIdSim, recipeIdSim, pass,
-                bumperList, InspectionResultWriter.ResultsRootDirectory,
+            CarrierSide, LowerLimit, UpperLimit, _runStartTime, simEndTime);
+        // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
+        _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                bumperList,
                 _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                (simEndTime - _runStartTime).TotalSeconds.ToString("F3"))
+                simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"))
             .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
                 TaskScheduler.FromCurrentSynchronizationContext());
 
         StatusMessage = $"[SIM] 模擬流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
+
+        // ── MES 上報 Idle（模擬流程成功完成）──
+        _ = _mesClient.ReportIdleAsync()
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
     }
 
     /// <summary>切割 Barcode，回傳 (RecipeId, ProductId)。
@@ -1444,10 +1470,16 @@ public sealed class MainViewModel : ObservableObject
         return (barcode, "");
     }
 
-    private List<BumperResultsData> BuildBumperResultsData(
+    /// <summary>
+    /// 將 AreaA / AreaB 的 SlotItem 轉換為 BumperResultsData 列表。
+    /// ItemName 格式：SLOT{N:D2}_{camera}（例：SLOT25_C1），相機名由 carrierSide 決定。
+    /// carrierSide="R" → AreaA=C4, AreaB=C3；carrierSide="L" → AreaA=C2, AreaB=C1。
+    /// </summary>
+    private static List<BumperResultsData> BuildBumperResultsData(
         IEnumerable<Models.SlotItem> areaA,
         IEnumerable<Models.SlotItem> areaB,
         string barcode,
+        string carrierSide,
         double lowerLimit  = 0,
         double upperLimit  = 0,
         DateTime? startTime = null,
@@ -1460,14 +1492,21 @@ public sealed class MainViewModel : ObservableObject
         string endStr    = end.ToString("yyyy-MM-dd HH:mm:ss.fff");
         string duringStr = (end - start).TotalSeconds.ToString("F3");
 
-        foreach (var slot in areaA.Concat(areaB))
+        // carrierSide="R"(X12): AreaA=C4, AreaB=C3
+        // carrierSide="L"(X13): AreaA=C2, AreaB=C1
+        bool isRight = string.Equals(carrierSide, "R", StringComparison.OrdinalIgnoreCase);
+        string cameraA = isRight ? "C4" : "C2";
+        string cameraB = isRight ? "C3" : "C1";
+
+        int slotNo = 1;
+        foreach (var slot in areaA)
         {
             list.Add(new BumperResultsData
             {
                 Barcode          = barcode,
-                BumperLocation   = slot.Name,
-                Grade            = slot.IsNg ? "NG" : "OK",
-                ItemName         = _mesClient.ItemName,
+                BumperPosition   = slot.Name,
+                Layer            = slot.IsNg ? "NG" : "OK",
+                ItemName         = $"SLOT{slotNo:D2}_{cameraA}",
                 ItemValue        = slot.Value.ToString("F4"),
                 UpperSpecLimit   = upperLimit.ToString("F4"),
                 LowerSpecLimit   = lowerLimit.ToString("F4"),
@@ -1476,6 +1515,27 @@ public sealed class MainViewModel : ObservableObject
                 ProcessEndTime   = endStr,
                 DuringTime       = duringStr
             });
+            slotNo++;
+        }
+
+        slotNo = 1;
+        foreach (var slot in areaB)
+        {
+            list.Add(new BumperResultsData
+            {
+                Barcode          = barcode,
+                BumperPosition   = slot.Name,
+                Layer            = slot.IsNg ? "NG" : "OK",
+                ItemName         = $"SLOT{slotNo:D2}_{cameraB}",
+                ItemValue        = slot.Value.ToString("F4"),
+                UpperSpecLimit   = upperLimit.ToString("F4"),
+                LowerSpecLimit   = lowerLimit.ToString("F4"),
+                ItemJudge        = slot.IsNg ? "Fail" : "Pass",
+                ProcessStartTime = startStr,
+                ProcessEndTime   = endStr,
+                DuringTime       = duringStr
+            });
+            slotNo++;
         }
 
         return list;
