@@ -1,4 +1,4 @@
-using BarcodeReader.Interfaces;
+ï»¿using BarcodeReader.Interfaces;
 using BarcodeReader.Services;
 using Emgu.CV.XFeatures2D;
 using FoupInspecMachine.Helper;
@@ -28,8 +28,8 @@ public sealed class MachineController : IDisposable
     private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
 
     /// <summary>
-    /// ¼ÒÀÀ¼Ò¦¡¡GDebug-Sim ²ÕºA¹w³] true¡]¥ş¼ÒÀÀ¡^¡A¨ä¥L²ÕºA¹w³] false¡]¹ê¾÷¡^¡C
-    /// ¥i¦b°õ¦æ®É³z¹L UI ¤Á´«¡C
+    /// æ¨¡æ“¬æ¨¡å¼ï¼šDebug-Sim çµ„æ…‹é è¨­ trueï¼ˆå…¨æ¨¡æ“¬ï¼‰ï¼Œå…¶ä»–çµ„æ…‹é è¨­ falseï¼ˆå¯¦æ©Ÿï¼‰ã€‚
+    /// å¯åœ¨åŸ·è¡Œæ™‚é€é UI åˆ‡æ›ã€‚
     /// </summary>
 #if DEBUG_SIM
     public static bool SimulationMode { get; set; } = true;
@@ -37,27 +37,27 @@ public sealed class MachineController : IDisposable
     public static bool SimulationMode { get; set; } = false;
 #endif
 
-    // ¹ê»Ú¶b°t¸m¡]¹ïÀ³ DeltaAxis_RS485 µwÅé¡^:
-    //   AxisY  = COM12, SlaveId=1  ¡÷ ¸ü¥x²¾°Ê¶b
-    //   AxisX  = COM13, SlaveId=1  ¡÷ Åª½X¶b
-    //   AxisZL = COM14, SlaveId=1  ¡÷ ¥ª¬Û¾÷°ª«×¶b
-    //   AxisZR = COM15, SlaveId=1  ¡÷ ¥k¬Û¾÷°ª«×¶b
+    // å¯¦éš›è»¸é…ç½®ï¼ˆå°æ‡‰ DeltaAxis_RS485 ç¡¬é«”ï¼‰:
+    //   AxisY  = COM12, SlaveId=1  â†’ è¼‰å°ç§»å‹•è»¸
+    //   AxisX  = COM13, SlaveId=1  â†’ è®€ç¢¼è»¸
+    //   AxisZL = COM14, SlaveId=1  â†’ å·¦ç›¸æ©Ÿé«˜åº¦è»¸
+    //   AxisZR = COM15, SlaveId=1  â†’ å³ç›¸æ©Ÿé«˜åº¦è»¸
     private readonly string[] _axisNames = ["AxisY", "AxisX", "AxisZL", "AxisZR"];
 
-    // Y ¶b¦æµ{·¥­­¡]mm¡^
+    // Y è»¸è¡Œç¨‹æ¥µé™ï¼ˆmmï¼‰
     private const double YAxisMaxMm = 496.0;
 
-    // ¬Û¾÷ UID¡G¥²¶·»P GrabModule.txt ¸Ìªº "UID" Äæ¦ì§¹¥ş¤@­P
+    // ç›¸æ©Ÿ UIDï¼šå¿…é ˆèˆ‡ GrabModule.txt è£¡çš„ "UID" æ¬„ä½å®Œå…¨ä¸€è‡´
     private const string CameraUidRight = "Right";
     private const string CameraUidLeft = "Left";
     private readonly string[] _cameraNames = [CameraUidRight, CameraUidLeft];
 
-    private readonly string _lightComPort = "COM16"; // TODO: ½T»{¥ú·½¹ê»Ú COM port
+    private readonly string _lightComPort = "COM16"; // TODO: ç¢ºèªå…‰æºå¯¦éš› COM port
     private readonly string _barcodeIp = "192.168.1.10";
     private readonly int _barcodePort = 8000;
 
-    // -- PLC (¤TµÙ FX) ¦ê¤f³]©w --
-    private readonly string _plcComPort = "COM11"; // TODO: ½T»{ PLC ¹ê»Ú COM port
+    // -- PLC (ä¸‰è± FX) ä¸²å£è¨­å®š --
+    private readonly string _plcComPort = "COM11"; // TODO: ç¢ºèª PLC å¯¦éš› COM port
     private readonly int _plcBaudRate = 115200;
 
     private readonly TimeSpan _axisHomeTimeout = TimeSpan.FromSeconds(60);
@@ -67,34 +67,34 @@ public sealed class MachineController : IDisposable
     public Dictionary<string, ICamera> Cameras => cMachineManager.Cameras;
 
     private FoupInspecMachine.Models.OPT_Controller? _light;
-    private HighBright_Controller? _lightHB;           // HighBright ¥ú·½¡]DryRun / ¹ê»Ú¨ú¹³¥Î¡^
+    private HighBright_Controller? _lightHB;           // HighBright å…‰æºï¼ˆDryRun / å¯¦éš›å–åƒç”¨ï¼‰
     private CameraManager? _cameraManager;
 
-    // DryRun ª½±µ¾Ş§@ªº¬Û¾÷ª«¥ó¡]¹ïÀ³ GrabModule.txt UID: "Right" / "Left"¡^
+    // DryRun ç›´æ¥æ“ä½œçš„ç›¸æ©Ÿç‰©ä»¶ï¼ˆå°æ‡‰ GrabModule.txt UID: "Right" / "Left"ï¼‰
     private ICamera? _cameraRight;
     private ICamera? _cameraLeft;
 
-    private ICodeReaderDevice? _barcodeDevice;    // ®ü±dÅª½X¾¹ SDK ±±¨îª«¥ó
-    private IBarcodeResultParser? _barcodeParser;  // Åª½Xµ²ªG¸ÑªR¾¹
-    private IPlcCommunicator? _plc;               // ¤TµÙ FX PLC ³q°T
+    private ICodeReaderDevice? _barcodeDevice;    // æµ·åº·è®€ç¢¼å™¨ SDK æ§åˆ¶ç‰©ä»¶
+    private IBarcodeResultParser? _barcodeParser;  // è®€ç¢¼çµæœè§£æå™¨
+    private IPlcCommunicator? _plc;               // ä¸‰è± FX PLC é€šè¨Š
     private bool _disposed;
 
-    // -- DryRun ¼È°±/Ä~Äò¾÷¨î¡]volatile bool + polling¡AÁ×§K TCS ²Ö¿n¾É­P®Ä¯à°h¤Æ¡^--
+    // -- DryRun æš«åœ/ç¹¼çºŒæ©Ÿåˆ¶ï¼ˆvolatile bool + pollingï¼Œé¿å… TCS ç´¯ç©å°è‡´æ•ˆèƒ½é€€åŒ–ï¼‰--
     private volatile bool _dryRunPaused;
 
-    /// <summary>¥Ø«e¬O§_³B©ó DryRun ¼È°±ª¬ºA</summary>
+    /// <summary>ç›®å‰æ˜¯å¦è™•æ–¼ DryRun æš«åœç‹€æ…‹</summary>
     public bool IsDryRunPaused => _dryRunPaused;
 
     /// <summary>
-    /// ¼È°±ªÅ¶]¬yµ{¨Ã¥ß§Y°±¤î©Ò¦³¶b¡]X7 ¥ú¹hÄ²µo®É©I¥s¡^¡C
-    /// ¹q¥­Ä²µo¡G¥u­n X7=0 ´N«O«ù¼È°±¡A­«½Æ©I¥sµL°Æ§@¥Î¡C
+    /// æš«åœç©ºè·‘æµç¨‹ä¸¦ç«‹å³åœæ­¢æ‰€æœ‰è»¸ï¼ˆX7 å…‰é–˜è§¸ç™¼æ™‚å‘¼å«ï¼‰ã€‚
+    /// é›»å¹³è§¸ç™¼ï¼šåªè¦ X7=0 å°±ä¿æŒæš«åœï¼Œé‡è¤‡å‘¼å«ç„¡å‰¯ä½œç”¨ã€‚
     /// </summary>
     public void PauseDryRun()
     {
         if (!_dryRunPaused)
         {
             _dryRunPaused = true;
-            // ¥ß§Y°±¤î©Ò¦³°Ê§@¶b
+            // ç«‹å³åœæ­¢æ‰€æœ‰å‹•ä½œè»¸
             foreach (var axisName in new[] { "AxisY", "AxisZL", "AxisZR" })
                 if (Axes.TryGetValue(axisName, out var ax))
                     try { ax.MotStop(isImmediate: true); } catch { }
@@ -102,7 +102,7 @@ public sealed class MachineController : IDisposable
         }
     }
 
-    /// <summary>Ä~ÄòªÅ¶]¬yµ{¡]X10=1 ®É©I¥s¡A¶È¦b¼È°±ª¬ºA¤U¦³®Ä¡^</summary>
+    /// <summary>ç¹¼çºŒç©ºè·‘æµç¨‹ï¼ˆX10=1 æ™‚å‘¼å«ï¼Œåƒ…åœ¨æš«åœç‹€æ…‹ä¸‹æœ‰æ•ˆï¼‰</summary>
     public void ResumeDryRun()
     {
         if (_dryRunPaused)
@@ -113,14 +113,14 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ­Y¥Ø«e³B©ó¼È°±ª¬ºA«h¥H polling µ¥«İ¡Aª½¨ì ResumeDryRun() ³Q©I¥s©Î¨ú®ø¡C
-    /// ¨Ï¥ÎÂ²³æªº volatile bool + Task.Delay polling¡A
-    /// Á×§K¨C¦¸ pause/resume «Ø¥ß TaskCompletionSource ¾É­P®Ä¯à°h¤Æ¡C
+    /// è‹¥ç›®å‰è™•æ–¼æš«åœç‹€æ…‹å‰‡ä»¥ polling ç­‰å¾…ï¼Œç›´åˆ° ResumeDryRun() è¢«å‘¼å«æˆ–å–æ¶ˆã€‚
+    /// ä½¿ç”¨ç°¡å–®çš„ volatile bool + Task.Delay pollingï¼Œ
+    /// é¿å…æ¯æ¬¡ pause/resume å»ºç«‹ TaskCompletionSource å°è‡´æ•ˆèƒ½é€€åŒ–ã€‚
     /// </summary>
     private async Task CheckPauseAsync(IProgress<string>? progress, CancellationToken ct)
     {
         if (!_dryRunPaused) return;
-        progress?.Report("[¼È°±¤¤] ¥ú¹hÄ²µo¡Aµ¥«İ X10=1 Ä~ÄòªÅ¶]...");
+        progress?.Report("[æš«åœä¸­] å…‰é–˜è§¸ç™¼ï¼Œç­‰å¾… X10=1 ç¹¼çºŒç©ºè·‘...");
         while (_dryRunPaused)
         {
             ct.ThrowIfCancellationRequested();
@@ -129,13 +129,19 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// Y ¶b²¾°Ê«eªº ZL/ZR ¦w¥ş°ª«×«OÅ@¡C
-    /// ­Y ZL ©Î ZR ¶W¹L¦w¥ş°ª«×®e®t¡A¼u¥X½T»{µøµ¡¸ß°İ¨Ï¥ÎªÌ¬O§_¥ı¤É¶b¡F
-    /// ¨Ï¥ÎªÌ«ö¡u¬O¡v¡÷ ¤É¦Ü¦w¥ş°ª«×¨Ãµ¥«İ¨ì¦ì¡F«ö¡u§_¡v¡÷ ©ß¥X OperationCanceledException¡C
+    /// Y è»¸ç§»å‹•å‰çš„ ZL/ZR å®‰å…¨é«˜åº¦ä¿è­·ã€‚
+    /// è‹¥ ZL æˆ– ZR è¶…éå®‰å…¨é«˜åº¦å®¹å·®ï¼Œå½ˆå‡ºç¢ºèªè¦–çª—è©¢å•ä½¿ç”¨è€…æ˜¯å¦å…ˆå‡è»¸ï¼›
+    /// ä½¿ç”¨è€…æŒ‰ã€Œæ˜¯ã€â†’ å‡è‡³å®‰å…¨é«˜åº¦ä¸¦ç­‰å¾…åˆ°ä½ï¼›æŒ‰ã€Œå¦ã€â†’ æ‹‹å‡º OperationCanceledExceptionã€‚
     /// </summary>
-    private async Task EnsureZSafeBeforeYMoveAsync(
+    /// <summary>
+    /// åœ¨ Y è»¸ç§»å‹•å‰ç¢ºèª ZL/ZR å·²é”å®‰å…¨é«˜åº¦ã€‚
+    /// è‹¥ä¸å®‰å…¨å‰‡è¨˜éŒ„è©³ç´° LOG ä¸¦è©¢å•ä½¿ç”¨è€…æ˜¯å¦è‡ªå‹•å‡è»¸ï¼›æ‹’çµ•å‰‡æ‹‹å‡º OperationCanceledExceptionã€‚
+    /// </summary>
+    /// <param name="caller">å‘¼å«ç«¯è­˜åˆ¥å­—ä¸²ï¼Œç”¨æ–¼ LOG è¿½è¹¤ï¼ˆä¾‹å¦‚ "OnRunInspection-STEP0"ï¼‰ã€‚</param>
+    public async Task EnsureZSafeBeforeYMoveAsync(
         double safeZL, double safeZR,
-        IProgress<string>? progress, CancellationToken ct)
+        IProgress<string>? progress, CancellationToken ct,
+        string caller = "Unknown")
     {
         double currentZL = Axes["AxisZL"].GetRealPosition();
         double currentZR = Axes["AxisZR"].GetRealPosition();
@@ -144,21 +150,42 @@ public sealed class MachineController : IDisposable
         bool zlUnsafe = currentZL > safeZL + tol;
         bool zrUnsafe = currentZR > safeZR + tol;
 
-        if (!zlUnsafe && !zrUnsafe) return;
+        // â”€â”€ LOGï¼šY ç§»å‹•å‰ Z è»¸ç‹€æ…‹ç¢ºèª â”€â”€
+        if (!zlUnsafe && !zrUnsafe)
+        {
+            _logger.Info(
+                $"â–¶ Y è»¸ç§»å‹•å‰ç¢ºèªï¼šZL èˆ‡ ZR å‡åœ¨å®‰å…¨é«˜åº¦ï¼Œå¯ä»¥ç§»å‹•" +
+                $"ï¼ˆZL å¯¦éš›={currentZL:F2} mmï¼Œå®‰å…¨ä¸Šé™={safeZL:F2} mmï½œ" +
+                $"ZR å¯¦éš›={currentZR:F2} mmï¼Œå®‰å…¨ä¸Šé™={safeZR:F2} mmï½œä¾†æºï¼š{caller}ï¼‰");
+            return;
+        }
 
-        string detail = $"ZL ¥Ø«e={currentZL:F2} mm¡]¦w¥ş={safeZL:F2}¡^\n" +
-                        $"ZR ¥Ø«e={currentZR:F2} mm¡]¦w¥ş={safeZR:F2}¡^";
-        string message = $"ZL/ZR ©|¥¼¦^¨ì¦w¥ş°ª«×¡Aª½±µ²¾°Ê Y ¶b¥i¯à³y¦¨¸I¼²¡C\n\n" +
-                         $"{detail}\n\n¬O§_±N ZL/ZR ¤É¦Ü¦w¥ş°ª«×«á¦AÄ~Äò¡H";
+        // â”€â”€ LOGï¼šZ è»¸è¶…å‡ºå®‰å…¨é«˜åº¦ï¼Œéœ€è¦å…ˆå‡è»¸ â”€â”€
+        string unsafeWho =
+            (zlUnsafe && zrUnsafe) ? "ZL èˆ‡ ZR çš†è¶…å‡ºå®‰å…¨é«˜åº¦" :
+            zlUnsafe               ? "ZL è¶…å‡ºå®‰å…¨é«˜åº¦" :
+                                     "ZR è¶…å‡ºå®‰å…¨é«˜åº¦";
 
-        _logger.Warn($"[SafetyCheck] Y ¶b²¾°Ê«e ZL/ZR ¤£¦b¦w¥ş¦ì¸m¡G{detail.Replace('\n', ' ')}");
+        string unsafeDetail =
+            (zlUnsafe ? $"ZL å¯¦éš›={currentZL:F2} mmï¼ˆå®‰å…¨ä¸Šé™={safeZL:F2} mmï¼Œè¶…å‡º={(currentZL - safeZL):F2} mmï¼‰" : "") +
+            (zlUnsafe && zrUnsafe ? "ï¼Œ" : "") +
+            (zrUnsafe ? $"ZR å¯¦éš›={currentZR:F2} mmï¼ˆå®‰å…¨ä¸Šé™={safeZR:F2} mmï¼Œè¶…å‡º={(currentZR - safeZR):F2} mmï¼‰" : "");
+
+        _logger.Warn($"âš  Y è»¸ç§»å‹•å‰å®‰å…¨ç¢ºèªï¼š{unsafeWho}ï¼Œç³»çµ±æ””æˆªç§»å‹•ï¼" +
+                     $"ï¼ˆ{unsafeDetail}ï½œä¾†æºï¼š{caller}ï¼‰");
+
+        string messageText =
+            $"ZL/ZR å°šæœªå›åˆ°å®‰å…¨é«˜åº¦ï¼Œç›´æ¥ç§»å‹• Y è»¸å¯èƒ½é€ æˆç¢°æ’ã€‚\n\n" +
+            $"ZL ç›®å‰ {currentZL:F2} mmï¼ˆå®‰å…¨ä¸Šé™ {safeZL:F2} mmï¼‰\n" +
+            $"ZR ç›®å‰ {currentZR:F2} mmï¼ˆå®‰å…¨ä¸Šé™ {safeZR:F2} mmï¼‰\n\n" +
+            $"æ˜¯å¦å°‡ ZL/ZR å‡è‡³å®‰å…¨é«˜åº¦å¾Œç¹¼çºŒï¼Ÿ";
 
         bool? userConfirm = null;
         System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             var result = System.Windows.MessageBox.Show(
-                message,
-                "? ZL/ZR ¦w¥ş°ª«×Äµ§i",
+                messageText,
+                "âš  ZL/ZR å®‰å…¨é«˜åº¦è­¦å‘Š",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Warning,
                 System.Windows.MessageBoxResult.No);
@@ -167,23 +194,35 @@ public sealed class MachineController : IDisposable
 
         if (userConfirm != true)
         {
-            _logger.Warn("[SafetyCheck] ¨Ï¥ÎªÌ©Úµ´¤É¶b¡AY ²¾°Ê¨ú®ø¡C");
-            throw new OperationCanceledException("¨Ï¥ÎªÌ¨ú®ø¡GZL/ZR ¥¼¹F¦w¥ş°ª«×¡AY ¶b²¾°Ê¤¤¤î¡C");
+            _logger.Warn($"âš  ä½¿ç”¨è€…é¸æ“‡ä¸å‡è»¸ï¼ŒY è»¸ç§»å‹•å–æ¶ˆï¼ˆä¾†æºï¼š{caller}ï¼‰");
+            throw new OperationCanceledException("ä½¿ç”¨è€…å–æ¶ˆï¼šZL/ZR æœªé”å®‰å…¨é«˜åº¦ï¼ŒY è»¸ç§»å‹•ä¸­æ­¢ã€‚");
         }
 
-        progress?.Report($"[SafetyCheck] ¤É ZL¡÷{safeZL:F2} ZR¡÷{safeZR:F2} mm...");
+        _logger.Info($"â–¶ ä½¿ç”¨è€…ç¢ºèªï¼šé–‹å§‹å°‡ ZL/ZR å‡è‡³å®‰å…¨é«˜åº¦ï¼ˆZL ç›®æ¨™={safeZL:F2} mmï¼ŒZR ç›®æ¨™={safeZR:F2} mmï¼‰");
+        progress?.Report($"æ­£åœ¨å°‡ ZLâ†’{safeZL:F2} mmã€ZRâ†’{safeZR:F2} mm å‡è‡³å®‰å…¨é«˜åº¦...");
         Axes["AxisZL"].MotMoveAbs(safeZL);
         Axes["AxisZR"].MotMoveAbs(safeZR);
-        // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+        // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
         await Task.Delay(150, ct);
         bool raised = await WaitUntilAsync(
             () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
             _config.MoveTimeout, ct);
 
         if (!raised)
-            _logger.Warn("[SafetyCheck] ZL/ZR ¤É¶b timeout¡A¤´Ä~Äò²¾°Ê Y¡C");
+        {
+            double postZL = Axes["AxisZL"].GetRealPosition();
+            double postZR = Axes["AxisZR"].GetRealPosition();
+            _logger.Error($"âœ˜ ZL/ZR å‡è‡³å®‰å…¨é«˜åº¦é€¾æ™‚ï¼Œè«‹ç«‹å³ç¢ºèªè¨­å‚™ç‹€æ…‹ï¼" +
+                          $"ï¼ˆZL å¯¦éš›={postZL:F2} mmï¼Œç›®æ¨™={safeZL:F2} mmï½œ" +
+                          $"ZR å¯¦éš›={postZR:F2} mmï¼Œç›®æ¨™={safeZR:F2} mmï½œä¾†æºï¼š{caller}ï¼‰");
+        }
         else
-            progress?.Report($"[SafetyCheck] ZL/ZR ¤w¨ì¦w¥ş°ª«× ?");
+        {
+            double postZL = Axes["AxisZL"].GetRealPosition();
+            double postZR = Axes["AxisZR"].GetRealPosition();
+            _logger.Info($"âœ” ZL/ZR å·²å‡è‡³å®‰å…¨é«˜åº¦ï¼ˆZL={postZL:F2} mmï¼ŒZR={postZR:F2} mmï½œä¾†æºï¼š{caller}ï¼‰");
+            progress?.Report($"âœ” ZL/ZR å·²æ¢å¾©å®‰å…¨é«˜åº¦ï¼ˆZL={postZL:F2} mmï¼ŒZR={postZR:F2} mmï¼‰");
+        }
     }
 
     private readonly InspectionConfig _config = InspectionConfig.Load();
@@ -204,8 +243,8 @@ public sealed class MachineController : IDisposable
     // =========================================
 
     /// <summary>
-    /// Åª¨ú PLC X ¿é¤JÂIª¬ºA¡]ª½±µ¥Î _xData °}¦C¯Á¤Ş¡^¡C
-    /// «ØÄ³§ï¥Î <see cref="GetPlcXOctal"/> ¥H PLC ­±ªO¦ì§}Åª¨ú¡C
+    /// è®€å– PLC X è¼¸å…¥é»ç‹€æ…‹ï¼ˆç›´æ¥ç”¨ _xData é™£åˆ—ç´¢å¼•ï¼‰ã€‚
+    /// å»ºè­°æ”¹ç”¨ <see cref="GetPlcXOctal"/> ä»¥ PLC é¢æ¿ä½å€è®€å–ã€‚
     /// </summary>
     public bool GetPlcX(int index)
     {
@@ -214,14 +253,14 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ¥H PLC ­±ªO¼Ğ¥Üªº¤K¶i¨î¦ì§}Åª¨ú X ¿é¤JÂI¡C
-    /// ¤TµÙ FX X ÂI¦ì¬°¤K¶i¨î¡AFxPlcCommunicator._xData ¬°¤Q¶i¨î¯Á¤Ş¡G
-    ///   X0~X7  ¡÷ index 0~7¡]¬Û¦P¡^
-    ///   X10    ¡÷ index 8
-    ///   X12    ¡÷ index 10
-    ///   X13    ¡÷ index 11
-    /// ª½±µ¶Ç¤J­±ªO¤W¬İ¨ìªº¼Æ¦r§Y¥i¡A¨Ò¦p X10 ¶Ç 10¡AX7 ¶Ç 7¡C
-    /// ¦^¶Ç null ªí¥Ü PLC ¥¼³s½u¡]µLªk§PÂ_ª¬ºA¡^¡A©I¥sºİÀ³µø¬°¡u¤£½T©w¡v¦Ó«D¡uÄ²µo¡v¡C
+    /// ä»¥ PLC é¢æ¿æ¨™ç¤ºçš„å…«é€²åˆ¶ä½å€è®€å– X è¼¸å…¥é»ã€‚
+    /// ä¸‰è± FX X é»ä½ç‚ºå…«é€²åˆ¶ï¼ŒFxPlcCommunicator._xData ç‚ºåé€²åˆ¶ç´¢å¼•ï¼š
+    ///   X0~X7  â†’ index 0~7ï¼ˆç›¸åŒï¼‰
+    ///   X10    â†’ index 8
+    ///   X12    â†’ index 10
+    ///   X13    â†’ index 11
+    /// ç›´æ¥å‚³å…¥é¢æ¿ä¸Šçœ‹åˆ°çš„æ•¸å­—å³å¯ï¼Œä¾‹å¦‚ X10 å‚³ 10ï¼ŒX7 å‚³ 7ã€‚
+    /// å›å‚³ null è¡¨ç¤º PLC æœªé€£ç·šï¼ˆç„¡æ³•åˆ¤æ–·ç‹€æ…‹ï¼‰ï¼Œå‘¼å«ç«¯æ‡‰è¦–ç‚ºã€Œä¸ç¢ºå®šã€è€Œéã€Œè§¸ç™¼ã€ã€‚
     /// </summary>
     public bool? GetPlcXOctal(int plcOctalAddr)
     {
@@ -230,7 +269,7 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ¥H PLC ¤K¶i¦ì¦ì§}³]©w Y ¿é¥XÂIª¬ºA¡C
+    /// ä»¥ PLC å…«é€²ä½ä½å€è¨­å®š Y è¼¸å‡ºé»ç‹€æ…‹ã€‚
     /// </summary>
     public void SetPlcYOctal(int plcOctalAddr, bool value)
     {
@@ -239,10 +278,10 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// SLC Reset¡G¹ï Y0 °e¥X ON¡÷(100ms)¡÷OFF pulse¡C
-    /// ­Y»İ§ó§ï¥Ø¼Ğ Y ÂI¡A­×§ï SlcResetYAddr ±`¼Æ§Y¥i¡C
+    /// SLC Resetï¼šå° Y0 é€å‡º ONâ†’(100ms)â†’OFF pulseã€‚
+    /// è‹¥éœ€æ›´æ”¹ç›®æ¨™ Y é»ï¼Œä¿®æ”¹ SlcResetYAddr å¸¸æ•¸å³å¯ã€‚
     /// </summary>
-    private const int SlcResetYAddr = 0; // PLC Y0¡]¤K¶i¦ì¦ì§}¡^
+    private const int SlcResetYAddr = 0; // PLC Y0ï¼ˆå…«é€²ä½ä½å€ï¼‰
     public async Task SlcResetAsync()
     {
         if (SimulationMode)
@@ -254,12 +293,12 @@ public sealed class MachineController : IDisposable
         SetPlcYOctal(SlcResetYAddr, true);
         await Task.Delay(100);
         SetPlcYOctal(SlcResetYAddr, false);
-        _logger.Info("[SLC] SLC Reset pulse sent (Y0 ON¡÷OFF)");
+        _logger.Info("[SLC] SLC Reset pulse sent (Y0 ONâ†’OFF)");
     }
 
     /// <summary>
-    /// ±N PLC ¤K¶i¨î¦ì§}¡]­±ªO¼Ğ¥Ü¼Æ¦r¡^Âà¬° _xData ¤Q¶i¨î¯Á¤Ş¡C
-    /// ¨Ò¡G10¡]X10¡^ ¡÷ 8¡B12¡]X12¡^ ¡÷ 10¡B13¡]X13¡^ ¡÷ 11
+    /// å°‡ PLC å…«é€²åˆ¶ä½å€ï¼ˆé¢æ¿æ¨™ç¤ºæ•¸å­—ï¼‰è½‰ç‚º _xData åé€²åˆ¶ç´¢å¼•ã€‚
+    /// ä¾‹ï¼š10ï¼ˆX10ï¼‰ â†’ 8ã€12ï¼ˆX12ï¼‰ â†’ 10ã€13ï¼ˆX13ï¼‰ â†’ 11
     /// </summary>
     private static int OctalAddrToIndex(int plcOctalAddr)
     {
@@ -273,17 +312,17 @@ public sealed class MachineController : IDisposable
         return result;
     }
 
-    /// <summary>¸ü¥x¦b®u·P´ú¾¹ PLC X ÂI¦ì¡]¤K¶i¨î¦ì§}¡^</summary>
-    private const int CarrierLeftSensorPlcAddr = 12;   // X12¡]¤K¶i¨î¡^¡÷ OctalAddrToIndex = 10
-    private const int CarrierRightSensorPlcAddr = 13;   // X13¡]¤K¶i¨î¡^¡÷ OctalAddrToIndex = 11
+    /// <summary>è¼‰å°åœ¨å¸­æ„Ÿæ¸¬å™¨ PLC X é»ä½ï¼ˆå…«é€²åˆ¶ä½å€ï¼‰</summary>
+    private const int CarrierLeftSensorPlcAddr = 12;   // X12ï¼ˆå…«é€²åˆ¶ï¼‰â†’ OctalAddrToIndex = 10
+    private const int CarrierRightSensorPlcAddr = 13;   // X13ï¼ˆå…«é€²åˆ¶ï¼‰â†’ OctalAddrToIndex = 11
 
-    /// <summary>¸ü¥x¦b®u°»´úµ²ªG</summary>
+    /// <summary>è¼‰å°åœ¨å¸­åµæ¸¬çµæœ</summary>
     public enum CarrierPosition { None, Left, Right, Both }
 
     /// <summary>
-    /// S01a¡GÅª¨ú PLC X12¡]¥ª¡^/ X13¡]¥k¡^§PÂ_¸ü¥x¦b®u¦ì¸m¡C
-    /// ¸ü¥x¦b®u§Yªí¥Ü®Æ¤w¨ì¦ì¡A¤£»İÃB¥~µ¥«İ©ñ®Æ¨BÆJ¡C
-    /// FxPlcCommunicator ¤º³¡·|¶g´Á©Ê½ü¸ß PLC¡AGetX() ª½±µÅª¨ú³Ì·s§Ö¨ú­È¡C
+    /// S01aï¼šè®€å– PLC X12ï¼ˆå·¦ï¼‰/ X13ï¼ˆå³ï¼‰åˆ¤æ–·è¼‰å°åœ¨å¸­ä½ç½®ã€‚
+    /// è¼‰å°åœ¨å¸­å³è¡¨ç¤ºæ–™å·²åˆ°ä½ï¼Œä¸éœ€é¡å¤–ç­‰å¾…æ”¾æ–™æ­¥é©Ÿã€‚
+    /// FxPlcCommunicator å…§éƒ¨æœƒé€±æœŸæ€§è¼ªè©¢ PLCï¼ŒGetX() ç›´æ¥è®€å–æœ€æ–°å¿«å–å€¼ã€‚
     /// </summary>
     public CarrierPosition DetectCarrierPosition()
     {
@@ -299,10 +338,10 @@ public sealed class MachineController : IDisposable
             return CarrierPosition.None;
         }
 
-        // ª½±µÅª¨ú PLC X ÂI¦ì§Ö¨ú¡]¥Ñ FxPlcCommunicator ­I´º½ü¸ß§ó·s¡^
-        // ¨Ï¥Î OctalAddrToIndex ±N¤K¶i¨î¦ì§}Âà¬°¥¿½Tªº _xData ¯Á¤Ş
-        bool left = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;   // X12¡]¤K¶i¨î¡^¡÷ index 10
-        bool right = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13¡]¤K¶i¨î¡^¡÷ index 11
+        // ç›´æ¥è®€å– PLC X é»ä½å¿«å–ï¼ˆç”± FxPlcCommunicator èƒŒæ™¯è¼ªè©¢æ›´æ–°ï¼‰
+        // ä½¿ç”¨ OctalAddrToIndex å°‡å…«é€²åˆ¶ä½å€è½‰ç‚ºæ­£ç¢ºçš„ _xData ç´¢å¼•
+        bool left = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;   // X12ï¼ˆå…«é€²åˆ¶ï¼‰â†’ index 10
+        bool right = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13ï¼ˆå…«é€²åˆ¶ï¼‰â†’ index 11
 
         var position = (left, right) switch
         {
@@ -312,17 +351,17 @@ public sealed class MachineController : IDisposable
             (false, false) => CarrierPosition.None,
         };
 
-        _logger.Info($"[S01] PLC sensor: X12(Left)={left}, X13(Right)={right} ¡÷ {position}");
+        _logger.Info($"[S01] PLC sensor: X12(Left)={left}, X13(Right)={right} â†’ {position}");
         return position;
     }
 
     /// <summary>
-    /// S01b¡G¨Ì¸ü¥x¦ì¸m²¾°Ê¶b¨ìÅª½X¦ì¸m ¡÷ ³nÅéÄ²µoÅª½X¾¹ ¡÷ ¦^¶Ç±ø½X¦r¦ê¡C
-    /// ¥¢±Ñ¦^¶Ç null¡C
-    /// ¬yµ{¡G
-    ///   1. ¦Û°Êªì©l¤ÆÅª½X¾¹¡]­Y©|¥¼³s½u¡^
-    ///   2. X ¶b²¾°Ê¦ÜÅª½X¦ì¸m
-    ///   3. ³nÅéÄ²µoÅª½X ¡÷ ¸ÑªR±ø½X ¡÷ ¦^¶Ç¦r¦ê
+    /// S01bï¼šä¾è¼‰å°ä½ç½®ç§»å‹•è»¸åˆ°è®€ç¢¼ä½ç½® â†’ è»Ÿé«”è§¸ç™¼è®€ç¢¼å™¨ â†’ å›å‚³æ¢ç¢¼å­—ä¸²ã€‚
+    /// å¤±æ•—å›å‚³ nullã€‚
+    /// æµç¨‹ï¼š
+    ///   1. è‡ªå‹•åˆå§‹åŒ–è®€ç¢¼å™¨ï¼ˆè‹¥å°šæœªé€£ç·šï¼‰
+    ///   2. X è»¸ç§»å‹•è‡³è®€ç¢¼ä½ç½®
+    ///   3. è»Ÿé«”è§¸ç™¼è®€ç¢¼ â†’ è§£ææ¢ç¢¼ â†’ å›å‚³å­—ä¸²
     /// </summary>
     public async Task<string?> MoveAndReadBarcodeAsync(
         CarrierPosition position,
@@ -342,29 +381,29 @@ public sealed class MachineController : IDisposable
             return simCode;
         }
 
-        // STEP 0: ­YÅª½X¾¹©|¥¼ªì©l¤Æ¡A¦Û°Êªì©l¤Æ
+        // STEP 0: è‹¥è®€ç¢¼å™¨å°šæœªåˆå§‹åŒ–ï¼Œè‡ªå‹•åˆå§‹åŒ–
         if (_barcodeDevice == null || !_barcodeDevice.IsConnected)
         {
-            progress?.Report("[S01] ªì©l¤ÆÅª½X¾¹...");
+            progress?.Report("[S01] åˆå§‹åŒ–è®€ç¢¼å™¨...");
             var initResult = InitBarcodeReader();
             if (!initResult.Success)
             {
-                _logger.Warn($"[S01] Åª½X¾¹ªì©l¤Æ¥¢±Ñ: {initResult.Message}");
-                progress?.Report($"[S01] ? Åª½X¾¹µLªk³s½u: {initResult.Message}");
+                _logger.Warn($"[S01] è®€ç¢¼å™¨åˆå§‹åŒ–å¤±æ•—: {initResult.Message}");
+                progress?.Report($"[S01] ? è®€ç¢¼å™¨ç„¡æ³•é€£ç·š: {initResult.Message}");
                 return null;
             }
-            _logger.Info("[S01] Åª½X¾¹ªì©l¤Æ ?");
-            progress?.Report("[S01] Åª½X¾¹´Nºü ?");
+            _logger.Info("[S01] è®€ç¢¼å™¨åˆå§‹åŒ– ?");
+            progress?.Report("[S01] è®€ç¢¼å™¨å°±ç·’ ?");
         }
 
-        // STEP 1: X ¶b²¾°Ê¦ÜÅª½X¦ì¸m
+        // STEP 1: X è»¸ç§»å‹•è‡³è®€ç¢¼ä½ç½®
         double targetX = _config.GetBarcodePositionX(position);
-        progress?.Report($"X ¶b²¾°Ê¦ÜÅª½X¦ì¸m¡]{position}¡^¡÷ X={targetX:F2} mm...");
-        _logger.Info($"[S01] Moving AxisX to barcode pos: {position} ¡÷ X={targetX}");
+        progress?.Report($"X è»¸ç§»å‹•è‡³è®€ç¢¼ä½ç½®ï¼ˆ{position}ï¼‰â†’ X={targetX:F2} mm...");
+        _logger.Info($"[S01] Moving AxisX to barcode pos: {position} â†’ X={targetX}");
 
         Axes["AxisX"].MotMoveAbs(targetX);
 
-        // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+        // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
         await Task.Delay(150, ct);
 
         bool arrived = await WaitUntilAsync(
@@ -374,33 +413,33 @@ public sealed class MachineController : IDisposable
         if (!arrived)
         {
             _logger.Warn("[S01] Move to barcode position timeout");
-            progress?.Report("²¾°Ê¦ÜÅª½X¦ì¸m¹O®É");
+            progress?.Report("ç§»å‹•è‡³è®€ç¢¼ä½ç½®é€¾æ™‚");
             return null;
         }
-        progress?.Report($"[S01] X ¶b¨ì¦ì ?");
+        progress?.Report($"[S01] X è»¸åˆ°ä½ ?");
 
-        // STEP 2: ³nÅéÄ²µoÅª½X¾¹¨ú¹³ + ¸ÑªR±ø½X
-        progress?.Report("Åª½X¤¤...");
+        // STEP 2: è»Ÿé«”è§¸ç™¼è®€ç¢¼å™¨å–åƒ + è§£ææ¢ç¢¼
+        progress?.Report("è®€ç¢¼ä¸­...");
         string? code = await ReadBarcodeAsync(ct);
 
         if (string.IsNullOrEmpty(code))
         {
-            _logger.Warn("[S01] Åª½X¥¢±Ñ¡]NoRead ©Î timeout¡^");
-            progress?.Report("[S01] ? Åª½X¥¢±Ñ");
+            _logger.Warn("[S01] è®€ç¢¼å¤±æ•—ï¼ˆNoRead æˆ– timeoutï¼‰");
+            progress?.Report("[S01] ? è®€ç¢¼å¤±æ•—");
             code = "unkonwn";
         }
         else
         {
-            _logger.Info($"[S01] Åª½X¦¨¥\: {code}");
-            progress?.Report($"[S01] ±ø½X¡G{code} ?");
+            _logger.Info($"[S01] è®€ç¢¼æˆåŠŸ: {code}");
+            progress?.Report($"[S01] æ¢ç¢¼ï¼š{code} ?");
         }
 
         return code;
     }
 
     /// <summary>
-    /// ½T«OÅª½X¾¹¤w³s½u«á¡Aµo°e Software Trigger Åª¨ú±ø½X¨Ã¦^¶Ç±ø½X¦r¦ê¡C
-    /// Simulation ¼Ò¦¡¤U¦^¶Ç¼ÒÀÀ±ø½X¡C
+    /// ç¢ºä¿è®€ç¢¼å™¨å·²é€£ç·šå¾Œï¼Œç™¼é€ Software Trigger è®€å–æ¢ç¢¼ä¸¦å›å‚³æ¢ç¢¼å­—ä¸²ã€‚
+    /// Simulation æ¨¡å¼ä¸‹å›å‚³æ¨¡æ“¬æ¢ç¢¼ã€‚
     /// </summary>
     public async Task<string?> TriggerReadBarcodeAsync(
         IProgress<string>? progress = null,
@@ -408,7 +447,7 @@ public sealed class MachineController : IDisposable
     {
         if (SimulationMode)
         {
-            progress?.Report("[Sim] Åª½X¤¤...");
+            progress?.Report("[Sim] è®€ç¢¼ä¸­...");
             await Task.Delay(300, ct);
             string simCode = "SIM-BARCODE-001";
             _logger.Info($"[Barcode] (Sim) code: {simCode}");
@@ -418,12 +457,12 @@ public sealed class MachineController : IDisposable
         bool justInitialized = false;
         if (_barcodeDevice == null || !_barcodeDevice.IsConnected)
         {
-            progress?.Report("ªì©l¤ÆÅª½X¾¹...");
+            progress?.Report("åˆå§‹åŒ–è®€ç¢¼å™¨...");
             var initResult = InitBarcodeReader();
             if (!initResult.Success)
             {
-                _logger.Warn($"[Barcode] Åª½X¾¹ªì©l¤Æ¥¢±Ñ: {initResult.Message}");
-                progress?.Report($"Åª½X¾¹µLªk³s½u: {initResult.Message}");
+                _logger.Warn($"[Barcode] è®€ç¢¼å™¨åˆå§‹åŒ–å¤±æ•—: {initResult.Message}");
+                progress?.Report($"è®€ç¢¼å™¨ç„¡æ³•é€£ç·š: {initResult.Message}");
                 return null;
             }
             justInitialized = true;
@@ -431,17 +470,17 @@ public sealed class MachineController : IDisposable
 
         if (justInitialized)
         {
-            _logger.Info("[Barcode] Åª½X¾¹­è§¹¦¨ªì©l¤Æ¡Aµ¥«İ¬Û¾÷Ã­©w 1500ms...");
+            _logger.Info("[Barcode] è®€ç¢¼å™¨å‰›å®Œæˆåˆå§‹åŒ–ï¼Œç­‰å¾…ç›¸æ©Ÿç©©å®š 1500ms...");
             await Task.Delay(1500, ct);
         }
 
-        progress?.Report("Åª½X¤¤...");
+        progress?.Report("è®€ç¢¼ä¸­...");
         return await ReadBarcodeAsync(ct);
     }
 
     /// <summary>
-    /// Ä²µoÅª½X¾¹¨ú¤@´V¼v¹³¡A¸ÑªR±ø½X«á¦^¶Ç¦r¦ê¡C
-    /// ¨Ï¥Î MvCodeReaderSDK ªº Software Trigger ¼Ò¦¡¡C
+    /// è§¸ç™¼è®€ç¢¼å™¨å–ä¸€å¹€å½±åƒï¼Œè§£ææ¢ç¢¼å¾Œå›å‚³å­—ä¸²ã€‚
+    /// ä½¿ç”¨ MvCodeReaderSDK çš„ Software Trigger æ¨¡å¼ã€‚
     /// </summary>
     private async Task<string?> ReadBarcodeAsync(CancellationToken ct = default)
     {
@@ -450,16 +489,16 @@ public sealed class MachineController : IDisposable
 
         return await Task.Run(() =>
         {
-            // µo°e³nÅéÄ²µo©R¥O¡AÅıÅª½X¾¹©ç¤@±i·Ó
+            // ç™¼é€è»Ÿé«”è§¸ç™¼å‘½ä»¤ï¼Œè®“è®€ç¢¼å™¨æ‹ä¸€å¼µç…§
             _barcodeDevice.SetCommandValue("TriggerSoftware");
 
-            // °t¸m±µ¦¬½w½Ä°Ï
+            // é…ç½®æ¥æ”¶ç·©è¡å€
             nint pData = 0;
             nint pFrameInfo = Marshal.AllocHGlobal(
                 Marshal.SizeOf<MvCodeReader.MV_CODEREADER_IMAGE_OUT_INFO_EX2>());
             try
             {
-                // µ¥«İÅª½X¾¹¦^¶Ç¼v¹³¡]³Ìªø 5 ¬í¡^
+                // ç­‰å¾…è®€ç¢¼å™¨å›å‚³å½±åƒï¼ˆæœ€é•· 5 ç§’ï¼‰
                 int ret = _barcodeDevice.GetOneFrameTimeout(ref pData, pFrameInfo, 5000);
                 if (ret != 0)
                 {
@@ -467,7 +506,7 @@ public sealed class MachineController : IDisposable
                     return null;
                 }
 
-                // ±q¼v¹³¤¤¸ÑªR±ø½X
+                // å¾å½±åƒä¸­è§£ææ¢ç¢¼
                 var results = _barcodeParser.Parse(pFrameInfo);
                 string? code = results.Count > 0 && results[0].Code != "NoRead"
                     ? results[0].Code
@@ -530,12 +569,12 @@ public sealed class MachineController : IDisposable
         result.Add(await HomeAllAxesAsync(progress, ct));
         if (!result.AllPassed) return result;
 
-        // TODO: ¬Û¾÷¥\¯à¼È®É°±¥Î
+        // TODO: ç›¸æ©ŸåŠŸèƒ½æš«æ™‚åœç”¨
         // progress?.Report("Init cameras...");
         // result.Add(await InitCamerasAsync(ct));
         // if (!result.AllPassed) return result;
 
-        // TODO: ®ü±dÅª½X¾¹ SDK ­ì¥Í DLL
+        // TODO: æµ·åº·è®€ç¢¼å™¨ SDK åŸç”Ÿ DLL
         // progress?.Report("Connecting barcode reader...");
         // result.Add(InitBarcodeReader());
 
@@ -548,7 +587,7 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ¸Ë¸mªì©l¤Æ¡]¤£§t­ìÂI½áÂk¡^¡GConfig + Servo ¿EºÏ + PLC ³s½u¡C
+    /// è£ç½®åˆå§‹åŒ–ï¼ˆä¸å«åŸé»è³¦æ­¸ï¼‰ï¼šConfig + Servo æ¿€ç£ + PLC é€£ç·šã€‚
     /// </summary>
     public async Task<MachineInitResult> InitializeDevicesAsync(
         IProgress<string>? progress = null,
@@ -578,7 +617,7 @@ public sealed class MachineController : IDisposable
         result.Add(await InitAxesAsync(ct));
         if (!result.AllPassed) return result;
 
-        // TODO: ¬Û¾÷¥\¯à¼È®É°±¥Î
+        // TODO: ç›¸æ©ŸåŠŸèƒ½æš«æ™‚åœç”¨
         progress?.Report("Init cameras...");
         result.Add(await InitCamerasAsync(ct));
         if (!result.AllPassed) return result;
@@ -592,7 +631,7 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ­ìÂI½áÂk¡]©Ò¦³¶b¦^­ìÂI¡^¡C»İ¦b¸Ë¸mªì©l¤Æ§¹¦¨«á©I¥s¡C
+    /// åŸé»è³¦æ­¸ï¼ˆæ‰€æœ‰è»¸å›åŸé»ï¼‰ã€‚éœ€åœ¨è£ç½®åˆå§‹åŒ–å®Œæˆå¾Œå‘¼å«ã€‚
     /// </summary>
     public async Task<MachineInitResult> HomeAllAxesPublicAsync(
         IProgress<string>? progress = null,
@@ -619,8 +658,8 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ¶b±±±M¥Îªì©l¤Æ¡]ªÅ¶]´ú¸Õ¨Ï¥Î¡^¡C
-    /// ¥uªì©l¤Æ Config + Axis + Home¡A¸õ¹L¬Û¾÷¡B¥ú·½¡BÅª½X¾¹¡BPLC¡C
+    /// è»¸æ§å°ˆç”¨åˆå§‹åŒ–ï¼ˆç©ºè·‘æ¸¬è©¦ä½¿ç”¨ï¼‰ã€‚
+    /// åªåˆå§‹åŒ– Config + Axis + Homeï¼Œè·³éç›¸æ©Ÿã€å…‰æºã€è®€ç¢¼å™¨ã€PLCã€‚
     /// </summary>
     public async Task<MachineInitResult> InitializeAxesOnlyAsync(
         IProgress<string>? progress = null,
@@ -663,7 +702,7 @@ public sealed class MachineController : IDisposable
     // =========================================
 
     /// <summary>
-    /// ±N±ø½XÅª¨ú¬ÛÃö¶b¡]X/Y/Z¡^¦^Âk­ìÂI¡AÅı¾÷¥x¦^¨ì«İ¾÷ª¬ºA¡C
+    /// å°‡æ¢ç¢¼è®€å–ç›¸é—œè»¸ï¼ˆX/Y/Zï¼‰å›æ­¸åŸé»ï¼Œè®“æ©Ÿå°å›åˆ°å¾…æ©Ÿç‹€æ…‹ã€‚
     /// </summary>
     public async Task MoveBarcodeAxisHomeAsync(
         IProgress<string>? progress = null,
@@ -671,13 +710,13 @@ public sealed class MachineController : IDisposable
     {
         if (SimulationMode)
         {
-            progress?.Report("[Sim] ±ø½X¶b¦^Âk­ìÂI...");
+            progress?.Report("[Sim] æ¢ç¢¼è»¸å›æ­¸åŸé»...");
             await Task.Delay(500, ct);
             _logger.Info("[S01c] (Sim) Barcode axis homed");
             return;
         }
 
-        progress?.Report("Åª½X¶b(X)¦^Âk­ìÂI...");
+        progress?.Report("è®€ç¢¼è»¸(X)å›æ­¸åŸé»...");
         _logger.Info("[S01c] Moving AxisX to home");
 
         Axes["AxisX"].Home();
@@ -703,7 +742,7 @@ public sealed class MachineController : IDisposable
     {
         _logger.Info($"===== S03 Inspection Start | Barcode: {barcode} =====");
 
-        // Row1: AreaA_Row1 + AreaB_Row1 ¦P®É³B²z¡]25 slots¡^
+        // Row1: AreaA_Row1 + AreaB_Row1 åŒæ™‚è™•ç†ï¼ˆ25 slotsï¼‰
         var rows = new (SlotInspectionProgress.TargetCollection AreaA,
                         SlotInspectionProgress.TargetCollection AreaB,
                         int Count)[]
@@ -719,7 +758,7 @@ public sealed class MachineController : IDisposable
         Axes["AxisZL"].SetMaxVel(2000);
         Axes["AxisZR"].SetMaxVel(2000);
 
-        // ¥şµ{¶}¿O¡]Slot °j°é¶}©l«e¶}¤@¦¸¡A´î¤Ö¨C®æ­«½Æ¶}Ãö¡^
+        // å…¨ç¨‹é–‹ç‡ˆï¼ˆSlot è¿´åœˆé–‹å§‹å‰é–‹ä¸€æ¬¡ï¼Œæ¸›å°‘æ¯æ ¼é‡è¤‡é–‹é—œï¼‰
         _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
         _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
         await Task.Delay(_config.LightStabilizeMs, ct);
@@ -731,7 +770,7 @@ public sealed class MachineController : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
 
-                // ¦P®É¹ï AreaA ©M AreaB ¶i¦æÀË´ú
+                // åŒæ™‚å° AreaA å’Œ AreaB é€²è¡Œæª¢æ¸¬
                 var taskA = InspectOneSlotAsync(barcode, areaA, i, ct);
                 var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
                 await Task.WhenAll(taskA, taskB);
@@ -739,14 +778,14 @@ public sealed class MachineController : IDisposable
                 var (valueA, isNgA, imagePathA, imageA, startTimeA) = taskA.Result;
                 var (valueB, isNgB, imagePathB, imageB, startTimeB) = taskB.Result;
 
-                // ¨Ì X12/X13 §PÂ_ Bumper Position¡]¤£³z¹L DLL¡^
-                // X12=true ¡÷ ¥k°¼¸ü¥x ¡÷ ¥k¬Û¾÷=C3 / ¥ª¬Û¾÷=C4
-                // X13=true ¡÷ ¥ª°¼¸ü¥x ¡÷ ¥k¬Û¾÷=C1 / ¥ª¬Û¾÷=C2
+                // ä¾ X12/X13 åˆ¤æ–· Bumper Positionï¼ˆä¸é€é DLLï¼‰
+                // X12=true â†’ å³å´è¼‰å° â†’ å³ç›¸æ©Ÿ=C3 / å·¦ç›¸æ©Ÿ=C4
+                // X13=true â†’ å·¦å´è¼‰å° â†’ å³ç›¸æ©Ÿ=C1 / å·¦ç›¸æ©Ÿ=C2
                 bool bpX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
                 string bumperPosRight = bpX12 ? "C3" : "C1";
                 string bumperPosLeft  = bpX12 ? "C4" : "C2";
 
-                // valueA / valueB ¤w¬O mm?¡ALowerSpec/UpperSpec ¨Ó¦Û JSON ³]©w¡AprocessStartTime ­pºâ DuringTime
+                // valueA / valueB å·²æ˜¯ mm?ï¼ŒLowerSpec/UpperSpec ä¾†è‡ª JSON è¨­å®šï¼ŒprocessStartTime è¨ˆç®— DuringTime
                 string layerNum = (i + 1).ToString();
                 InspectionResultWriter.WriteSlotResult(barcode, valueA, isNgA, imagePathA,
                     bumperPosition: bumperPosLeft,  layer: layerNum,
@@ -757,7 +796,7 @@ public sealed class MachineController : IDisposable
                     lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
                     processStartTime: startTimeB);
 
-                // ¦P®É¦^³ø AreaA ©M AreaB ªº¶i«×¡]UI ¦P®ÉÅã¥Ü¨â±i¹Ï¡^
+                // åŒæ™‚å›å ± AreaA å’Œ AreaB çš„é€²åº¦ï¼ˆUI åŒæ™‚é¡¯ç¤ºå…©å¼µåœ–ï¼‰
                 progress?.Report(new SlotInspectionProgress
                 {
                     Target = areaA,
@@ -783,7 +822,7 @@ public sealed class MachineController : IDisposable
             }
         }
 
-        // ¥şµ{Ãö¿O¡]©Ò¦³ Slot §¹¦¨«á¡AY ¶b¦^¨ú®Æ¦ì«e¡^
+        // å…¨ç¨‹é—œç‡ˆï¼ˆæ‰€æœ‰ Slot å®Œæˆå¾Œï¼ŒY è»¸å›å–æ–™ä½å‰ï¼‰
         _light!.SetValue(_config.LightChannelLeft,  0);
         _light.SetValue(_config.LightChannelRight, 0);
         _logger.Info("[S03] Lights OFF before returning to pick position");
@@ -830,33 +869,34 @@ public sealed class MachineController : IDisposable
 
                 if (algResult.Success && algResult.Image != null)
                 {
-                    double simValueOk = algResult.DetectedArea > 0 ? algResult.DetectedArea : (algResult.IsNg ? 0.0 : 1.0);
-                    _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, isNg={algResult.IsNg}");
-                    return (simValueOk, algResult.IsNg, simPath, algResult.Image, slotStartTime);
+                    double simValueOk = algResult.DetectedArea > 0 ? algResult.DetectedArea : 0.0;
+                    bool simAlgNg = simValueOk < _config.ValueLimitLow || simValueOk > _config.ValueLimitHigh;
+                    _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, value={simValueOk:F4}, isNg={simAlgNg}");
+                    return (simValueOk, simAlgNg, simPath, algResult.Image, slotStartTime);
                 }
 
                 _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
             }
 
-            // fallback: ª½±µÅã¥Ü­ì¹Ï¡]¤£¦A¥Î SimImageGenerator °²¹Ï¡^
+            // fallback: ç›´æ¥é¡¯ç¤ºåŸåœ–ï¼ˆä¸å†ç”¨ SimImageGenerator å‡åœ–ï¼‰
             if (!string.IsNullOrEmpty(simPath) && File.Exists(simPath))
             {
                 var fallbackImage = SimImageLoader.LoadFileAsBitmapSource(simPath);
                 if (fallbackImage != null)
                 {
                     System.Diagnostics.Debug.WriteLine(
-                        $"[S03-Sim] {slotLabel} fallback: Åã¥Ü­ì¹Ï {Path.GetFileName(simPath)}");
+                        $"[S03-Sim] {slotLabel} fallback: é¡¯ç¤ºåŸåœ– {Path.GetFileName(simPath)}");
                     return (1.0, false, simPath, fallbackImage, slotStartTime);
                 }
             }
 
-            // ³Ì²× fallback: µL¹Ï¥i¥Î®É¤~¥Î¥Í¦¨°²¹Ï
+            // æœ€çµ‚ fallback: ç„¡åœ–å¯ç”¨æ™‚æ‰ç”¨ç”Ÿæˆå‡åœ–
             var rng = new Random();
             double simL = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
             double simR = Math.Round(0.45 + rng.NextDouble() * 0.1, 2);
             double simValue = (simL + simR) / 2.0;
-            bool simNg = simValue < _config.NgThresholdLow
-                      || simValue > _config.NgThresholdHigh;
+            bool simNg = simValue < _config.ValueLimitLow
+                      || simValue > _config.ValueLimitHigh;
 
             System.Windows.Media.ImageSource? simImage = SimImageGenerator.Generate(slotLabel, simValue, simNg);
             return (simValue, simNg, "", simImage, slotStartTime);
@@ -867,21 +907,27 @@ public sealed class MachineController : IDisposable
         // ==================================
 
         string slotName = $"{target}_Slot{slotIndex + 1}";
-        _logger.Debug($"[S03] Start measuring {slotName}");
 
-        // STEP 1: Y ¶b²¾°Ê¸ü¥x¨ì Slot ¦ì¸m¡AZL/ZR ½Õ¾ã¬Û¾÷°ª«×
-        var pos = SlotPositionTable.Get(target, slotIndex);
+        // STEP 1: Y è»¸ç§»å‹•è¼‰å°åˆ° Slot ä½ç½®ï¼ŒZL/ZR èª¿æ•´ç›¸æ©Ÿé«˜åº¦
         bool s3x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
         bool s3x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;
+        var pos    = SlotPositionTable.GetByCarrier(target, slotIndex, isR: s3x12);
         await EnsureZSafeBeforeYMoveAsync(
             _config.GetZLSafeHeight(s3x12, s3x13),
             _config.GetZRSafeHeight(s3x12, s3x13),
-            null, ct);
-        Axes["AxisY"].MotMoveAbs(pos.Y);
-        Axes["AxisZL"].MotMoveAbs(_config.CameraHeightZL);
-        Axes["AxisZR"].MotMoveAbs(_config.CameraHeightZR);
+            null, ct, "S03-MoveToSlot");
 
-        // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+        string s3group  = s3x12 ? "Rè¼‰å°(X12)" : "Lè¼‰å°(X13)";
+        _logger.Info($"â–¶ é–‹å§‹é‡æ¸¬ Slot {slotIndex + 1}ï¼ˆ{slotName}ï¼Œ{s3group}ï¼ŒY ç›®æ¨™={pos.Y:F2} mmï¼‰");
+
+        double s3zCamZL = _config.GetCameraHeightZL(s3x12, s3x13);
+        double s3zCamZR = _config.GetCameraHeightZR(s3x12, s3x13);
+        _logger.Info($"â–¶ Slot {slotIndex + 1} ç§»å‹•è»¸ï¼šYâ†’{pos.Y:F2} mmï¼ŒZLâ†’{s3zCamZL:F2} mmï¼ŒZRâ†’{s3zCamZR:F2} mmï¼ˆ{s3group}ï¼‰");
+        Axes["AxisY"].MotMoveAbs(pos.Y);
+        Axes["AxisZL"].MotMoveAbs(s3zCamZL);
+        Axes["AxisZR"].MotMoveAbs(s3zCamZR);
+
+        // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
         await Task.Delay(150, ct);
 
         bool arrived = await WaitUntilAsync(
@@ -889,16 +935,30 @@ public sealed class MachineController : IDisposable
             _config.MoveTimeout, ct);
 
         if (!arrived)
-            _logger.Warn($"[S03] {slotName} move timeout");
+        {
+            double tY = Axes["AxisY"].GetRealPosition();
+            double tZL = Axes["AxisZL"].GetRealPosition();
+            double tZR = Axes["AxisZR"].GetRealPosition();
+            _logger.Warn($"âš  Slot {slotIndex + 1} è»¸ç§»å‹•é€¾æ™‚ï¼Œè«‹ç¢ºèªè¨­å‚™ç‹€æ…‹" +
+                         $"ï¼ˆY å¯¦éš›={tY:F2} mmï¼ŒZL å¯¦éš›={tZL:F2} mmï¼ŒZR å¯¦éš›={tZR:F2} mmï¼‰");
+        }
+        else
+        {
+            double rY = Axes["AxisY"].GetRealPosition();
+            double rZL = Axes["AxisZL"].GetRealPosition();
+            double rZR = Axes["AxisZR"].GetRealPosition();
+            _logger.Info($"âœ” Slot {slotIndex + 1} æ‰€æœ‰è»¸åˆ°ä½" +
+                         $"ï¼ˆY={rY:F2} mmï½œZL={rZL:F2} mmï¼Œç›®æ¨™={s3zCamZL:F2} mmï½œZR={rZR:F2} mmï¼Œç›®æ¨™={s3zCamZR:F2} mmï¼‰");
+        }
 
-        // STEP 1.5: µ¥«İ ZL/ZR ¾÷±ñ®¶°Ê¥­®§¡AÁ×§K©ç·Ó®Ì°Ê
+        // STEP 1.5: ç­‰å¾… ZL/ZR æ©Ÿæ¢°æŒ¯å‹•å¹³æ¯ï¼Œé¿å…æ‹ç…§æ™ƒå‹•
         if (_config.EnableAxisSettleDelay && _config.AxisSettleDelayMs > 0)
         {
-            _logger.Debug($"[S03] {slotName} axis settle delay {_config.AxisSettleDelayMs} ms");
+            _logger.Info($"â–¶ Slot {slotIndex + 1} ç­‰å¾…æ©Ÿæ¢°æŒ¯å‹•ç©©å®šï¼ˆ{_config.AxisSettleDelayMs} msï¼‰");
             await Task.Delay(_config.AxisSettleDelayMs, ct);
         }
 
-        // STEP 2: (¿O·½¤w¦b RunInspectionAsync ¥şµ{¶}±Ò¡A¦¹³B¤£­«½Æ¶}¿O)
+        // STEP 2: (ç‡ˆæºå·²åœ¨ RunInspectionAsync å…¨ç¨‹é–‹å•Ÿï¼Œæ­¤è™•ä¸é‡è¤‡é–‹ç‡ˆ)
 
         // STEP 3: Both cameras trigger simultaneously
         //_cameraManager!.CameraStart(_cameraKeyLeft);
@@ -909,7 +969,7 @@ public sealed class MachineController : IDisposable
         //var imageLeft  = _cameraManager.GetCameraImage(_cameraKeyLeft);
         //var imageRight = _cameraManager.GetCameraImage(_cameraKeyRight);
 
-        // STEP 5: (¿O·½±N¦b RunInspectionAsync µ²§ô®É²Î¤@Ãö³¬¡A¦¹³B¤£­«½ÆÃö¿O)
+        // STEP 5: (ç‡ˆæºå°‡åœ¨ RunInspectionAsync çµæŸæ™‚çµ±ä¸€é—œé–‰ï¼Œæ­¤è™•ä¸é‡è¤‡é—œç‡ˆ)
 
         // Capture failure check
         //if (imageLeft == null || imageRight == null)
@@ -921,19 +981,19 @@ public sealed class MachineController : IDisposable
         //}
 
         // STEP 6: Save images
-        // ©R¦W³W«h¡G{yyyy-MM-ddTHH-mm-ss}_{barcodeId}_{C½s¸¹}_{LSlot/RSlot}{§Ç¸¹}.bmp
-        // ¨Ò¡G2026-04-10T10-34-57_SIM-LEFT-001_C1_LSlot02.bmp
+        // å‘½åè¦å‰‡ï¼š{yyyy-MM-ddTHH-mm-ss}_{barcodeId}_{Cç·¨è™Ÿ}_{LSlot/RSlot}{åºè™Ÿ}.bmp
+        // ä¾‹ï¼š2026-04-10T10-34-57_SIM-LEFT-001_C1_LSlot02.bmp
         string imagePath = "";
         string pathL = "", pathR = "";
         //if (_config.SaveImages)
         //{
         //    string ts       = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");
         //    string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
-        //    bool sx12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12 ¡÷ R°¼
-        //    bool sx13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 ¡÷ L°¼
-        //    string camL   = sx12 ? "C4" : "C2";          // ¥ª¬Û¾÷½s¸¹
-        //    string camR   = sx12 ? "C3" : "C1";          // ¥k¬Û¾÷½s¸¹
-        //    string slotSide = sx12 ? "RSlot" : "LSlot";  // R°¼ or L°¼
+        //    bool sx12 = GetPlcXOctal(CarrierLeftSensorPlcAddr)  ?? false;  // X12 â†’ Rå´
+        //    bool sx13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 â†’ Lå´
+        //    string camL   = sx12 ? "C4" : "C2";          // å·¦ç›¸æ©Ÿç·¨è™Ÿ
+        //    string camR   = sx12 ? "C3" : "C1";          // å³ç›¸æ©Ÿç·¨è™Ÿ
+        //    string slotSide = sx12 ? "RSlot" : "LSlot";  // Rå´ or Lå´
         //    string slotNum  = (25 - slotIndex).ToString("D2");  // 01 ~ 25
         //    string slotTag  = $"{slotSide}{slotNum}";           // e.g. LSlot02
         //
@@ -952,7 +1012,7 @@ public sealed class MachineController : IDisposable
         //    imagePath = pathL;
         //}
 
-        // STEP 7: ©I¥s BumperFlat ºtºâªk¤ÀªR¡]¨Ï¥Î¤w¦sÀÉªº .tif ¸ô®|¡^
+        // STEP 7: å‘¼å« BumperFlat æ¼”ç®—æ³•åˆ†æï¼ˆä½¿ç”¨å·²å­˜æª”çš„ .tif è·¯å¾‘ï¼‰
         string algJsonKey = _config.GetAlgJsonKey(target, slotIndex);
 
         var algResultL = await Task.Run(() => _bumperAlg.Analyze(pathL, algJsonKey, $"{slotName}_L"), ct);
@@ -960,12 +1020,12 @@ public sealed class MachineController : IDisposable
 
         _logger.Debug($"[S03] {slotName} ALG L={algResultL.Message} R={algResultR.Message}");
 
-        // STEP 8: NG §PÂ_¡]¥ª¥k¥ô¤@ NG §Y¬° NG¡^
-        // DetectedArea ¦b BumperAlgService.Analyze() ¤º¤w­¼¹L 0.0069?¡A¦¹³Bª½±µ¥[Á`§Y¥i
-        bool isNg = algResultL.IsNg || algResultR.IsNg;
+        // STEP 8: NG åˆ¤æ–·ï¼ˆä¾ä½¿ç”¨è€…è¨­å®šçš„ä¸Šä¸‹é™ï¼‰
+        // DetectedArea åœ¨ BumperAlgService.Analyze() å…§å·²ä¹˜é 0.0069Â²ï¼Œæ­¤è™•ç›´æ¥åŠ ç¸½å³å¯
         double measuredValue = algResultL.DetectedArea + algResultR.DetectedArea;
+        bool isNg = measuredValue < _config.ValueLimitLow || measuredValue > _config.ValueLimitHigh;
 
-        // Àu¥ıÅã¥Ü¥ª°¼Å|¥[µ²ªG¼v¹³
+        // å„ªå…ˆé¡¯ç¤ºå·¦å´ç–ŠåŠ çµæœå½±åƒ
         System.Windows.Media.ImageSource? displayImage = algResultL.Image ?? algResultR.Image;
 
         return (measuredValue, isNg, imagePath, displayImage, slotStartTime);
@@ -980,9 +1040,9 @@ public sealed class MachineController : IDisposable
         const string name = "Config";
         try
         {
-            // »P CameraLightTest ¬Û¦Pªº³]©w¸ê®Æ§¨µ²ºc¡G
-            //   <exe>\MachineAssembly\Slot_Inspection\GrabModule.txt  ¡ö ¬Û¾÷©w¸q
-            //   <exe>\MachineAssembly\Slot_Inspection\Axises.txt      ¡ö ¶b©w¸q
+            // èˆ‡ CameraLightTest ç›¸åŒçš„è¨­å®šè³‡æ–™å¤¾çµæ§‹ï¼š
+            //   <exe>\MachineAssembly\Slot_Inspection\GrabModule.txt  â† ç›¸æ©Ÿå®šç¾©
+            //   <exe>\MachineAssembly\Slot_Inspection\Axises.txt      â† è»¸å®šç¾©
             string baseDir = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
                 "MachineAssembly",
@@ -1009,8 +1069,8 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ªì©l¤Æ HighBright ¥ú·½±±¨î¾¹¡]DryRun / ¨ú¹³¥Î¡^¡C
-    /// COM port »P¥ú·½ COM port ¦@¥Î _lightComPort ³]©w¡C
+    /// åˆå§‹åŒ– HighBright å…‰æºæ§åˆ¶å™¨ï¼ˆDryRun / å–åƒç”¨ï¼‰ã€‚
+    /// COM port èˆ‡å…‰æº COM port å…±ç”¨ _lightComPort è¨­å®šã€‚
     /// </summary>
     private DeviceInitResult InitLightHB()
     {
@@ -1042,7 +1102,7 @@ public sealed class MachineController : IDisposable
                 if (!Axes.TryGetValue(axisName, out var axis))
                     return DeviceInitResult.Fail(name, $"Axis not found: {axisName}");
 
-                // RS485 ¶b»İ­n¥ı©I¥s Connect() «Ø¥ß Modbus RTU ³s½u
+                // RS485 è»¸éœ€è¦å…ˆå‘¼å« Connect() å»ºç«‹ Modbus RTU é€£ç·š
                 if (axis is cAxis_RS485 rs485Axis)
                 {
                     _logger.Info($"[S00] {axisName} Connecting RS485 ({rs485Axis.PortName}, Baud={rs485Axis.BaudRate}, Slave={rs485Axis.SlaveId})...");
@@ -1075,45 +1135,45 @@ public sealed class MachineController : IDisposable
 
             _plc?.SetY(0, true);
 
-            // ¢w¢w Step 0¡G¥ıÅı ZL / ZR ¤É¦Ü¦w¥ş°ª«×¡AÁ×§K¸I¼² ¢w¢w
-            progress?.Report("ZL / ZR ¤W¤É¦Ü¦w¥ş°ª«×...");
+            // â”€â”€ Step 0ï¼šå…ˆè®“ ZL / ZR å‡è‡³å®‰å…¨é«˜åº¦ï¼Œé¿å…ç¢°æ’ â”€â”€
+            progress?.Report("ZL / ZR ä¸Šå‡è‡³å®‰å…¨é«˜åº¦...");
             if (Axes.TryGetValue("AxisZL", out var zl) && Axes.TryGetValue("AxisZR", out var zr))
             {
                 zl.MotMoveAbs(_config.ZLSafeHeight);
                 zr.MotMoveAbs(_config.ZRSafeHeight);
-                // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+                // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
                 await Task.Delay(150, ct);
                 bool zlzrUp = await WaitUntilAsync(
                     () => zl.Wait() && zr.Wait(),
                     _config.MoveTimeout, ct);
                 if (!zlzrUp)
-                    return DeviceInitResult.Fail(name, "ZL/ZR ¤W¤É¦Ü¦w¥ş°ª«×¹O®É");
-                _logger.Info("ZL/ZR ¤w¤W¤É¦Ü¦w¥ş°ª«×");
+                    return DeviceInitResult.Fail(name, "ZL/ZR ä¸Šå‡è‡³å®‰å…¨é«˜åº¦é€¾æ™‚");
+                _logger.Info("ZL/ZR å·²ä¸Šå‡è‡³å®‰å…¨é«˜åº¦");
             }
 
-            // ¢w¢w Step 1¡G¥ı home X, ZL, ZR¡]¤£§t Y¡^ ¢w¢w
-            progress?.Report("X / ZL / ZR ¶bÂk­ìÂI...");
+            // â”€â”€ Step 1ï¼šå…ˆ home X, ZL, ZRï¼ˆä¸å« Yï¼‰ â”€â”€
+            progress?.Report("X / ZL / ZR è»¸æ­¸åŸé»...");
             string[] nonYAxes = ["AxisX", "AxisZL", "AxisZR"];
             foreach (var axisName in nonYAxes)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Axes.TryGetValue(axisName, out var axis))
-                    return DeviceInitResult.Fail(name, $"{axisName} ¤£¦s¦b");
+                    return DeviceInitResult.Fail(name, $"{axisName} ä¸å­˜åœ¨");
                 if (axis is cAxis_RS485 rs485)
                     rs485.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
                 axis.Home();
                 _logger.Debug($"{axisName} Home() issued");
             }
 
-            // ¢w¢w µ¥ ZL/ZR/X §¹¦¨¡A¹O®É¤~¦w¥şÅı Y °Ê ¢w¢w
+            // â”€â”€ ç­‰ ZL/ZR/X å®Œæˆï¼Œé€¾æ™‚æ‰å®‰å…¨è®“ Y å‹• â”€â”€
             bool nonYDone = await WaitHomeWithSafetyAsync(nonYAxes, _axisHomeTimeout, ct);
             if (!nonYDone)
                 return DeviceInitResult.Fail(name, $"X/ZL/ZR Home timeout");
 
-            // ¢w¢w Step 2¡G¦A home Y ¢w¢w
-            progress?.Report("Y ¶bÂk­ìÂI...");
+            // â”€â”€ Step 2ï¼šå† home Y â”€â”€
+            progress?.Report("Y è»¸æ­¸åŸé»...");
             if (!Axes.TryGetValue("AxisY", out var axisY))
-                return DeviceInitResult.Fail(name, "AxisY ¤£¦s¦b");
+                return DeviceInitResult.Fail(name, "AxisY ä¸å­˜åœ¨");
             if (axisY is cAxis_RS485 yRs485)
                 yRs485.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
             axisY.Home();
@@ -1122,7 +1182,7 @@ public sealed class MachineController : IDisposable
             if (!yDone)
                 return DeviceInitResult.Fail(name, "AxisY Home timeout");
 
-            // ¢w¢w ½T»{ª¬ºA ¢w¢w
+            // â”€â”€ ç¢ºèªç‹€æ…‹ â”€â”€
             foreach (var axisName in _axisNames)
             {
                 if (!Axes.TryGetValue(axisName, out var axis)) continue;
@@ -1149,8 +1209,8 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// µ¥«İ©Ò¦³¶b§¹¦¨­ìÂI½áÂk¡A¨Ã¦P®ÉºÊ±± X7 ¥ú¹h°T¸¹¡C
-    /// X7=0 ¡÷ ¥ß§Y°±¶b ¡÷ µ¥«İ X10=1¡]¤W¤ÉÃä½t¡^¡÷ ­«·sµo¥X Home «ü¥O ¡÷ Ä~Äòµ¥«İ¡C
+    /// ç­‰å¾…æ‰€æœ‰è»¸å®ŒæˆåŸé»è³¦æ­¸ï¼Œä¸¦åŒæ™‚ç›£æ§ X7 å…‰é–˜è¨Šè™Ÿã€‚
+    /// X7=0 â†’ ç«‹å³åœè»¸ â†’ ç­‰å¾… X10=1ï¼ˆä¸Šå‡é‚Šç·£ï¼‰â†’ é‡æ–°ç™¼å‡º Home æŒ‡ä»¤ â†’ ç¹¼çºŒç­‰å¾…ã€‚
     /// </summary>
     private async Task<bool> WaitHomeWithSafetyAsync(string[] nonYAxes, TimeSpan HomeTimeout, CancellationToken ct)
     {
@@ -1162,7 +1222,7 @@ public sealed class MachineController : IDisposable
         {
             ct.ThrowIfCancellationRequested();
 
-            // X7 ¥ú¹h°»´ú¡]¼È®É°±¥Î¡^
+            // X7 å…‰é–˜åµæ¸¬ï¼ˆæš«æ™‚åœç”¨ï¼‰
             //bool? x7 = GetPlcXOctal(7);
             //if (x7 == false)
             //{
@@ -1177,17 +1237,17 @@ public sealed class MachineController : IDisposable
             //    x7LowCount = 0;
             //    foreach (var n in _axisNames)
             //        if (Axes.TryGetValue(n, out var ax)) try { ax.MotStop(isImmediate: true); } catch { }
-            //    progress?.Report("[Home] ? ¥ú¹hÄ²µo¡Iµ¥«İ X10=1 Ä~ÄòÂk­ìÂI...");
+            //    progress?.Report("[Home] ? å…‰é–˜è§¸ç™¼ï¼ç­‰å¾… X10=1 ç¹¼çºŒæ­¸åŸé»...");
             //    _logger.Warn("[Home] X7 confirmed LOW (debounced), axes stopped, waiting for X10=1 + X7=1");
             //    while (true)
             //    {
             //        ct.ThrowIfCancellationRequested();
             //        bool x10 = GetPlcXOctal(10) ?? false;
             //        bool x7Clear = GetPlcXOctal(7) ?? false;
-            //        if (x10 && x7Clear) { _logger.Info("[Home] X10=1, X7=1 ¡÷ resume homing"); break; }
+            //        if (x10 && x7Clear) { _logger.Info("[Home] X10=1, X7=1 â†’ resume homing"); break; }
             //        await Task.Delay(100, ct);
             //    }
-            //    progress?.Report("[Home] ¥ú¹h¸Ñ°£¡A­«·sÂk­ìÂI...");
+            //    progress?.Report("[Home] å…‰é–˜è§£é™¤ï¼Œé‡æ–°æ­¸åŸé»...");
             //    _logger.Info("[Home] X10=1, re-issuing Home to all axes");
             //    foreach (var axisName in _axisNames)
             //    {
@@ -1200,7 +1260,7 @@ public sealed class MachineController : IDisposable
             //    continue;
             //}
 
-            // ÀË¬d©Ò¦³¶b¬O§_¤w¨ì¦ì
+            // æª¢æŸ¥æ‰€æœ‰è»¸æ˜¯å¦å·²åˆ°ä½
             if (_axisNames.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()))
                 return true;
 
@@ -1215,25 +1275,25 @@ public sealed class MachineController : IDisposable
         const string name = "FLIR Camera (DALSA)";
         try
         {
-            // ¤wªì©l¤Æ¹L´Nª½±µ¦^¶Ç¦¨¥\¡AÁ×§K­«½Æ©I¥s Init() ¾É­P Sapera SDK
-            // ±N¬Û¦P Handle ¤G¦¸¥[¤J Dictionary ¦Ó©ß¥X duplicate key ¨Ò¥~
+            // å·²åˆå§‹åŒ–éå°±ç›´æ¥å›å‚³æˆåŠŸï¼Œé¿å…é‡è¤‡å‘¼å« Init() å°è‡´ Sapera SDK
+            // å°‡ç›¸åŒ Handle äºŒæ¬¡åŠ å…¥ Dictionary è€Œæ‹‹å‡º duplicate key ä¾‹å¤–
             if (_cameraRight != null && _cameraLeft != null)
             {
                 _logger.Info($"{name}: already initialized, skip");
                 return DeviceInitResult.Ok(name);
             }
 
-            // CameraManager «Øºc¤l¤º³¡·|¥Î NamedKey ¬d Dictionary<string,ICamera>
-            // ¾É­P¤j¶q KeyNotFoundException ¨Ã¦b InitImageBuffer ®É crash (exit code 1)¡C
-            // §ï¬°ª½±µ¹ï ICamera ©I¥s Init()¡A¨Ã¥Î Task.Run Á×§K
-            // Sapera SDK m_Xfer.Create() ¦P¨Bªı¶ë UI¡C
+            // CameraManager å»ºæ§‹å­å…§éƒ¨æœƒç”¨ NamedKey æŸ¥ Dictionary<string,ICamera>
+            // å°è‡´å¤§é‡ KeyNotFoundException ä¸¦åœ¨ InitImageBuffer æ™‚ crash (exit code 1)ã€‚
+            // æ”¹ç‚ºç›´æ¥å° ICamera å‘¼å« Init()ï¼Œä¸¦ç”¨ Task.Run é¿å…
+            // Sapera SDK m_Xfer.Create() åŒæ­¥é˜»å¡ UIã€‚
 
             if (!Cameras.TryGetValue(CameraUidRight, out var camR))
                 return DeviceInitResult.Fail(name, $"Camera not found: {CameraUidRight}");
 
             bool rightOk = await Task.Run(() => camR.Init(), ct);
             if (!rightOk)
-                return DeviceInitResult.Fail(name, $"{CameraUidRight} Init() ¦^¶Ç false");
+                return DeviceInitResult.Fail(name, $"{CameraUidRight} Init() å›å‚³ false");
             _cameraRight = camR;
             _logger.Debug($"[S00] {CameraUidRight} Init OK  W={camR.FrameWidth} H={camR.BufHeight}");
 
@@ -1242,7 +1302,7 @@ public sealed class MachineController : IDisposable
 
             bool leftOk = await Task.Run(() => camL.Init(), ct);
             if (!leftOk)
-                return DeviceInitResult.Fail(name, $"{CameraUidLeft} Init() ¦^¶Ç false");
+                return DeviceInitResult.Fail(name, $"{CameraUidLeft} Init() å›å‚³ false");
             _cameraLeft = camL;
             _logger.Debug($"[S00] {CameraUidLeft} Init OK  W={camL.FrameWidth} H={camL.BufHeight}");
 
@@ -1265,12 +1325,12 @@ public sealed class MachineController : IDisposable
         const string name = "Barcode Reader";
         try
         {
-            // ¨Ï¥Î BarcodeReader ±M®×ªº MvDeviceEnumerator ¦CÁ| GigE ¸Ë¸m
+            // ä½¿ç”¨ BarcodeReader å°ˆæ¡ˆçš„ MvDeviceEnumerator åˆ—èˆ‰ GigE è£ç½®
             var enumerator = new MvDeviceEnumerator();
             var devices = enumerator.EnumerateDevices();
 
             if (devices.Count == 0)
-                return DeviceInitResult.Fail(name, "No MvCodeReader device found (½Ğ½T»{Åª½X¾¹ GigE ³s½u)");
+                return DeviceInitResult.Fail(name, "No MvCodeReader device found (è«‹ç¢ºèªè®€ç¢¼å™¨ GigE é€£ç·š)");
 
             int devId = 0;
             foreach(var dev in devices)
@@ -1280,18 +1340,18 @@ public sealed class MachineController : IDisposable
                  devId++;
             }
 
-            _logger.Info($"[S01] §ä¨ì {devices.Count} ¥xÅª½X¾¹¡A¨Ï¥Î²Ä¤@¥x: {devices[devId].DisplayName}");
+            _logger.Info($"[S01] æ‰¾åˆ° {devices.Count} å°è®€ç¢¼å™¨ï¼Œä½¿ç”¨ç¬¬ä¸€å°: {devices[devId].DisplayName}");
 
-            // «Ø¥ß BarcodeReader ±M®×ªº SDK «Ê¸Ëª«¥ó
+            // å»ºç«‹ BarcodeReader å°ˆæ¡ˆçš„ SDK å°è£ç‰©ä»¶
             _barcodeDevice = new MvCodeReaderDevice();
             _barcodeParser = new MvBarcodeResultParser();
 
-            // «Ø¥ß Handle
+            // å»ºç«‹ Handle
             int ret = _barcodeDevice.CreateHandle(devices[devId].RawDeviceInfo!);
             if (ret != 0)
                 return DeviceInitResult.Fail(name, $"CreateHandle failed: 0x{ret:X}");
 
-            // ¶}±Ò¸Ë¸m
+            // é–‹å•Ÿè£ç½®
             ret = _barcodeDevice.OpenDevice();
             if (ret != 0)
             {
@@ -1299,13 +1359,13 @@ public sealed class MachineController : IDisposable
                 return DeviceInitResult.Fail(name, $"OpenDevice failed: 0x{ret:X}");
             }
 
-            // ³]©w³nÅéÄ²µo¼Ò¦¡¡]¥Ñµ{¦¡¨M©w¦ó®ÉÅª½X¡^
+            // è¨­å®šè»Ÿé«”è§¸ç™¼æ¨¡å¼ï¼ˆç”±ç¨‹å¼æ±ºå®šä½•æ™‚è®€ç¢¼ï¼‰
             _barcodeDevice.SetEnumValue("TriggerMode",
                 (uint)MvCodeReader.MV_CODEREADER_TRIGGER_MODE.MV_CODEREADER_TRIGGER_MODE_ON);
             _barcodeDevice.SetEnumValue("TriggerSource",
                 (uint)MvCodeReader.MV_CODEREADER_TRIGGER_SOURCE.MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
 
-            // ¶i¤Jµ¥«İÄ²µoª¬ºA
+            // é€²å…¥ç­‰å¾…è§¸ç™¼ç‹€æ…‹
             ret = _barcodeDevice.StartGrabbing();
             if (ret != 0)
                 return DeviceInitResult.Fail(name, $"StartGrabbing failed: 0x{ret:X}");
@@ -1321,23 +1381,23 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// ªì©l¤Æ PLC ³q°T¡]¤TµÙ FX ¨t¦C¡^¡C
-    /// ¨Ï¥Î PLC_IO ±M®×ªº SerialBytesCommunicator¡]¦ê¤f Transport¡^
-    /// ·f°t FxPlcCommunicator¡]FX ¨ó©w¸ÑªR¡^¡C
-    /// FxPlcCommunicator ·|¦Û°Ê¦b­I´º½ü¸ß X/Y ÂI¦ì¡A
-    /// ¤§«á³z¹L GetX(index) §Y¥iÅª¨ú³Ì·s­È¡C
+    /// åˆå§‹åŒ– PLC é€šè¨Šï¼ˆä¸‰è± FX ç³»åˆ—ï¼‰ã€‚
+    /// ä½¿ç”¨ PLC_IO å°ˆæ¡ˆçš„ SerialBytesCommunicatorï¼ˆä¸²å£ Transportï¼‰
+    /// æ­é… FxPlcCommunicatorï¼ˆFX å”å®šè§£æï¼‰ã€‚
+    /// FxPlcCommunicator æœƒè‡ªå‹•åœ¨èƒŒæ™¯è¼ªè©¢ X/Y é»ä½ï¼Œ
+    /// ä¹‹å¾Œé€é GetX(index) å³å¯è®€å–æœ€æ–°å€¼ã€‚
     /// </summary>
     private DeviceInitResult InitPlc()
     {
         const string name = "PLC (FX)";
         try
         {
-            // «Ø¥ß¦ê¤f Transport ¡÷ FX ¨ó©w³q°T¾¹
+            // å»ºç«‹ä¸²å£ Transport â†’ FX å”å®šé€šè¨Šå™¨
             var transport = new SerialBytesCommunicator(
                 _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
             _plc = new FxPlcCommunicator(transport);
 
-            // µ¥«İ PLC ¦^À³¡]DogValue ·|ÀH¨C¦¸¦¨¥\³q°T»¼¼W¡^
+            // ç­‰å¾… PLC å›æ‡‰ï¼ˆDogValue æœƒéš¨æ¯æ¬¡æˆåŠŸé€šè¨Šéå¢ï¼‰
             long initialDog = _plc.DogValue;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             while (sw.Elapsed < _deviceConnectTimeout)
@@ -1363,23 +1423,23 @@ public sealed class MachineController : IDisposable
     }
 
     // =========================================
-    //  Dry Run (ªÅ¶]´ú¸Õ)
+    //  Dry Run (ç©ºè·‘æ¸¬è©¦)
     // =========================================
 
     /// <summary>
-    /// ªÅ¶]´ú¸Õ¥D¬yµ{¡C
-    /// ¢z¢w STEP 0 : «e¸m½T»{¡]¶bª¬ºA¡B¥ú·½¡^
-    /// ¢u¢w STEP 1 : ³v Slot °j°é
-    /// ¢x   ¢u¢w S1-1 : ¥ú¹hÀË¬d¡]¼È°±µ¥«İ¡^
-    /// ¢x   ¢u¢w S1-2 : Y ¶b²¾°Ê¨ì Slot ¦ì¸m
-    /// ¢x   ¢u¢w S1-3 : ¥ú¹hÀË¬d
-    /// ¢x   ¢u¢w S1-4 : ZL / ZR ¤U­°¦ÜÀË´ú°ª«×
-    /// ¢x   ¢u¢w S1-5 : ¥ú¹hÀË¬d
-    /// ¢x   ¢u¢w S1-6 : ¥ú·½ ON ¡÷ ¨ú¹³ ¡÷ ¥ú·½ OFF
-    /// ¢x   ¢u¢w S1-7 : ¥ú¹hÀË¬d¡]¨ú¹³§¹¦¨¡A¤£Ä~Äò¤U¤@±i¡^
-    /// ¢x   ¢|¢w S1-8 : ZL / ZR ¤W¤É¦Ü¦w¥ş°ª«×
-    /// ¢u¢w STEP 2 : ZL / ZR ¦^­ìÂI¡]Y ¶b«O«ù­ì¦ì¡^
-    /// ¢|¢w STEP 3 : Y ¶b²¾°Ê¦Ü«İ¾÷¦ì¸m¡]496 mm¡^
+    /// ç©ºè·‘æ¸¬è©¦ä¸»æµç¨‹ã€‚
+    /// â”Œâ”€ STEP 0 : å‰ç½®ç¢ºèªï¼ˆè»¸ç‹€æ…‹ã€å…‰æºï¼‰
+    /// â”œâ”€ STEP 1 : é€ Slot è¿´åœˆ
+    /// â”‚   â”œâ”€ S1-1 : å…‰é–˜æª¢æŸ¥ï¼ˆæš«åœç­‰å¾…ï¼‰
+    /// â”‚   â”œâ”€ S1-2 : Y è»¸ç§»å‹•åˆ° Slot ä½ç½®
+    /// â”‚   â”œâ”€ S1-3 : å…‰é–˜æª¢æŸ¥
+    /// â”‚   â”œâ”€ S1-4 : ZL / ZR ä¸‹é™è‡³æª¢æ¸¬é«˜åº¦
+    /// â”‚   â”œâ”€ S1-5 : å…‰é–˜æª¢æŸ¥
+    /// â”‚   â”œâ”€ S1-6 : å…‰æº ON â†’ å–åƒ â†’ å…‰æº OFF
+    /// â”‚   â”œâ”€ S1-7 : å…‰é–˜æª¢æŸ¥ï¼ˆå–åƒå®Œæˆï¼Œä¸ç¹¼çºŒä¸‹ä¸€å¼µï¼‰
+    /// â”‚   â””â”€ S1-8 : ZL / ZR ä¸Šå‡è‡³å®‰å…¨é«˜åº¦
+    /// â”œâ”€ STEP 2 : ZL / ZR å›åŸé»ï¼ˆY è»¸ä¿æŒåŸä½ï¼‰
+    /// â””â”€ STEP 3 : Y è»¸ç§»å‹•è‡³å¾…æ©Ÿä½ç½®ï¼ˆ496 mmï¼‰
     /// </summary>
     public async Task DryRunAsync(
         IProgress<string>? progress = null,
@@ -1387,7 +1447,7 @@ public sealed class MachineController : IDisposable
         string barcode = "",
         IProgress<SlotInspectionProgress>? slotProgress = null)
     {
-        // ²M°£¤W¤@¦¸¦]¤¤Â_¦Ó´İ¯dªº¼È°±ª¬ºA
+        // æ¸…é™¤ä¸Šä¸€æ¬¡å› ä¸­æ–·è€Œæ®˜ç•™çš„æš«åœç‹€æ…‹
         _dryRunPaused = false;
 
         _logger.Info("===== Dry Run Start =====");
@@ -1402,7 +1462,7 @@ public sealed class MachineController : IDisposable
         Axes["AxisZL"].SetMaxVel(6000);
         Axes["AxisZR"].SetMaxVel(6000);
 
-        // ¢w¢w Y0 °{Ã{¡GªÅ¶]´ú¸Õ¶i¦æ¤¤«ü¥Ü¿O¡]1s «G / 1s ·t¡^¢w¢w
+        // â”€â”€ Y0 é–ƒçˆï¼šç©ºè·‘æ¸¬è©¦é€²è¡Œä¸­æŒ‡ç¤ºç‡ˆï¼ˆ1s äº® / 1s æš—ï¼‰â”€â”€
         using var blinkCts = new CancellationTokenSource();
         var blinkTask = Task.Run(async () =>
         {
@@ -1421,33 +1481,33 @@ public sealed class MachineController : IDisposable
         });
         _logger.Info("[DryRun] Y0 BLINK start");
 
-        // ¢w¢w ­I´º¥ú¹hºÊ±±¡]¼È®É°±¥Î¡^¢w¢w
+        // â”€â”€ èƒŒæ™¯å…‰é–˜ç›£æ§ï¼ˆæš«æ™‚åœç”¨ï¼‰â”€â”€
         using var x7MonitorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var x7MonitorTask = Task.CompletedTask;
         //var x7MonitorTask = Task.Run(async () =>
         //{
-        //    const int DebounceCount = 3; // ³sÄò´X¦¸ LOW ¤~µø¬°¯u¹êÄ²µo
+        //    const int DebounceCount = 3; // é€£çºŒå¹¾æ¬¡ LOW æ‰è¦–ç‚ºçœŸå¯¦è§¸ç™¼
         //    int lowCount = 0;
         //    while (!x7MonitorCts.Token.IsCancellationRequested)
         //    {
         //        try
         //        {
         //            bool? x7 = GetPlcXOctal(7);
-        //            if (x7 == false) // null¡]Â_½u¡^¤£­p¤J¡A¥u¦³½T©w LOW ¤~²Ö­p
+        //            if (x7 == false) // nullï¼ˆæ–·ç·šï¼‰ä¸è¨ˆå…¥ï¼Œåªæœ‰ç¢ºå®š LOW æ‰ç´¯è¨ˆ
         //            {
         //                lowCount++;
         //                if (lowCount >= DebounceCount)
         //                {
         //                    if (!_dryRunPaused)
-        //                        _logger.Warn($"[DryRun] X7 debounce confirmed LOW ({lowCount}¡Ñ50ms), pausing");
+        //                        _logger.Warn($"[DryRun] X7 debounce confirmed LOW ({lowCount}Ã—50ms), pausing");
         //                    PauseDryRun();
         //                }
         //            }
         //            else
         //            {
         //                if (lowCount > 0 && lowCount < DebounceCount)
-        //                    _logger.Debug($"[DryRun] X7 glitch suppressed ({lowCount}¡Ñ50ms)");
-        //                lowCount = 0; // HIGH ©ÎÂ_½u³£­«³]­p¼Æ
+        //                    _logger.Debug($"[DryRun] X7 glitch suppressed ({lowCount}Ã—50ms)");
+        //                lowCount = 0; // HIGH æˆ–æ–·ç·šéƒ½é‡è¨­è¨ˆæ•¸
         //            }
         //            await Task.Delay(50, x7MonitorCts.Token);
         //        }
@@ -1460,89 +1520,89 @@ public sealed class MachineController : IDisposable
         try
         {
             // =====================================================
-            //  STEP 0 : «e¸m½T»{
+            //  STEP 0 : å‰ç½®ç¢ºèª
             // =====================================================
 
-            // STEP 0-0 ? ½T«O¥ú·½¤w³s½u
+            // STEP 0-0 ? ç¢ºä¿å…‰æºå·²é€£ç·š
             if (_lightHB == null || !_lightHB.IsOpen)
             {
-                progress?.Report("[STEP 0-0] ªì©l¤Æ¥ú·½ (HighBright)...");
+                progress?.Report("[STEP 0-0] åˆå§‹åŒ–å…‰æº (HighBright)...");
                 var lr = InitLightHB();
                 if (!lr.Success)
-                    throw new InvalidOperationException($"¥ú·½ªì©l¤Æ¥¢±Ñ: {lr.Message}");
-                _logger.Info("[STEP 0-0] ¥ú·½ªì©l¤Æ ?");
+                    throw new InvalidOperationException($"å…‰æºåˆå§‹åŒ–å¤±æ•—: {lr.Message}");
+                _logger.Info("[STEP 0-0] å…‰æºåˆå§‹åŒ– ?");
             }
 
-            // STEP 0-0 ? ¶}±Ò¥ú·½¡]ªÅ¶]´Á¶¡«ùÄò¶}±Ò¡Aµ²§ô«á¤~Ãö³¬¡^
-            progress?.Report("[STEP 0-0] ¥ú·½ CH1+CH2 ¶}±Ò...");
+            // STEP 0-0 ? é–‹å•Ÿå…‰æºï¼ˆç©ºè·‘æœŸé–“æŒçºŒé–‹å•Ÿï¼ŒçµæŸå¾Œæ‰é—œé–‰ï¼‰
+            progress?.Report("[STEP 0-0] å…‰æº CH1+CH2 é–‹å•Ÿ...");
             bool on1 = LightSetWithRetry(1, 100, "STEP0-0", "ON");
             bool on2 = LightSetWithRetry(2, 100, "STEP0-0", "ON");
             if (!on1 || !on2)
-                _logger.Warn($"[STEP 0-0] ¥ú·½¶}±Ò¥¢±Ñ  CH1={on1} CH2={on2}¡A½Ğ½T»{¥ú·½±±¨î¾¹³s½u");
+                _logger.Warn($"[STEP 0-0] å…‰æºé–‹å•Ÿå¤±æ•—  CH1={on1} CH2={on2}ï¼Œè«‹ç¢ºèªå…‰æºæ§åˆ¶å™¨é€£ç·š");
             else
-                _logger.Info("[STEP 0-0] ¥ú·½ CH1+CH2 ¤w¶}±Ò ?");
-            progress?.Report("[STEP 0-0] ¥ú·½¤w¶}±Ò ?");
+                _logger.Info("[STEP 0-0] å…‰æº CH1+CH2 å·²é–‹å•Ÿ ?");
+            progress?.Report("[STEP 0-0] å…‰æºå·²é–‹å•Ÿ ?");
 
-            // STEP 0-1¡G½T»{ Y / ZL / ZR ¶b¤w¿EºÏ¥BµLÄµ³ø
-            progress?.Report("[STEP 0-1] ½T»{¶bª¬ºA...");
+            // STEP 0-1ï¼šç¢ºèª Y / ZL / ZR è»¸å·²æ¿€ç£ä¸”ç„¡è­¦å ±
+            progress?.Report("[STEP 0-1] ç¢ºèªè»¸ç‹€æ…‹...");
             string[] dryRunAxes = ["AxisY", "AxisZL", "AxisZR"];
             foreach (var axisName in dryRunAxes)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Axes.TryGetValue(axisName, out var axis))
-                    throw new InvalidOperationException($"{axisName} ¤£¦s¦b");
+                    throw new InvalidOperationException($"{axisName} ä¸å­˜åœ¨");
 
                 if (axis.GetAlarm())
                 {
-                    progress?.Report($"[STEP 0-1] {axisName} ¦³Äµ³ø¡A¹Á¸Õ²M°£...");
+                    progress?.Report($"[STEP 0-1] {axisName} æœ‰è­¦å ±ï¼Œå˜—è©¦æ¸…é™¤...");
                     axis.ResetError();
                     await Task.Delay(500, ct);
                     if (axis.GetAlarm())
-                        throw new InvalidOperationException($"{axisName} Äµ³øµLªk²M°£¡A½ĞÀË¬dÅX°Ê¾¹");
+                        throw new InvalidOperationException($"{axisName} è­¦å ±ç„¡æ³•æ¸…é™¤ï¼Œè«‹æª¢æŸ¥é©…å‹•å™¨");
                 }
 
                 if (!axis.GetSVON())
                 {
-                    progress?.Report($"[STEP 0-1] {axisName} ¿EºÏ...");
+                    progress?.Report($"[STEP 0-1] {axisName} æ¿€ç£...");
                     axis.SetSVON(true);
                     bool ready = await WaitUntilAsync(
                         () => axis.GetRDY() && !axis.GetAlarm(),
                         _deviceConnectTimeout, ct);
                     if (!ready)
                         throw new InvalidOperationException(
-                            $"{axisName} ¿EºÏ¥¢±Ñ (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                            $"{axisName} æ¿€ç£å¤±æ•— (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
                 }
 
-                progress?.Report($"[STEP 0-1] {axisName} ´Nºü ?");
+                progress?.Report($"[STEP 0-1] {axisName} å°±ç·’ ?");
             }
 
-            // TODO: ¬Û¾÷¥\¯à¼È®É°±¥Î
+            // TODO: ç›¸æ©ŸåŠŸèƒ½æš«æ™‚åœç”¨
             if (_cameraRight == null || _cameraLeft == null)
             {
-                progress?.Report("ªì©l¤Æ¬Û¾÷...");
+                progress?.Report("åˆå§‹åŒ–ç›¸æ©Ÿ...");
                 var cr = await InitCamerasAsync(ct);
                 if (!cr.Success)
-                    throw new InvalidOperationException($"¬Û¾÷ªì©l¤Æ¥¢±Ñ: {cr.Message}");
-                progress?.Report("¬Û¾÷ ?");
+                    throw new InvalidOperationException($"ç›¸æ©Ÿåˆå§‹åŒ–å¤±æ•—: {cr.Message}");
+                progress?.Report("ç›¸æ©Ÿ ?");
             }
 
 
             _cameraRight.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
             _cameraLeft.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
 
-            // ¢w¢w ¨Ì X12 / X13 °T¸¹¿ï¾Ü R²Õ ©Î L²Õ Z ¶b°ª«× ¢w¢w
-            bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12 ¡÷ R²Õ
-            bool boardX13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 ¡÷ L²Õ
+            // â”€â”€ ä¾ X12 / X13 è¨Šè™Ÿé¸æ“‡ Rçµ„ æˆ– Lçµ„ Z è»¸é«˜åº¦ â”€â”€
+            bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12 â†’ Rçµ„
+            bool boardX13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 â†’ Lçµ„
             double zCamZL = _config.GetCameraHeightZL(boardX12, boardX13);
             double zCamZR = _config.GetCameraHeightZR(boardX12, boardX13);
             double zSafeZL = _config.GetZLSafeHeight(boardX12, boardX13);
             double zSafeZR = _config.GetZRSafeHeight(boardX12, boardX13);
-            string boardGroup = boardX12 ? "R²Õ(X12)" : (boardX13 ? "L²Õ(X13)" : "L²Õ(¹w³])");
-            progress?.Report($"[STEP 0-2] ªO¤l°T¸¹: {boardGroup} ¡÷ ZL¬Û¾÷°ª={zCamZL:F2} ZR¬Û¾÷°ª={zCamZR:F2} ZL¦w¥ş={zSafeZL:F2} ZR¦w¥ş={zSafeZR:F2}");
+            string boardGroup = boardX12 ? "Rçµ„(X12)" : (boardX13 ? "Lçµ„(X13)" : "Lçµ„(é è¨­)");
+            progress?.Report($"[STEP 0-2] æ¿å­è¨Šè™Ÿ: {boardGroup} â†’ ZLç›¸æ©Ÿé«˜={zCamZL:F2} ZRç›¸æ©Ÿé«˜={zCamZR:F2} ZLå®‰å…¨={zSafeZL:F2} ZRå®‰å…¨={zSafeZR:F2}");
             _logger.Info($"[DryRun] {boardGroup}: ZL={zCamZL:F2}/{zSafeZL:F2}  ZR={zCamZR:F2}/{zSafeZR:F2}");
 
-            // ¢w¢w ³v Slot¡GY ²¾°Ê ¡÷ ZL/ZR ¤U­° ¡÷ °±¯d ¡÷ ZL/ZR ¤W¤É ¢w¢w
-            // Count °ÊºAÅª¨ú°}¦Cªø«×¡AÁ×§K SlotPositionTable µ§¼Æ»P¦¹³B¤£¦P¨B³y¦¨ IndexOutOfRangeException
+            // â”€â”€ é€ Slotï¼šY ç§»å‹• â†’ ZL/ZR ä¸‹é™ â†’ åœç•™ â†’ ZL/ZR ä¸Šå‡ â”€â”€
+            // Count å‹•æ…‹è®€å–é™£åˆ—é•·åº¦ï¼Œé¿å… SlotPositionTable ç­†æ•¸èˆ‡æ­¤è™•ä¸åŒæ­¥é€ æˆ IndexOutOfRangeException
             var rows = new (SlotInspectionProgress.TargetCollection Target, int Count)[]
         {
             (SlotInspectionProgress.TargetCollection.AreaA_Row1, SlotPositionTable.AreaA_Row1.Length),
@@ -1560,59 +1620,66 @@ public sealed class MachineController : IDisposable
                     await CheckPauseAsync(progress, ct);
                     currentSlot++;
 
-                    var pos = SlotPositionTable.Get(target, i);
+                    var pos = SlotPositionTable.GetByCarrier(target, i, isR: boardX12);
                     string slotLabel = $"{target} Slot#{i + 1}";
+                    string carrierGroup = boardX12 ? "Rè¼‰å°(X12)" : "Lè¼‰å°(X13)";
 
-                    // STEP 1: Y ¶b²¾°Ê¨ì¥Ø¼Ğ Slot ¦ì¸m
+                    // STEP 1: Y è»¸ç§»å‹•åˆ°ç›®æ¨™ Slot ä½ç½®
                     double clampedY = Math.Clamp(pos.Y, 0.0, YAxisMaxMm);
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: Y¡÷{clampedY:F1} mm...");
-                    await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct);
+                    _logger.Info($"â–¶ é–‹å§‹ç§»å‹•åˆ°ç¬¬ {currentSlot}/{totalSlots} å€‹ Slot" +
+                                 $"ï¼ˆ{slotLabel}ï¼Œ{carrierGroup}ï¼ŒY ç›®æ¨™={clampedY:F2} mmï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}[ğŸ“¦{carrierGroup}]: æ­£åœ¨ç§»å‹• Yâ†’{clampedY:F1} mm...");
+                    await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct, $"DryRun-Slot{i + 1}");
                     Axes["AxisY"].MotMoveAbs(clampedY);
 
-                    // µ¥ 150ms ÅıÅX°Ê¾¹±µ¦¬«ü¥O¨Ã²M°£ÂÂªº¨ì¦ìºX¼Ğ¡A
-                    // Á×§K Wait() ¦b Y ¯u¥¿²¾°Ê«e¦]´İ¯dºX¼Ğ»~¦^¶Ç true
+                    // ç­‰ 150ms è®“é©…å‹•å™¨æ¥æ”¶æŒ‡ä»¤ä¸¦æ¸…é™¤èˆŠçš„åˆ°ä½æ——æ¨™ï¼Œ
+                    // é¿å… Wait() åœ¨ Y çœŸæ­£ç§»å‹•å‰å› æ®˜ç•™æ——æ¨™èª¤å›å‚³ true
                     await Task.Delay(150, ct);
 
                     bool yArrived = await WaitUntilAsync(
                         () => Axes["AxisY"].Wait(),
                         _config.MoveTimeout, ct);
                     if (!yArrived)
-                        throw new TimeoutException($"{slotLabel} Y ¶b²¾°Ê¹O®É");
+                        throw new TimeoutException($"{slotLabel} Y è»¸ç§»å‹•é€¾æ™‚");
                     DryRunCheckAxisState("AxisY", slotLabel);
 
                     double realY = Axes["AxisY"].GetRealPosition();
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: Y={realY:F2} ?");
-                    _logger.Info($"[DryRun] {slotLabel} Y={realY:F2}");
+                    _logger.Info($"âœ” Slot {i + 1} Y è»¸åˆ°ä½" +
+                                 $"ï¼ˆç›®æ¨™={clampedY:F2} mmï¼Œå¯¦éš›={realY:F2} mmï¼Œåå·®={(realY - clampedY):+0.00;-0.00;0.00} mmï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: âœ” Y è»¸åˆ°ä½ï¼ˆå¯¦éš›={realY:F2} mmï¼‰");
 
-                    // ¢w¢w ¥ú¹hÀË¬d¡GY ¨ì¦ì«á¡A­Y X7 Ä²µo«h¼È°± ¢w¢w
+                    // â”€â”€ å…‰é–˜æª¢æŸ¥ï¼šY åˆ°ä½å¾Œï¼Œè‹¥ X7 è§¸ç™¼å‰‡æš«åœ â”€â”€
                     await CheckPauseAsync(progress, ct);
 
-                    // STEP 2: ZL + ZR ¦P®É¤U­°¦ÜÀË´ú°ª«×¡]¨Ì X12/X13 ¿ï R²Õ ©Î L²Õ °ª«×¡^
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL¡õ {zCamZL}mm / ZR¡õ {zCamZR}mm ({boardGroup})...");
+                    // STEP 2: ZL + ZR åŒæ™‚ä¸‹é™è‡³æª¢æ¸¬é«˜åº¦ï¼ˆä¾ X12/X13 é¸ Rçµ„ æˆ– Lçµ„ é«˜åº¦ï¼‰
+                    _logger.Info($"â–¶ Slot {i + 1} ZL/ZR ä¸‹é™åˆ°æª¢æ¸¬é«˜åº¦ï¼ˆZL ç›®æ¨™={zCamZL:F2} mmï¼ŒZR ç›®æ¨™={zCamZR:F2} mmï¼Œ{boardGroup}ï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL â†“{zCamZL:F1} mm ã€ZR â†“{zCamZR:F1} mm ä¸‹é™ä¸­...");
                     Axes["AxisZL"].MotMoveAbs(zCamZL);
                     Axes["AxisZR"].MotMoveAbs(zCamZR);
 
-                    // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+                    // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
                     await Task.Delay(150, ct);
 
                     bool zDown = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
                     _config.MoveTimeout, ct);
                     if (!zDown)
-                        throw new TimeoutException($"{slotLabel} ZL/ZR ¤U­°¹O®É");
+                        throw new TimeoutException($"{slotLabel} ZL/ZR ä¸‹é™é€¾æ™‚");
                     DryRunCheckAxisState("AxisZL", slotLabel);
                     DryRunCheckAxisState("AxisZR", slotLabel);
 
                     double realZL = Axes["AxisZL"].GetRealPosition();
                     double realZR = Axes["AxisZR"].GetRealPosition();
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL={realZL:F2} ZR={realZR:F2} ?");
-                    _logger.Info($"[DryRun] {slotLabel} ZL={realZL:F2} ZR={realZR:F2}");
+                    _logger.Info($"âœ” Slot {i + 1} ZL/ZR å·²åˆ°é”æª¢æ¸¬é«˜åº¦" +
+                                 $"ï¼ˆZL ç›®æ¨™={zCamZL:F2} mm å¯¦éš›={realZL:F2} mmï¼Œ" +
+                                 $"ZR ç›®æ¨™={zCamZR:F2} mm å¯¦éš›={realZR:F2} mmï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: âœ” ZL/ZR åˆ°ä½ï¼ˆZL={realZL:F2} mmï¼ŒZR={realZR:F2} mmï¼‰");
 
-                    // ¢w¢w ¥ú¹hÀË¬d¡GZ ¨ì¦ì«á¡A­Y X7 Ä²µo«h¼È°± ¢w¢w
+                    // â”€â”€ å…‰é–˜æª¢æŸ¥ï¼šZ åˆ°ä½å¾Œï¼Œè‹¥ X7 è§¸ç™¼å‰‡æš«åœ â”€â”€
                     await CheckPauseAsync(progress, ct);
 
-                    // STEP 3: ZL/ZR ¨ì¦ì«á¡A¦b­ì¥» 2 ¬í°±¯d´Á¶¡°õ¦æ¡u¶}¥ú ¡÷ ¨ú¹³ ¡÷ Ãö¥ú¡v
-                    // ¥ª¬Û¾÷ ¡÷ targetA (AreaA)¡A¥k¬Û¾÷ ¡÷ targetB (AreaB)¡A¦@¥Î¦P¤@­Ó slotIndex
+                    // STEP 3: ZL/ZR åˆ°ä½å¾Œï¼Œåœ¨åŸæœ¬ 2 ç§’åœç•™æœŸé–“åŸ·è¡Œã€Œé–‹å…‰ â†’ å–åƒ â†’ é—œå…‰ã€
+                    // å·¦ç›¸æ©Ÿ â†’ targetA (AreaA)ï¼Œå³ç›¸æ©Ÿ â†’ targetB (AreaB)ï¼Œå…±ç”¨åŒä¸€å€‹ slotIndex
                     var targetB = target switch
                     {
                         SlotInspectionProgress.TargetCollection.AreaA_Row1 => SlotInspectionProgress.TargetCollection.AreaB_Row1,
@@ -1621,33 +1688,39 @@ public sealed class MachineController : IDisposable
                     };
                     await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct, target, targetB, slotProgress);
 
-                    // ¢w¢w ¥ú¹hÀË¬d¡G¨ú¹³§¹¦¨«á¡A­Y X7 Ä²µo«h¼È°±¡]¬Û¾÷¤w§¹¦¨¡A¤£Ä~Äò¤U¤@±i¡^¢w¢w
+                    // â”€â”€ å…‰é–˜æª¢æŸ¥ï¼šå–åƒå®Œæˆå¾Œï¼Œè‹¥ X7 è§¸ç™¼å‰‡æš«åœï¼ˆç›¸æ©Ÿå·²å®Œæˆï¼Œä¸ç¹¼çºŒä¸‹ä¸€å¼µï¼‰â”€â”€
                     await CheckPauseAsync(progress, ct);
 
-                    // STEP 4: ZL + ZR ¤W¤É«ì´_¦w¥ş°ª«×¡]¨Ì X12/X13 ¿ï R²Õ ©Î L²Õ ¦w¥ş°ª«×¡^
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR¡ô «ì´_¦w¥ş°ª«×...");
+                    // STEP 4: ZL + ZR ä¸Šå‡æ¢å¾©å®‰å…¨é«˜åº¦ï¼ˆä¾ X12/X13 é¸ Rçµ„ æˆ– Lçµ„ å®‰å…¨é«˜åº¦ï¼‰
+                    _logger.Info($"â–¶ Slot {i + 1} ZL/ZR ä¸Šå‡æ¢å¾©å®‰å…¨é«˜åº¦ï¼ˆZL ç›®æ¨™={zSafeZL:F2} mmï¼ŒZR ç›®æ¨™={zSafeZR:F2} mmï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR â†‘ å‡å›å®‰å…¨é«˜åº¦...");
                     Axes["AxisZL"].MotMoveAbs(zSafeZL);
                     Axes["AxisZR"].MotMoveAbs(zSafeZR);
 
-                    // µ¥ 150ms ÅıÅX°Ê¾¹²M°£¤W¤@¦¸ªº InPosition ºX¼Ğ¡AÁ×§K Wait() ´£¦­¦^¶Ç true
+                    // ç­‰ 150ms è®“é©…å‹•å™¨æ¸…é™¤ä¸Šä¸€æ¬¡çš„ InPosition æ——æ¨™ï¼Œé¿å… Wait() ææ—©å›å‚³ true
                     await Task.Delay(150, ct);
 
                     bool zUp = await WaitUntilAsync(
                         () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
                         _config.MoveTimeout, ct);
                     if (!zUp)
-                        throw new TimeoutException($"{slotLabel} ZL/ZR ¤W¤É¹O®É");
+                        throw new TimeoutException($"{slotLabel} ZL/ZR ä¸Šå‡é€¾æ™‚");
                     DryRunCheckAxisState("AxisZL", slotLabel);
                     DryRunCheckAxisState("AxisZR", slotLabel);
 
-                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR ¤w«ì´_ ?");
+                    double safeRealZL = Axes["AxisZL"].GetRealPosition();
+                    double safeRealZR = Axes["AxisZR"].GetRealPosition();
+                    _logger.Info($"âœ” Slot {i + 1} ZL/ZR å·²æ¢å¾©å®‰å…¨é«˜åº¦" +
+                                 $"ï¼ˆZL ç›®æ¨™={zSafeZL:F2} mm å¯¦éš›={safeRealZL:F2} mmï¼Œ" +
+                                 $"ZR ç›®æ¨™={zSafeZR:F2} mm å¯¦éš›={safeRealZR:F2} mmï¼‰");
+                    progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: âœ” ZL/ZR å®‰å…¨é«˜åº¦æ¢å¾©ï¼ˆZL={safeRealZL:F2} mmï¼ŒZR={safeRealZR:F2} mmï¼‰");
                 }
             }
 
             // =====================================================
-            //  STEP 2 : ZL / ZR ¦^­ìÂI¡]Y ¶b«O«ù­ì¦ì¡^
+            //  STEP 2 : ZL / ZR å›åŸé»ï¼ˆY è»¸ä¿æŒåŸä½ï¼‰
             // =====================================================
-            progress?.Report("[STEP 2] ZL / ZR ¦^­ìÂI...");
+            progress?.Report("[STEP 2] ZL / ZR å›åŸé»...");
             _logger.Info("[DryRun] STEP 2 Home ZL + ZR");
 
             string[] dryRunHomeAxes = ["AxisZL", "AxisZR"];
@@ -1658,19 +1731,19 @@ public sealed class MachineController : IDisposable
                 () => dryRunHomeAxes.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()),
                 _axisHomeTimeout, ct);
             if (!homeDone)
-                _logger.Warn("[STEP 2] ZL/ZR ¦^­ìÂI¹O®É¡A½Ğ½T»{¶bª¬ºA");
+                _logger.Warn("[STEP 2] ZL/ZR å›åŸé»é€¾æ™‚ï¼Œè«‹ç¢ºèªè»¸ç‹€æ…‹");
             else
-                progress?.Report("[STEP 2] ZL+ZR ¤w¦^­ìÂI ?");
+                progress?.Report("[STEP 2] ZL+ZR å·²å›åŸé» ?");
 
             // =====================================================
-            //  STEP 3 : Y ¶b²¾°Ê¦Ü«İ¾÷¦ì¸m¡]496 mm¡^
+            //  STEP 3 : Y è»¸ç§»å‹•è‡³å¾…æ©Ÿä½ç½®ï¼ˆ496 mmï¼‰
             // =====================================================
-            progress?.Report("[STEP 3] Y ¶b²¾°Ê¦Ü«İ¾÷¦ì¸m 496 mm...");
-            _logger.Info("[DryRun] STEP 3 Y ¡÷ 496 mm (standby)");
+            progress?.Report("[STEP 3] Y è»¸ç§»å‹•è‡³å¾…æ©Ÿä½ç½® 496 mm...");
+            _logger.Info("[DryRun] STEP 3 Y â†’ 496 mm (standby)");
 
-            // ­Y X7 Ä²µo¼È°±¡Aµ¥«İ«ì´_«á¦Aµo¥X²¾°Ê«ü¥O
+            // è‹¥ X7 è§¸ç™¼æš«åœï¼Œç­‰å¾…æ¢å¾©å¾Œå†ç™¼å‡ºç§»å‹•æŒ‡ä»¤
             await CheckPauseAsync(progress, ct);
-            await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct);
+            await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct, "DryRun-STEP3-Standby");
 
             while (true)
             {
@@ -1682,45 +1755,45 @@ public sealed class MachineController : IDisposable
 
                 if (_dryRunPaused)
                 {
-                    // X7 Ä²µo°±¶b¡Aµ¥«İ X10 «ì´_«á­«·sµo¥X²¾°Ê«ü¥O
+                    // X7 è§¸ç™¼åœè»¸ï¼Œç­‰å¾… X10 æ¢å¾©å¾Œé‡æ–°ç™¼å‡ºç§»å‹•æŒ‡ä»¤
                     _logger.Info("[STEP 3] X7 triggered during Y move, waiting for resume...");
                     await CheckPauseAsync(progress, ct);
-                    continue; // ­«·sµo¥X MotMoveAbs
+                    continue; // é‡æ–°ç™¼å‡º MotMoveAbs
                 }
 
                 if (!yFinal)
-                    _logger.Warn("[STEP 3] Y ¶b²¾°Ê¦Ü«İ¾÷¦ì¸m¹O®É");
+                    _logger.Warn("[STEP 3] Y è»¸ç§»å‹•è‡³å¾…æ©Ÿä½ç½®é€¾æ™‚");
                 else
-                    progress?.Report($"[STEP 3] Y ¤w¨ì¹F 496 mm (¹ê»Ú={Axes["AxisY"].GetRealPosition():F2}) ?");
+                    progress?.Report($"[STEP 3] Y å·²åˆ°é” 496 mm (å¯¦éš›={Axes["AxisY"].GetRealPosition():F2}) ?");
                 break;
             }
 
-            progress?.Report($"ªÅ¶]´ú¸Õ§¹¦¨ ?  ¦@¶]§¹ {totalSlots} ­Ó Slot");
+            progress?.Report($"ç©ºè·‘æ¸¬è©¦å®Œæˆ ?  å…±è·‘å®Œ {totalSlots} å€‹ Slot");
             _logger.Info("===== Dry Run Done =====");
         } // end try
         finally
         {
-            // µL½×¥¿±`µ²§ô¡B¤¤Â_¡B¨Æ¥óµo¥Í¡A¥ú·½¤@©w±j¨îÃö³¬
+            // ç„¡è«–æ­£å¸¸çµæŸã€ä¸­æ–·ã€äº‹ä»¶ç™¼ç”Ÿï¼Œå…‰æºä¸€å®šå¼·åˆ¶é—œé–‰
             if (_lightHB != null && _lightHB.IsOpen)
             {
                 try
                 {
                     _lightHB.SetValue(1, 0);
                     _lightHB.SetValue(2, 0);
-                    _logger.Info("[DryRun] finally: ¥ú·½¥şÃö ?");
+                    _logger.Info("[DryRun] finally: å…‰æºå…¨é—œ ?");
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn($"[DryRun] finally: ¥ú·½Ãö³¬¥¢±Ñ {ex.Message}");
+                    _logger.Warn($"[DryRun] finally: å…‰æºé—œé–‰å¤±æ•— {ex.Message}");
                 }
             }
 
-            // °±¤î X7 ­I´ººÊ±±
+            // åœæ­¢ X7 èƒŒæ™¯ç›£æ§
             x7MonitorCts.Cancel();
             try { await x7MonitorTask; } catch { }
             _logger.Info("[DryRun] X7 monitor stop");
 
-            // °±¤î°{Ã{¡AY0 «ì´_«í«G¡]idle ª¬ºA¡^
+            // åœæ­¢é–ƒçˆï¼ŒY0 æ¢å¾©æ†äº®ï¼ˆidle ç‹€æ…‹ï¼‰
             blinkCts.Cancel();
             try { await blinkTask; } catch { }
             _plc?.SetY(0, true);
@@ -1731,9 +1804,9 @@ public sealed class MachineController : IDisposable
 
 
     /// <summary>
-    /// DryRun ´Á¶¡ªº¥ú·½ + ¨ú¹³¬yµ{¡]ZL/ZR ¨ì¦ì«áªº 2 ¬í°±¯d´Á¶¡°õ¦æ¡^¡C
-    /// ¥¿½T¶¶§Ç¡GStop¡]²M IsGrabing¡^¡÷ ¥ú·½ ON ¡÷ Start ¡÷ µ¥§¹¾ã´V ¡÷ Stop¡]DMA §¹¦¨¡^¡÷ ¥ú·½ OFF ¡÷ GetBufAddress() ¡÷ ¦s BMP¡C
-    /// ¼v¹³Àx¦s¦Ü D:\CameraLightTest\yyyyMMdd\  ¡]ª½±µ¨Ï¥Î ICamera¡A¤£³z¹L CameraManager¡^
+    /// DryRun æœŸé–“çš„å…‰æº + å–åƒæµç¨‹ï¼ˆZL/ZR åˆ°ä½å¾Œçš„ 2 ç§’åœç•™æœŸé–“åŸ·è¡Œï¼‰ã€‚
+    /// æ­£ç¢ºé †åºï¼šStopï¼ˆæ¸… IsGrabingï¼‰â†’ å…‰æº ON â†’ Start â†’ ç­‰å®Œæ•´å¹€ â†’ Stopï¼ˆDMA å®Œæˆï¼‰â†’ å…‰æº OFF â†’ GetBufAddress() â†’ å­˜ BMPã€‚
+    /// å½±åƒå„²å­˜è‡³ D:\CameraLightTest\yyyyMMdd\  ï¼ˆç›´æ¥ä½¿ç”¨ ICameraï¼Œä¸é€é CameraManagerï¼‰
     /// </summary>
     private async Task DryRunCaptureAsync(
         string slotLabel,
@@ -1750,55 +1823,55 @@ public sealed class MachineController : IDisposable
 
       
 
-        // ¼v¹³¸ô®|§ï¥Ñ ImagePathHelper.GetImagePath ²Î¤@ºŞ²z
-        const int LightChLeft = 1;    // ¥ª¬Û¾÷¥ú·½³q¹D
-        const int LightChRight = 2;    // ¥k¬Û¾÷¥ú·½³q¹D
-        const int LightPct = 100;  // «G«× 100%¡]¥i¨Ì»İ¨D½Õ¾ã¡^
-        const int StabilizeMs = 100;  // ¥ú·½Ã­©wµ¥«İ¡]ms¡^
-        // Right ¬Û¾÷ ExposureTime=100000£gs(100ms)¡A»İµ¥Ãn¥ú + Sapera DMA ¶Ç¿é§¹¦¨
-        // ¨ú³ÌªøÃn¥ú 100ms + 100ms ¶Ç¿é½w½Ä = 200ms ¡÷ ¦A¥[ 100ms ¦w¥ş¾l¶q = 300ms
+        // å½±åƒè·¯å¾‘æ”¹ç”± ImagePathHelper.GetImagePath çµ±ä¸€ç®¡ç†
+        const int LightChLeft = 1;    // å·¦ç›¸æ©Ÿå…‰æºé€šé“
+        const int LightChRight = 2;    // å³ç›¸æ©Ÿå…‰æºé€šé“
+        const int LightPct = 100;  // äº®åº¦ 100%ï¼ˆå¯ä¾éœ€æ±‚èª¿æ•´ï¼‰
+        const int StabilizeMs = 100;  // å…‰æºç©©å®šç­‰å¾…ï¼ˆmsï¼‰
+        // Right ç›¸æ©Ÿ ExposureTime=100000Î¼s(100ms)ï¼Œéœ€ç­‰æ›å…‰ + Sapera DMA å‚³è¼¸å®Œæˆ
+        // å–æœ€é•·æ›å…‰ 100ms + 100ms å‚³è¼¸ç·©è¡ = 200ms â†’ å†åŠ  100ms å®‰å…¨é¤˜é‡ = 300ms
         const int GrabWaitMs = 300;
 
-        // ¢w¢w ®Ú¾Ú X12 / X13 §PÂ_¬Û¾÷½s¸¹»PªO¤l°¼§O ¢w¢w
-        // X12=true ¡÷ ªO¤l¦b R°¼ ¡÷ RSlot¡FLeft=C4, Right=C3
-        // X13=true ¡÷ ªO¤l¦b L°¼ ¡÷ LSlot¡FLeft=C2, Right=C1
+        // â”€â”€ æ ¹æ“š X12 / X13 åˆ¤æ–·ç›¸æ©Ÿç·¨è™Ÿèˆ‡æ¿å­å´åˆ¥ â”€â”€
+        // X12=true â†’ æ¿å­åœ¨ Rå´ â†’ RSlotï¼›Left=C4, Right=C3
+        // X13=true â†’ æ¿å­åœ¨ Lå´ â†’ LSlotï¼›Left=C2, Right=C1
         bool x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12
         bool x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13
-        string camLeft = x12 ? "C4" : "C2";   // X12¡÷C4, X13¡]©Î¹w³]¡^¡÷C2
-        string camRight = x12 ? "C3" : "C1";   // X12¡÷C3, X13¡]©Î¹w³]¡^¡÷C1
-        string slotSide = x12 ? "RSlot" : "LSlot";  // X12¡÷RSlot, X13¡÷LSlot
-        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} ¡÷ Left={camLeft} Right={camRight} Side={slotSide}");
+        string camLeft = x12 ? "C4" : "C2";   // X12â†’C4, X13ï¼ˆæˆ–é è¨­ï¼‰â†’C2
+        string camRight = x12 ? "C3" : "C1";   // X12â†’C3, X13ï¼ˆæˆ–é è¨­ï¼‰â†’C1
+        string slotSide = x12 ? "RSlot" : "LSlot";  // X12â†’RSlot, X13â†’LSlot
+        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} â†’ Left={camLeft} Right={camRight} Side={slotSide}");
 
-        // STEP 1: ¥ı°±¤î¬Û¾÷¡A²M°£ IsGrabing ª¬ºA
+        // STEP 1: å…ˆåœæ­¢ç›¸æ©Ÿï¼Œæ¸…é™¤ IsGrabing ç‹€æ…‹
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
 
-        // STEP 2: ÀË¬d¥ú·½¬O§_¶}±Ò¡A­Y¥¼¶}±Ò«h¶}±Ò¡]¨¾§b¡GÁ×§K¤¤³~³Q·N¥~Ãö³¬¡^
+        // STEP 2: æª¢æŸ¥å…‰æºæ˜¯å¦é–‹å•Ÿï¼Œè‹¥æœªé–‹å•Ÿå‰‡é–‹å•Ÿï¼ˆé˜²å‘†ï¼šé¿å…ä¸­é€”è¢«æ„å¤–é—œé–‰ï¼‰
         if (_lightHB != null && _lightHB.IsOpen)
         {
-            // ¹Á¸ÕÅª¨ú·í«e«G«×¡]HighBright ±±¨î¾¹µLÅª¨ú«ü¥O¡Aª½±µ­«³]½T«O«G«×¥¿½T¡^
+            // å˜—è©¦è®€å–ç•¶å‰äº®åº¦ï¼ˆHighBright æ§åˆ¶å™¨ç„¡è®€å–æŒ‡ä»¤ï¼Œç›´æ¥é‡è¨­ç¢ºä¿äº®åº¦æ­£ç¢ºï¼‰
             bool ch1On = LightSetWithRetry(LightChLeft, LightPct, slotLabel, "ENSURE_ON");
             bool ch2On = LightSetWithRetry(LightChRight, LightPct, slotLabel, "ENSURE_ON");
             if (!ch1On || !ch2On)
-                _logger.Warn($"[DryRun] {slotLabel} ¥ú·½½T»{/­«³]¥¢±Ñ  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
+                _logger.Warn($"[DryRun] {slotLabel} å…‰æºç¢ºèª/é‡è¨­å¤±æ•—  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
         }
         await Task.Delay(StabilizeMs, ct);
 
-        // STEP 3: ¶}©l¨ú¹³¡]m_Xfer.Grab()¡^
-        progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ¬Û¾÷¨ú¹³...");
+        // STEP 3: é–‹å§‹å–åƒï¼ˆm_Xfer.Grab()ï¼‰
+        progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ç›¸æ©Ÿå–åƒ...");
         _cameraRight?.Start();
         _cameraLeft?.Start();
 
-        // STEP 4: µ¥«İÃn¥ú§¹¦¨ + Sapera DMA §â¸ê®Æ¼g¤J Buffer
+        // STEP 4: ç­‰å¾…æ›å…‰å®Œæˆ + Sapera DMA æŠŠè³‡æ–™å¯«å…¥ Buffer
         await Task.Delay(GrabWaitMs, ct);
 
-        // STEP 5: °±¤î¨ú¹³¡]m_Xfer.Abort()¡^
+        // STEP 5: åœæ­¢å–åƒï¼ˆm_Xfer.Abort()ï¼‰
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
 
-        // STEP 6: ¥ú·½«O«ù¶}±Ò¡]¤£Ãö³¬¡Aµ¥ªÅ¶]¬yµ{µ²§ô«á¤~Ãö¡^
+        // STEP 6: å…‰æºä¿æŒé–‹å•Ÿï¼ˆä¸é—œé–‰ï¼Œç­‰ç©ºè·‘æµç¨‹çµæŸå¾Œæ‰é—œï¼‰
 
-        // STEP 7: Åª¨ú Buffer
+        // STEP 7: è®€å– Buffer
         var bufRight = _cameraRight?.GetBufAddress();
         var bufLeft = _cameraLeft?.GetBufAddress();
 
@@ -1811,39 +1884,42 @@ public sealed class MachineController : IDisposable
         string slotNum = (25 - slotIndex).ToString("D2");                 // 25, 26 ...
         string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
         string slotTag = $"{slotSide}{slotNum}";                          // LSlot25 or RSlot25
-        // ¨ú slotTag §Àºİ¯Â¼Æ¦r§@¬° Layer¡A¨Ò¦p LSlot25 ¡÷ "25"
+        // å– slotTag å°¾ç«¯ç´”æ•¸å­—ä½œç‚º Layerï¼Œä¾‹å¦‚ LSlot25 â†’ "25"
         string layerNum = System.Text.RegularExpressions.Regex.Match(slotTag, @"\d+$").Value;
 
         bool anySaved = false;
 
-        // Area A Åã¥Ü¥ª¬Û¾÷¡FArea B Åã¥Ü¥k¬Û¾÷¡]¦P¤@­Ó Y ¦ì¸m¡A¦U°¼¦U¦ÛÅã¥Ü¡^
-        System.Windows.Media.Imaging.BitmapSource? uiImageLeft = null;  // ¡÷ targetA (AreaA)
-        System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // ¡÷ targetB (AreaB)
+        // Area A é¡¯ç¤ºå·¦ç›¸æ©Ÿï¼›Area B é¡¯ç¤ºå³ç›¸æ©Ÿï¼ˆåŒä¸€å€‹ Y ä½ç½®ï¼Œå„å´å„è‡ªé¡¯ç¤ºï¼‰
+        System.Windows.Media.Imaging.BitmapSource? uiImageLeft = null;  // â†’ targetA (AreaA)
+        System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // â†’ targetB (AreaB)
 
 
-        // Value ´«ºâ«Y¼Æ¡Gpixel? ¡÷ mm?¡]1 pixel = 0.0069 mm¡^
-        // DetectedArea ¦b BumperAlgService.Analyze() ¤º¤w´«ºâ¬° mm?¡A¦¹³B¤£¦A­¼«Y¼Æ
+        // Value æ›ç®—ä¿‚æ•¸ï¼špixelÂ² â†’ mmÂ²ï¼ˆ1 pixel = 0.0069 mmï¼‰
+        // DetectedArea åœ¨ BumperAlgService.Analyze() å…§å·²æ›ç®—ç‚º mmÂ²ï¼Œæ­¤è™•ä¸å†ä¹˜ä¿‚æ•¸
         double detectedAreaR = 0.0;
         double detectedAreaL = 0.0;
+        bool isNgR = false;
+        bool isNgL = false;
 
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
             string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
             DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
-            _logger.Info($"[DryRun] {slotLabel} ¤w¦s R({camRight}): {path}");
+            _logger.Info($"[DryRun] {slotLabel} å·²å­˜ R({camRight}): {path}");
             anySaved = true;
 
-            // ¥k¬Û¾÷¹Ï¤ù ¡÷ AreaB¡G¥ı©I¥s ALG µe½u¡A¥¢±Ñ¤~ fallback ­ì¹Ï
+            // å³ç›¸æ©Ÿåœ–ç‰‡ â†’ AreaBï¼šå…ˆå‘¼å« ALG ç•«ç·šï¼Œå¤±æ•—æ‰ fallback åŸåœ–
             string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartR = DateTime.Now;
             var algR = await Task.Run(() => _bumperAlg.Analyze(path, algKeyR, $"{slotLabel}_R"), ct);
-            // DetectedArea ¤w¦b BumperAlgService ¤º´«ºâ¬° mm?¡Aª½±µ¨Ï¥Î
+            // DetectedArea å·²åœ¨ BumperAlgService å…§æ›ç®—ç‚º mmÂ²ï¼Œç›´æ¥ä½¿ç”¨
             detectedAreaR = algR.DetectedArea;
-            // ¼g¤J CSV¡]FoupID=barcode¡ABumperPosition=camRight¡ALayer=¯Â¼Æ¦r¡AValue ¤w´«ºâ¡^
+            isNgR = detectedAreaR < _config.ValueLimitLow || detectedAreaR > _config.ValueLimitHigh;
+            // å¯«å…¥ CSVï¼ˆFoupID=barcodeï¼ŒBumperPosition=camRightï¼ŒLayer=ç´”æ•¸å­—ï¼ŒValue å·²æ›ç®—ï¼‰
             InspectionResultWriter.WriteSlotResult(
                 barcodeId,
                 detectedAreaR,
-                algR.IsNg,
+                isNgR,
                 path,
                 bumperPosition: camRight,
                 layer: layerNum,
@@ -1853,17 +1929,17 @@ public sealed class MachineController : IDisposable
             if (algR.Success && algR.Image is System.Windows.Media.Imaging.BitmapSource bsR)
             {
                 uiImageRight = bsR;
-                _logger.Info($"[DryRun] {slotLabel} R ALG µe½u OK (json={algKeyR}) Area={detectedAreaR:F2}");
+                _logger.Info($"[DryRun] {slotLabel} R ALG ç•«ç·š OK (json={algKeyR}) Area={detectedAreaR:F2}");
 
                 // save draw image via ImagePathHelper
                 string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
                 SaveBitmapSource(bsR, drawPath);
  
-                _logger.Info($"[DryRun] {slotLabel} R µe½u¹Ï¤w¦s: {drawPath}");
+                _logger.Info($"[DryRun] {slotLabel} R ç•«ç·šåœ–å·²å­˜: {drawPath}");
             }
             else
             {
-                _logger.Warn($"[DryRun] {slotLabel} R ALG ¥¢±Ñ({algR.Message})¡AÅã¥Ü­ì¹Ï");
+                _logger.Warn($"[DryRun] {slotLabel} R ALG å¤±æ•—({algR.Message})ï¼Œé¡¯ç¤ºåŸåœ–");
                 uiImageRight = BufferToBitmapSource(_cameraRight, bufRight[0], _config.GetRoi(camRight));
             }
         }
@@ -1871,19 +1947,20 @@ public sealed class MachineController : IDisposable
         {
             string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
             DryRunSaveBmp(_cameraLeft, bufLeft[0], path, _config.GetRoi(camLeft));
-            _logger.Info($"[DryRun] {slotLabel} ¤w¦s L({camLeft}): {path}");
+            _logger.Info($"[DryRun] {slotLabel} å·²å­˜ L({camLeft}): {path}");
             anySaved = true;
 
-            // ¥ª¬Û¾÷¹Ï¤ù ¡÷ AreaA¡G¥ı©I¥s ALG µe½u¡A¥¢±Ñ¤~ fallback ­ì¹Ï
+            // å·¦ç›¸æ©Ÿåœ–ç‰‡ â†’ AreaAï¼šå…ˆå‘¼å« ALG ç•«ç·šï¼Œå¤±æ•—æ‰ fallback åŸåœ–
             string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartL = DateTime.Now;
             var algL = await Task.Run(() => _bumperAlg.Analyze(path, algKeyL, $"{slotLabel}_L"), ct);
             detectedAreaL = algL.DetectedArea;
-            // ¼g¤J CSV¡]FoupID=barcode¡ABumperPosition=camLeft¡ALayer=¯Â¼Æ¦r¡AValue ¤w´«ºâ¡^
+            isNgL = detectedAreaL < _config.ValueLimitLow || detectedAreaL > _config.ValueLimitHigh;
+            // å¯«å…¥ CSVï¼ˆFoupID=barcodeï¼ŒBumperPosition=camLeftï¼ŒLayer=ç´”æ•¸å­—ï¼ŒValue å·²æ›ç®—ï¼‰
             InspectionResultWriter.WriteSlotResult(
                 barcodeId,
                 detectedAreaL,
-                algL.IsNg,
+                isNgL,
                 path,
                 bumperPosition: camLeft,
                 layer: layerNum,
@@ -1893,25 +1970,25 @@ public sealed class MachineController : IDisposable
             if (algL.Success && algL.Image is System.Windows.Media.Imaging.BitmapSource bsL)
             {
                 uiImageLeft = bsL;
-                _logger.Info($"[DryRun] {slotLabel} L ALG µe½u OK (json={algKeyL}) Area={detectedAreaL:F2}");
+                _logger.Info($"[DryRun] {slotLabel} L ALG ç•«ç·š OK (json={algKeyL}) Area={detectedAreaL:F2}");
 
                 // save draw image via ImagePathHelper
                 string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
                 SaveBitmapSource(bsL, drawPath);
  
-                _logger.Info($"[DryRun] {slotLabel} L µe½u¹Ï¤w¦s: {drawPath}");
+                _logger.Info($"[DryRun] {slotLabel} L ç•«ç·šåœ–å·²å­˜: {drawPath}");
             }
             else
             {
-                _logger.Warn($"[DryRun] {slotLabel} L ALG ¥¢±Ñ({algL.Message})¡AÅã¥Ü­ì¹Ï");
+                _logger.Warn($"[DryRun] {slotLabel} L ALG å¤±æ•—({algL.Message})ï¼Œé¡¯ç¤ºåŸåœ–");
                 uiImageLeft = BufferToBitmapSource(_cameraLeft, bufLeft[0], _config.GetRoi(camLeft));
             }
         }
 
-        // §Y®É§ó·s UI ¹Ï¹³¡G¥ª¬Û¾÷ ¡÷ AreaA¡A¥k¬Û¾÷ ¡÷ AreaB
+        // å³æ™‚æ›´æ–° UI åœ–åƒï¼šå·¦ç›¸æ©Ÿ â†’ AreaAï¼Œå³ç›¸æ©Ÿ â†’ AreaB
         if (slotProgress != null)
         {
-            string statusText = $"({currentSlot}/{totalSlots}) {slotLabel}: ¨ú¹³§¹¦¨ ?";
+            string statusText = $"({currentSlot}/{totalSlots}) {slotLabel}: å–åƒå®Œæˆ ?";
 
             if (uiImageLeft != null)
             {
@@ -1920,6 +1997,7 @@ public sealed class MachineController : IDisposable
                     Target = targetA,
                     SlotIndex = slotIndex,
                     Value = detectedAreaL,
+                    IsNg = isNgL,
                     Image = uiImageLeft,
                     StatusText = statusText
                 });
@@ -1932,6 +2010,7 @@ public sealed class MachineController : IDisposable
                     Target = targetB,
                     SlotIndex = slotIndex,
                     Value = detectedAreaR,
+                    IsNg = isNgR,
                     Image = uiImageRight,
                     StatusText = statusText
                 });
@@ -1940,21 +2019,21 @@ public sealed class MachineController : IDisposable
 
         if (!anySaved)
         {
-            _logger.Warn($"[DryRun] {slotLabel} ¨ú¹³¥¢±Ñ¡]¨âÃèÀY¬ÒµL¼v¹³¡^");
-            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ? ¨ú¹³¥¢±Ñ");
+            _logger.Warn($"[DryRun] {slotLabel} å–åƒå¤±æ•—ï¼ˆå…©é¡é ­çš†ç„¡å½±åƒï¼‰");
+            progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ? å–åƒå¤±æ•—");
         }
         else
         {
             progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: images saved");
         }
 
-        // STEP 9: ¸É¨¬³Ñ¾l°±¯d®É¶¡¡]½T«O¾ãÅé ? 2 ¬í¡^
+        // STEP 9: è£œè¶³å‰©é¤˜åœç•™æ™‚é–“ï¼ˆç¢ºä¿æ•´é«” ? 2 ç§’ï¼‰
         int remaining = 2000 - StabilizeMs - GrabWaitMs;
         if (remaining > 0)
             await Task.Delay(remaining, ct);
     }
 
-    /// <summary>±N BitmapSource ¦s¦¨ BMP ÀÉ¡]¥Î©óÀx¦s ALG µe½u«áªº¼v¹³¡^¡C</summary>
+    /// <summary>å°‡ BitmapSource å­˜æˆ BMP æª”ï¼ˆç”¨æ–¼å„²å­˜ ALG ç•«ç·šå¾Œçš„å½±åƒï¼‰ã€‚</summary>
     private void SaveBitmapSource(System.Windows.Media.Imaging.BitmapSource bitmap, string filePath)
     {
         try
@@ -1967,11 +2046,11 @@ public sealed class MachineController : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warn($"[DryRun] SaveBitmapSource ¥¢±Ñ ({filePath}): {ex.Message}");
+            _logger.Warn($"[DryRun] SaveBitmapSource å¤±æ•— ({filePath}): {ex.Message}");
         }
     }
 
-    /// <summary>DryRun ±M¥Î¡G±q ICamera Buffer ¦s¦¨ BMP ÀÉ¡A¤ä´©µô¤Á ROI¡C</summary>
+    /// <summary>DryRun å°ˆç”¨ï¼šå¾ ICamera Buffer å­˜æˆ BMP æª”ï¼Œæ”¯æ´è£åˆ‡ ROIã€‚</summary>
     private void DryRunSaveBmp(ICamera camera, IntPtr bufPtr, string filePath, CameraRoi? roi = null)
     {
         try
@@ -1989,7 +2068,7 @@ public sealed class MachineController : IDisposable
 
             System.Windows.Media.Imaging.BitmapSource saveBmp = fullBmp;
 
-            // ¢w¢w µô¤Á ROI¡]Ãä¬É«OÅ@¡G¶W¥X½d³ò«h¤£µô¤Á¡^¢w¢w
+            // â”€â”€ è£åˆ‡ ROIï¼ˆé‚Šç•Œä¿è­·ï¼šè¶…å‡ºç¯„åœå‰‡ä¸è£åˆ‡ï¼‰â”€â”€
             if (roi != null && roi.IsEnabled
                 && (roi.X + roi.W) <= w
                 && (roi.Y + roi.H) <= h)
@@ -1998,7 +2077,7 @@ public sealed class MachineController : IDisposable
                 var cropped = new System.Windows.Media.Imaging.CroppedBitmap(fullBmp, rect);
                 cropped.Freeze();
                 saveBmp = cropped;
-                _logger.Debug($"[DryRun] SaveBmp µô¤Á ROI=({roi.X},{roi.Y}) {roi.W}¡Ñ{roi.H} ¡÷ {filePath}");
+                _logger.Debug($"[DryRun] SaveBmp è£åˆ‡ ROI=({roi.X},{roi.Y}) {roi.W}Ã—{roi.H} â†’ {filePath}");
             }
 
             using var fs = new FileStream(filePath, FileMode.Create, FileAccess.Write);
@@ -2008,11 +2087,11 @@ public sealed class MachineController : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warn($"[DryRun] SaveBmp ¥¢±Ñ ({filePath}): {ex.Message}");
+            _logger.Warn($"[DryRun] SaveBmp å¤±æ•— ({filePath}): {ex.Message}");
         }
     }
 
-    /// <summary>±q ICamera Buffer Âà¦¨ WPF BitmapSource¡]¨Ñ UI §Y®ÉÅã¥Ü¡^¡A¤ä´©µô¤Á ROI¡C</summary>
+    /// <summary>å¾ ICamera Buffer è½‰æˆ WPF BitmapSourceï¼ˆä¾› UI å³æ™‚é¡¯ç¤ºï¼‰ï¼Œæ”¯æ´è£åˆ‡ ROIã€‚</summary>
     private System.Windows.Media.Imaging.BitmapSource? BufferToBitmapSource(ICamera camera, IntPtr bufPtr, CameraRoi? roi = null)
     {
         try
@@ -2042,32 +2121,32 @@ public sealed class MachineController : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.Warn($"[DryRun] BufferToBitmapSource ¥¢±Ñ: {ex.Message}");
+            _logger.Warn($"[DryRun] BufferToBitmapSource å¤±æ•—: {ex.Message}");
             return null;
         }
     }
 
-    /// <summary>ªÅ¶]¡GÀË¬d¶bª¬ºA¡]Äµ³ø/·¥­­¡^¡A¦³°İÃD´N©ß¨Ò¥~©Î°O log</summary>
+    /// <summary>ç©ºè·‘ï¼šæª¢æŸ¥è»¸ç‹€æ…‹ï¼ˆè­¦å ±/æ¥µé™ï¼‰ï¼Œæœ‰å•é¡Œå°±æ‹‹ä¾‹å¤–æˆ–è¨˜ log</summary>
     private void DryRunCheckAxisState(string axisName, string context)
     {
         var axis = Axes[axisName];
         if (axis.GetAlarm())
-            throw new InvalidOperationException($"{axisName} ©ó {context} µo¥ÍÄµ³ø");
+            throw new InvalidOperationException($"{axisName} æ–¼ {context} ç™¼ç”Ÿè­¦å ±");
         if (axis.GetPLimit())
-            _logger.Warn($"[DryRun] {axisName} ¥¿·¥­­Ä²µo ({context})");
+            _logger.Warn($"[DryRun] {axisName} æ­£æ¥µé™è§¸ç™¼ ({context})");
         if (axis.GetNLimit())
-            _logger.Warn($"[DryRun] {axisName} ­t·¥­­Ä²µo ({context})");
+            _logger.Warn($"[DryRun] {axisName} è² æ¥µé™è§¸ç™¼ ({context})");
     }
 
     /// <summary>
-    /// ¥ú·½³]­È¡]§t retry »P¸Ô²Ó Log¡^¡C
-    /// HighBright ±±¨î¾¹¦³®É¦]¦ê¤f¦^À³ºC¦Ó Timeout¡A³Ì¦h­«¸Õ 2 ¦¸¡C
+    /// å…‰æºè¨­å€¼ï¼ˆå« retry èˆ‡è©³ç´° Logï¼‰ã€‚
+    /// HighBright æ§åˆ¶å™¨æœ‰æ™‚å› ä¸²å£å›æ‡‰æ…¢è€Œ Timeoutï¼Œæœ€å¤šé‡è©¦ 2 æ¬¡ã€‚
     /// </summary>
     private bool LightSetWithRetry(int channel, int percent, string context, string action, int maxRetry = 2)
     {
         if (_lightHB == null || !_lightHB.IsOpen)
         {
-            _logger.Error($"[Light] {context} CH{channel} {action} ¥¢±Ñ¡G¥ú·½¥¼³s½u");
+            _logger.Error($"[Light] {context} CH{channel} {action} å¤±æ•—ï¼šå…‰æºæœªé€£ç·š");
             return false;
         }
 
@@ -2078,50 +2157,50 @@ public sealed class MachineController : IDisposable
                 bool ok = _lightHB.SetValue(channel, percent);
                 if (ok)
                 {
-                    _logger.Info($"[Light] {context} CH{channel} {action} {percent}% ¡÷ OK (attempt {attempt})");
+                    _logger.Info($"[Light] {context} CH{channel} {action} {percent}% â†’ OK (attempt {attempt})");
                     return true;
                 }
-                _logger.Warn($"[Light] {context} CH{channel} {action} {percent}% ¡÷ ¦^À³¿ù»~ (attempt {attempt}/{maxRetry})  resp=\"{_lightHB.LastUnexpectedResponse}\"");
+                _logger.Warn($"[Light] {context} CH{channel} {action} {percent}% â†’ å›æ‡‰éŒ¯èª¤ (attempt {attempt}/{maxRetry})  resp=\"{_lightHB.LastUnexpectedResponse}\"");
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Light] {context} CH{channel} {action} {percent}% ¡÷ ¨Ò¥~ (attempt {attempt}/{maxRetry}): {ex.Message}");
+                _logger.Error($"[Light] {context} CH{channel} {action} {percent}% â†’ ä¾‹å¤– (attempt {attempt}/{maxRetry}): {ex.Message}");
             }
 
             if (attempt < maxRetry)
-                Thread.Sleep(50); // µu¼Èµ¥«İ«á­«¸Õ
+                Thread.Sleep(50); // çŸ­æš«ç­‰å¾…å¾Œé‡è©¦
         }
 
         return false;
     }
 
-    /// <summary>¼ÒÀÀ¼Ò¦¡ªºªÅ¶]¡G¥Î delay ¼ÒÀÀ ZL/ZR ¤É­° + Y ²¾°Ê</summary>
+    /// <summary>æ¨¡æ“¬æ¨¡å¼çš„ç©ºè·‘ï¼šç”¨ delay æ¨¡æ“¬ ZL/ZR å‡é™ + Y ç§»å‹•</summary>
     private async Task DryRunSimAsync(
         IProgress<string>? progress,
         CancellationToken ct,
         IProgress<SlotInspectionProgress>? slotProgress = null)
     {
         const string SimImageRoot = @"D:\CameraTestImage";
-        // ¹ÏÀÉ prefix¡GCameraTestImage ¤U¥u¦³ AreaA_Row1_Slot#N_L/R ©R¦W
+        // åœ–æª” prefixï¼šCameraTestImage ä¸‹åªæœ‰ AreaA_Row1_Slot#N_L/R å‘½å
         const string ImgPrefix = "AreaA_Row1";
         const int SlotCount = 25;
 
-        progress?.Report($"[Sim] ¶}©l¼ÒÀÀ¨ú¹³¡A¦@ {SlotCount} ­Ó Slot");
+        progress?.Report($"[Sim] é–‹å§‹æ¨¡æ“¬å–åƒï¼Œå…± {SlotCount} å€‹ Slot");
 
         for (int i = 0; i < SlotCount; i++)
         {
             ct.ThrowIfCancellationRequested();
-            int slotNum = 25 - i; // »¼´î¡G25, 24, ..., 1
+            int slotNum = 25 - i; // éæ¸›ï¼š25, 24, ..., 1
 
-            progress?.Report($"[Sim] ({i + 1}/{SlotCount}) SLOT#{slotNum}: ¼ÒÀÀ¨ú¹³...");
+            progress?.Report($"[Sim] ({i + 1}/{SlotCount}) SLOT#{slotNum}: æ¨¡æ“¬å–åƒ...");
 
-            // _L ¡÷ AreaA¡]¥ª¬Û¾÷¡^¡A_R ¡÷ AreaB¡]¥k¬Û¾÷¡^¡A¦P¤@­Ó slot ¦P®É¦^³ø
+            // _L â†’ AreaAï¼ˆå·¦ç›¸æ©Ÿï¼‰ï¼Œ_R â†’ AreaBï¼ˆå³ç›¸æ©Ÿï¼‰ï¼ŒåŒä¸€å€‹ slot åŒæ™‚å›å ±
             System.Windows.Media.ImageSource? imgL = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "L");
             System.Windows.Media.ImageSource? imgR = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "R");
 
-            string statusText = $"[Sim] SLOT#{slotNum} ¨ú¹³§¹¦¨";
+            string statusText = $"[Sim] SLOT#{slotNum} å–åƒå®Œæˆ";
 
-            // AreaA¡G¥ª¬Û¾÷¹Ï
+            // AreaAï¼šå·¦ç›¸æ©Ÿåœ–
             slotProgress?.Report(new SlotInspectionProgress
             {
                 Target     = SlotInspectionProgress.TargetCollection.AreaA_Row1,
@@ -2130,10 +2209,10 @@ public sealed class MachineController : IDisposable
                 StatusText = statusText,
             });
 
-            // µ¹ UI °õ¦æºü®É¶¡³B²z AreaA ¦A§ë»¼ AreaB
+            // çµ¦ UI åŸ·è¡Œç·’æ™‚é–“è™•ç† AreaA å†æŠ•é AreaB
             await Task.Delay(10, ct);
 
-            // AreaB¡G¥k¬Û¾÷¹Ï¡]¦P¨BÅã¥Ü¡^
+            // AreaBï¼šå³ç›¸æ©Ÿåœ–ï¼ˆåŒæ­¥é¡¯ç¤ºï¼‰
             slotProgress?.Report(new SlotInspectionProgress
             {
                 Target     = SlotInspectionProgress.TargetCollection.AreaB_Row1,
@@ -2142,15 +2221,15 @@ public sealed class MachineController : IDisposable
                 StatusText = statusText,
             });
 
-            await Task.Delay(290, ct); // ¼ÒÀÀ¨C¼Ñ¶¡¹j¡]Á`­p 300ms¡^
+            await Task.Delay(290, ct); // æ¨¡æ“¬æ¯æ§½é–“éš”ï¼ˆç¸½è¨ˆ 300msï¼‰
         }
 
-        progress?.Report($"[Sim] ¼ÒÀÀ§¹¦¨¡A¦@ {SlotCount} ­Ó Slot");
+        progress?.Report($"[Sim] æ¨¡æ“¬å®Œæˆï¼Œå…± {SlotCount} å€‹ Slot");
         _logger.Info("===== Dry Run (Sim) Done =====");
     }
 
     /// <summary>
-    /// ±q SimImageRoot §ä¨ì²Å¦X &lt;prefix&gt;_Slot#&lt;N&gt;_&lt;side&gt;_*.bmp ªº³Ì·sÀÉ®×¨Ã¸ü¤J¬° BitmapSource¡C
+    /// å¾ SimImageRoot æ‰¾åˆ°ç¬¦åˆ &lt;prefix&gt;_Slot#&lt;N&gt;_&lt;side&gt;_*.bmp çš„æœ€æ–°æª”æ¡ˆä¸¦è¼‰å…¥ç‚º BitmapSourceã€‚
     /// </summary>
     private static System.Windows.Media.ImageSource? LoadSimImage(string root, string prefix, int slotNum, string side)
     {
@@ -2162,7 +2241,7 @@ public sealed class MachineController : IDisposable
         if (files.Length == 0)
             return null;
 
-        // ¨ú³Ì«á­×§ï®É¶¡³Ì·sªº¤@±i
+        // å–æœ€å¾Œä¿®æ”¹æ™‚é–“æœ€æ–°çš„ä¸€å¼µ
         var file = files.OrderByDescending(f => System.IO.File.GetLastWriteTime(f)).First();
 
         try

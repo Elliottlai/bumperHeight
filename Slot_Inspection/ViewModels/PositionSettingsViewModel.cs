@@ -28,8 +28,11 @@ public sealed class AxisPositionEntry : ObservableObject
 /// </summary>
 public sealed class PositionSettingsViewModel : ObservableObject
 {
-    // ── Y 軸：25 個 Slot 座標（AreaA_Row1，對應實體 Slot 1~25）──
-    public ObservableCollection<AxisPositionEntry> YPositions { get; } = [];
+    // ── Y 軸：R 組（X12=true，R 載台）25 個 Slot 座標 ──
+    public ObservableCollection<AxisPositionEntry> YPositions_R { get; } = [];
+
+    // ── Y 軸：L 組（X13=true，L 載台）25 個 Slot 座標 ──
+    public ObservableCollection<AxisPositionEntry> YPositions_L { get; } = [];
 
     // ── ZL 軸 R組（X12=true，板子在右側）──
     public ObservableCollection<AxisPositionEntry> ZLPositions_R { get; } = [];
@@ -53,9 +56,14 @@ public sealed class PositionSettingsViewModel : ObservableObject
     public void LoadFrom(InspectionConfig config)
     {
         SlotPositionTable.Load();   // 從 JSON 讀取最新已存座標
-        YPositions.Clear();
-        for (int i = 0; i < SlotPositionTable.AreaA_Row1.Length; i++)
-            YPositions.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1[i].Y));
+
+        YPositions_R.Clear();
+        for (int i = 0; i < SlotPositionTable.AreaA_Row1_R.Length; i++)
+            YPositions_R.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1_R[i].Y));
+
+        YPositions_L.Clear();
+        for (int i = 0; i < SlotPositionTable.AreaA_Row1_L.Length; i++)
+            YPositions_L.Add(new AxisPositionEntry($"Slot {i + 1}", SlotPositionTable.AreaA_Row1_L[i].Y));
 
         ZLPositions_R.Clear();
         ZLPositions_R.Add(new AxisPositionEntry("ZL 相機高度 (R組)", config.CameraHeightZL_R));
@@ -84,9 +92,13 @@ public sealed class PositionSettingsViewModel : ObservableObject
     /// <summary>將目前值寫回 InspectionConfig 與 SlotPositionTable。</summary>
     public void ApplyTo(InspectionConfig config)
     {
-        // Y 軸 → SlotPositionTable
-        for (int i = 0; i < YPositions.Count && i < SlotPositionTable.AreaA_Row1.Length; i++)
-            SlotPositionTable.AreaA_Row1[i] = new SlotPosition(YPositions[i].Value);
+        // Y 軸 R 組 → SlotPositionTable.AreaA_Row1_R
+        for (int i = 0; i < YPositions_R.Count && i < SlotPositionTable.AreaA_Row1_R.Length; i++)
+            SlotPositionTable.AreaA_Row1_R[i] = new SlotPosition(YPositions_R[i].Value);
+
+        // Y 軸 L 組 → SlotPositionTable.AreaA_Row1_L
+        for (int i = 0; i < YPositions_L.Count && i < SlotPositionTable.AreaA_Row1_L.Length; i++)
+            SlotPositionTable.AreaA_Row1_L[i] = new SlotPosition(YPositions_L[i].Value);
 
         // ZL R組
         if (ZLPositions_R.Count >= 1) config.CameraHeightZL_R = ZLPositions_R[0].Value;

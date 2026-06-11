@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using JsonType;
+using NLog;
 using Slot_Inspection.Helper;
 using Slot_Inspection.Models;
 using Slot_Inspection.Services;
@@ -12,6 +13,8 @@ namespace Slot_Inspection.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
     private string _barcode = "";
     private string _carrierSide = "";
     private string _areaATitle = "Area A";
@@ -751,9 +754,17 @@ public sealed class MainViewModel : ObservableObject
             // ── STEP 0：讀取條碼 ──────────────────────────────────────────
             StatusMessage = "正在移動至條碼讀取位置...";
 
+            // ── ZL/ZR 安全高度確認（在 Y 移動前）──
+            bool x12pre = _machine.GetPlcXOctal(12) ?? false;
+            bool x13pre = _machine.GetPlcXOctal(13) ?? false;
+            double safeZL = _machine.Config.GetZLSafeHeight(x12pre, x13pre);
+            double safeZR = _machine.Config.GetZRSafeHeight(x12pre, x13pre);
+            _logger.Info($"[OnRunInspection|STEP0] 讀條碼前 Z 安全高度讀取 | X12={x12pre} X13={x13pre} safeZL={safeZL:F3} safeZR={safeZR:F3}");
+            await _machine.EnsureZSafeBeforeYMoveAsync(safeZL, safeZR, statusProgress, ct, "OnRunInspection-STEP0");
 
             // Y 軸移動至讀碼位置
             StatusMessage = $"Y 軸移動至條碼讀取位置 {_machine.Config.BarcodePositionY:F1} mm，請稍候...";
+            _logger.Info($"[OnRunInspection|STEP0] Y 軸移動至讀碼位置 {_machine.Config.BarcodePositionY:F1} mm");
             await Task.Yield();
             _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
             await Task.Delay(150, ct);
@@ -921,7 +932,17 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = $"Y 軸移動至條碼讀取位置 {_machine.Config.BarcodePositionY} mm，請稍候...";
 
+            // STEP 1: ZL/ZR 安全高度確認（在 Y 移動前）
+            var rbProgress = new Progress<string>(msg => StatusMessage = msg);
+            bool rbX12 = _machine.GetPlcXOctal(12) ?? false;
+            bool rbX13 = _machine.GetPlcXOctal(13) ?? false;
+            double rbSafeZL = _machine.Config.GetZLSafeHeight(rbX12, rbX13);
+            double rbSafeZR = _machine.Config.GetZRSafeHeight(rbX12, rbX13);
+            _logger.Info($"[OnReadBarcode|STEP1] 讀條碼前 Z 安全高度讀取 | X12={rbX12} X13={rbX13} safeZL={rbSafeZL:F3} safeZR={rbSafeZR:F3}");
+            await _machine.EnsureZSafeBeforeYMoveAsync(rbSafeZL, rbSafeZR, rbProgress, ct, "OnReadBarcode-STEP1");
+
             // STEP 1: Y 軸移動到設定位置
+            _logger.Info($"[OnReadBarcode|STEP1] Y 軸移動至讀碼位置 {_machine.Config.BarcodePositionY} mm");
             _machine.Axes["AxisY"].MotMoveAbs(_machine.Config.BarcodePositionY);
             bool yArrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisY"].Wait(),

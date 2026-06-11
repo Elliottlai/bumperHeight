@@ -51,6 +51,15 @@ public class CimApiClient
         set => _itemName = value ?? _itemName;
     }
 
+    private bool _isEnabled = true;
+
+    /// <summary>是否啟用 MES WebAPI 功能。false 時所有 API 呼叫均被略過。</summary>
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set => _isEnabled = value;
+    }
+
     private static readonly string _logDir = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "WebApiLog");
 
@@ -69,7 +78,7 @@ public class CimApiClient
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            var data = new CimApiSettings { BaseUrl = _baseUrl, EquipmentId = _equipmentId, ProductType = _productType, ItemName = _itemName };
+            var data = new CimApiSettings { BaseUrl = _baseUrl, EquipmentId = _equipmentId, ProductType = _productType, ItemName = _itemName, IsEnabled = _isEnabled };
             File.WriteAllText(_settingsPath,
                 JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }),
                 Encoding.UTF8);
@@ -96,6 +105,7 @@ public class CimApiClient
                 _productType = data.ProductType;
             if (!string.IsNullOrWhiteSpace(data.ItemName))
                 _itemName = data.ItemName;
+            _isEnabled = data.IsEnabled;
         }
         catch (Exception ex)
         {
@@ -220,7 +230,7 @@ public class CimApiClient
         WriteLog("INFO", $"→ BumperSoftwareAlarmt | EquipmentId={_equipmentId}");
         try
         {
-            var resp = await _api.BumperSoftwareAlarmt(_equipmentId);
+            var resp = await _api.BumperSoftwareAlarm(_equipmentId);
             LastStatus = resp != null ? MesConnectionStatus.Connected : MesConnectionStatus.Disconnected;
             WriteLog("INFO", $"← BumperSoftwareAlarmt | {LastStatus}");
         }
@@ -279,7 +289,8 @@ public enum MesConnectionStatus
 {
     Unknown,      // 尚未嘗試連線
     Connected,    // 上一次呼叫成功
-    Disconnected  // 上一次呼叫失敗
+    Disconnected, // 上一次呼叫失敗
+    Disabled      // WebAPI 功能已關閉
 }
 
 /// <summary>CimApiClient 持久化設定。</summary>
@@ -289,4 +300,5 @@ internal sealed class CimApiSettings
     public string EquipmentId { get; set; } = "SlotInspection";
     public string ProductType { get; set; } = "";
     public string ItemName    { get; set; } = "Height";
+    public bool   IsEnabled   { get; set; } = true;
 }
