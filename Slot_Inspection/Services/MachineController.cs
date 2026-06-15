@@ -66,7 +66,6 @@ public sealed class MachineController : IDisposable
     public Dictionary<string, IAxis> Axes => cMachineManager.Axises;
     public Dictionary<string, ICamera> Cameras => cMachineManager.Cameras;
 
-    private FoupInspecMachine.Models.OPT_Controller? _light;
     private HighBright_Controller? _lightHB;           // HighBright 光源（DryRun / 實際取像用）
     private CameraManager? _cameraManager;
 
@@ -212,17 +211,20 @@ public sealed class MachineController : IDisposable
         {
             double postZL = Axes["AxisZL"].GetRealPosition();
             double postZR = Axes["AxisZR"].GetRealPosition();
-            _logger.Error($"✘ ZL/ZR 升至安全高度逾時，請立即確認設備狀態！" +
-                          $"（ZL 實際={postZL:F2} mm，目標={safeZL:F2} mm｜" +
-                          $"ZR 實際={postZR:F2} mm，目標={safeZR:F2} mm｜來源：{caller}）");
+            string timeoutMsg =
+                $"ZL/ZR 升至安全高度逾時，Y 軸移動中止以避免碰撞" +
+                $"（ZL 實際={postZL:F2} mm，目標={safeZL:F2} mm｜" +
+                $"ZR 實際={postZR:F2} mm，目標={safeZR:F2} mm｜來源：{caller}）";
+            _logger.Error($"✘ {timeoutMsg}");
+            progress?.Report($"✘ {timeoutMsg}");
+            // 未確認 Z 軸到達安全高度前，絕不允許呼叫端繼續移動 Y 軸
+            throw new TimeoutException(timeoutMsg);
         }
-        else
-        {
-            double postZL = Axes["AxisZL"].GetRealPosition();
-            double postZR = Axes["AxisZR"].GetRealPosition();
-            _logger.Info($"✔ ZL/ZR 已升至安全高度（ZL={postZL:F2} mm，ZR={postZR:F2} mm｜來源：{caller}）");
-            progress?.Report($"✔ ZL/ZR 已恢復安全高度（ZL={postZL:F2} mm，ZR={postZR:F2} mm）");
-        }
+
+        double okZL = Axes["AxisZL"].GetRealPosition();
+        double okZR = Axes["AxisZR"].GetRealPosition();
+        _logger.Info($"✔ ZL/ZR 已升至安全高度（ZL={okZL:F2} mm，ZR={okZR:F2} mm｜來源：{caller}）");
+        progress?.Report($"✔ ZL/ZR 已恢復安全高度（ZL={okZL:F2} mm，ZR={okZR:F2} mm）");
     }
 
     private readonly InspectionConfig _config = InspectionConfig.Load();
@@ -424,16 +426,15 @@ public sealed class MachineController : IDisposable
 
         if (string.IsNullOrEmpty(code))
         {
+            // 回傳 null 讓呼叫端走「讀碼失敗 → 退軸 → 重新放置」流程，
+            // 不可回傳假條碼，否則檢測結果 / CSV / MES 會掛在錯誤的條碼底下
             _logger.Warn("[S01] 讀碼失敗（NoRead 或 timeout）");
             progress?.Report("[S01] ? 讀碼失敗");
-            code = "unkonwn";
-        }
-        else
-        {
-            _logger.Info($"[S01] 讀碼成功: {code}");
-            progress?.Report($"[S01] 條碼：{code} ?");
+            return null;
         }
 
+        _logger.Info($"[S01] 讀碼成功: {code}");
+        progress?.Report($"[S01] 條碼：{code} ?");
         return code;
     }
 
@@ -759,73 +760,87 @@ public sealed class MachineController : IDisposable
         Axes["AxisZR"].SetMaxVel(2000);
 
         // 全程開燈（Slot 迴圈開始前開一次，減少每格重複開關）
-        _light!.SetValue(_config.LightChannelLeft,  _config.LightIntensityLeft);
-        _light.SetValue(_config.LightChannelRight, _config.LightIntensityRight);
+        // 使用 HighBright 光源（與 S00 InitLightHB 初始化的控制器一致）
+        if (_lightHB == null || !_lightHB.IsOpen)
+        {
+            var lightInit = InitLightHB();
+            if (!lightInit.Success)
+                throw new InvalidOperationException($"光源初始化失敗: {lightInit.Message}");
+        }
+        bool lightOnL = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "S03", "ON");
+        bool lightOnR = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "S03", "ON");
+        if (!lightOnL || !lightOnR)
+            _logger.Warn($"[S03] 光源開啟失敗  CH{_config.LightChannelLeft}={lightOnL} CH{_config.LightChannelRight}={lightOnR}，請確認光源控制器連線");
         await Task.Delay(_config.LightStabilizeMs, ct);
         _logger.Info("[S03] Lights ON (all-slots mode)");
 
-        foreach (var (areaA, areaB, count) in rows)
+        try
         {
-            for (int i = 0; i < count; i++)
+            foreach (var (areaA, areaB, count) in rows)
             {
-                ct.ThrowIfCancellationRequested();
-
-                // 同時對 AreaA 和 AreaB 進行檢測
-                var taskA = InspectOneSlotAsync(barcode, areaA, i, ct);
-                var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
-                await Task.WhenAll(taskA, taskB);
-
-                var (valueA, isNgA, imagePathA, imageA, startTimeA) = taskA.Result;
-                var (valueB, isNgB, imagePathB, imageB, startTimeB) = taskB.Result;
-
-                // 依 X12/X13 判斷 Bumper Position（不透過 DLL）
-                // X12=true → 右側載台 → 右相機=C3 / 左相機=C4
-                // X13=true → 左側載台 → 右相機=C1 / 左相機=C2
-                bool bpX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
-                string bumperPosRight = bpX12 ? "C3" : "C1";
-                string bumperPosLeft  = bpX12 ? "C4" : "C2";
-
-                // valueA / valueB 已是 mm?，LowerSpec/UpperSpec 來自 JSON 設定，processStartTime 計算 DuringTime
-                string layerNum = (i + 1).ToString();
-                InspectionResultWriter.WriteSlotResult(barcode, valueA, isNgA, imagePathA,
-                    bumperPosition: bumperPosLeft,  layer: layerNum,
-                    lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
-                    processStartTime: startTimeA);
-                InspectionResultWriter.WriteSlotResult(barcode, valueB, isNgB, imagePathB,
-                    bumperPosition: bumperPosRight, layer: layerNum,
-                    lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
-                    processStartTime: startTimeB);
-
-                // 同時回報 AreaA 和 AreaB 的進度（UI 同時顯示兩張圖）
-                progress?.Report(new SlotInspectionProgress
+                for (int i = 0; i < count; i++)
                 {
-                    Target = areaA,
-                    SlotIndex = i,
-                    Value = valueA,
-                    IsNg = isNgA,
-                    StatusText = $"[{areaA}] Slot {i + 1}/{count} - {(isNgA ? "NG" : "OK")}",
-                    Image = imageA
-                });
+                    ct.ThrowIfCancellationRequested();
 
-                progress?.Report(new SlotInspectionProgress
-                {
-                    Target = areaB,
-                    SlotIndex = i,
-                    Value = valueB,
-                    IsNg = isNgB,
-                    StatusText = $"[{areaB}] Slot {i + 1}/{count} - {(isNgB ? "NG" : "OK")}",
-                    Image = imageB
-                });
+                    // 同時對 AreaA 和 AreaB 進行檢測
+                    var taskA = InspectOneSlotAsync(barcode, areaA, i, ct);
+                    var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
+                    await Task.WhenAll(taskA, taskB);
 
-                _logger.Debug($"[S03] {areaA}[{i}] Value={valueA:F2} IsNg={isNgA}");
-                _logger.Debug($"[S03] {areaB}[{i}] Value={valueB:F2} IsNg={isNgB}");
+                    var (valueA, isNgA, imagePathA, imageA, startTimeA) = taskA.Result;
+                    var (valueB, isNgB, imagePathB, imageB, startTimeB) = taskB.Result;
+
+                    // 依 X12/X13 判斷 Bumper Position（不透過 DLL）
+                    // X12=true → 右側載台 → 右相機=C3 / 左相機=C4
+                    // X13=true → 左側載台 → 右相機=C1 / 左相機=C2
+                    bool bpX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
+                    string bumperPosRight = bpX12 ? "C3" : "C1";
+                    string bumperPosLeft  = bpX12 ? "C4" : "C2";
+
+                    // valueA / valueB 已是 mm?，LowerSpec/UpperSpec 來自 JSON 設定，processStartTime 計算 DuringTime
+                    string layerNum = (i + 1).ToString();
+                    InspectionResultWriter.WriteSlotResult(barcode, valueA, isNgA, imagePathA,
+                        bumperPosition: bumperPosLeft,  layer: layerNum,
+                        lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
+                        processStartTime: startTimeA);
+                    InspectionResultWriter.WriteSlotResult(barcode, valueB, isNgB, imagePathB,
+                        bumperPosition: bumperPosRight, layer: layerNum,
+                        lowerSpec: _config.ValueLimitLow, upperSpec: _config.ValueLimitHigh,
+                        processStartTime: startTimeB);
+
+                    // 同時回報 AreaA 和 AreaB 的進度（UI 同時顯示兩張圖）
+                    progress?.Report(new SlotInspectionProgress
+                    {
+                        Target = areaA,
+                        SlotIndex = i,
+                        Value = valueA,
+                        IsNg = isNgA,
+                        StatusText = $"[{areaA}] Slot {i + 1}/{count} - {(isNgA ? "NG" : "OK")}",
+                        Image = imageA
+                    });
+
+                    progress?.Report(new SlotInspectionProgress
+                    {
+                        Target = areaB,
+                        SlotIndex = i,
+                        Value = valueB,
+                        IsNg = isNgB,
+                        StatusText = $"[{areaB}] Slot {i + 1}/{count} - {(isNgB ? "NG" : "OK")}",
+                        Image = imageB
+                    });
+
+                    _logger.Debug($"[S03] {areaA}[{i}] Value={valueA:F2} IsNg={isNgA}");
+                    _logger.Debug($"[S03] {areaB}[{i}] Value={valueB:F2} IsNg={isNgB}");
+                }
             }
         }
-
-        // 全程關燈（所有 Slot 完成後，Y 軸回取料位前）
-        _light!.SetValue(_config.LightChannelLeft,  0);
-        _light.SetValue(_config.LightChannelRight, 0);
-        _logger.Info("[S03] Lights OFF before returning to pick position");
+        finally
+        {
+            // 全程關燈（正常結束、取消、例外都必須關燈）
+            LightSetWithRetry(_config.LightChannelLeft,  0, "S03", "OFF");
+            LightSetWithRetry(_config.LightChannelRight, 0, "S03", "OFF");
+            _logger.Info("[S03] Lights OFF");
+        }
 
         _logger.Info($"===== S03 Inspection Done | Barcode: {barcode} =====");
     }
@@ -1052,20 +1067,6 @@ public sealed class MachineController : IDisposable
             return DeviceInitResult.Ok(name);
         }
         catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, $"Load failed: {ex.Message}", ex); }
-    }
-
-    private DeviceInitResult InitLight()
-    {
-        const string name = "OPT Light";
-        try
-        {
-            _light = new FoupInspecMachine.Models.OPT_Controller(_lightComPort);
-            _light.Open();
-            if (!_light.IsOpen) return DeviceInitResult.Fail(name, $"Cannot open {_lightComPort}");
-            _ = _light.GetValue(1);
-            _logger.Info($"{name}: OK ({_lightComPort})"); return DeviceInitResult.Ok(name);
-        }
-        catch (Exception ex) { _logger.Error(ex, $"{name}: FAIL"); return DeviceInitResult.Fail(name, $"{_lightComPort}: {ex.Message}", ex); }
     }
 
     /// <summary>
@@ -1332,15 +1333,22 @@ public sealed class MachineController : IDisposable
             if (devices.Count == 0)
                 return DeviceInitResult.Fail(name, "No MvCodeReader device found (請確認讀碼器 GigE 連線)");
 
+            // 優先選擇 UserDefinedName="Barcode" 的裝置；找不到則退回第一台
             int devId = 0;
-            foreach(var dev in devices)
+            bool foundNamed = false;
+            for (int i = 0; i < devices.Count; i++)
             {
-                if (dev.UserDefinedName == "Barcode")
+                if (devices[i].UserDefinedName == "Barcode")
+                {
+                    devId = i;
+                    foundNamed = true;
                     break;
-                 devId++;
+                }
             }
+            if (!foundNamed)
+                _logger.Warn($"[S01] 未找到 UserDefinedName=\"Barcode\" 的讀碼器，改用第一台");
 
-            _logger.Info($"[S01] 找到 {devices.Count} 台讀碼器，使用第一台: {devices[devId].DisplayName}");
+            _logger.Info($"[S01] 找到 {devices.Count} 台讀碼器，使用: {devices[devId].DisplayName}");
 
             // 建立 BarcodeReader 專案的 SDK 封裝物件
             _barcodeDevice = new MvCodeReaderDevice();
@@ -2308,7 +2316,6 @@ public sealed class MachineController : IDisposable
             }
             catch { }
             try { _plc?.Dispose(); } catch { }
-            try { _light?.Dispose(); } catch { }
             try { _lightHB?.Dispose(); } catch { }
 
             foreach (var axis in Axes.Values)
