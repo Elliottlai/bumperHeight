@@ -1,32 +1,32 @@
 namespace Machine.Core.Models.Axis.DeltaRS485
 {
     /// <summary>
-    /// Delta ASDA-B3 ÅX°Ê¾¹ Modbus ¼È¦s¾¹¦ì§}±`¼Æªí
+    /// Delta ASDA-B3 é©…å‹•å™¨ Modbus æš«å­˜å™¨ä½å€å¸¸æ•¸è¡¨
     /// </summary>
     public static class AsdaB3RegisterMap
     {
         // ============================
-        //  P0 ¸s²Õ ¡X ºÊµø / Absolute
+        //  P0 ç¾¤çµ„ â€” ç›£è¦– / Absolute
         // ============================
         public const ushort P0_000_Version = 0x0000;
 
-        /// <summary>P0.045 ¡X DI °T¸¹¾ã¦Xª¬ºA (16-bit, HEX)</summary>
+        /// <summary>P0.045 â€” DI è¨Šè™Ÿæ•´åˆç‹€æ…‹ (16-bit, HEX)</summary>
         public const ushort P0_045_DiStatus = 0x005A;
 
-        /// <summary>P0.046 ¡X ÅX°Ê¾¹ª¬ºA¿é¥X (16-bit, HEX)</summary>
+        /// <summary>P0.046 â€” é©…å‹•å™¨ç‹€æ…‹è¼¸å‡º (16-bit, HEX)</summary>
         public const ushort P0_046_DriverStatus = 0x005C;
 
-        /// <summary>P0.050 ¡X µ´¹ï«¬®y¼Ğ¨t²Îª¬ºA (16-bit, HEX)</summary>
+        /// <summary>P0.050 â€” çµ•å°å‹åº§æ¨™ç³»çµ±ç‹€æ…‹ (16-bit, HEX)</summary>
         public const ushort P0_050_AbsStatus = 0x0064;
 
-        /// <summary>P0.051 ¡X ¦h°éµ´¹ï¦ì¸m (32-bit, Low word)</summary>
+        /// <summary>P0.051 â€” å¤šåœˆçµ•å°ä½ç½® (32-bit, Low word)</summary>
         public const ushort P0_051_MultiTurnPos_Low = 0x0066;
 
-        /// <summary>P0.052 ¡X ³æ°éµ´¹ï¦ì¸m (32-bit, Low word)</summary>
+        /// <summary>P0.052 â€” å–®åœˆçµ•å°ä½ç½® (32-bit, Low word)</summary>
         public const ushort P0_052_SingleTurnPos_Low = 0x0068;
 
         // ============================
-        //  P0 ¸s²Õ ¡X ºÊµøÅÜ¼Æ¬M®g
+        //  P0 ç¾¤çµ„ â€” ç›£è¦–è®Šæ•¸æ˜ å°„
         // ============================
         public const ushort P0_009_MappedMonitorValue1 = 0x0012;
         public const ushort P0_010_MappedMonitorValue2 = 0x0014;
@@ -39,7 +39,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public const ushort P0_020_MappedMonitorSel4 = 0x0028;
 
         // ============================
-        //  P2 ¸s²Õ ¡X ÂX¥R / Absolute
+        //  P2 ç¾¤çµ„ â€” æ“´å…… / Absolute
         // ============================
         public const ushort P2_008_WriteProtect = 0x0210;
         public const ushort P2_030_AuxFunction = 0x023C;
@@ -47,21 +47,21 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public const ushort P2_071_BuildAbsOrigin = 0x028E;
 
         // ============================
-        //  P3 ¸s²Õ ¡X ³q°T°Ñ¼Æ
+        //  P3 ç¾¤çµ„ â€” é€šè¨Šåƒæ•¸
         // ============================
         public const ushort P3_006_DiControl = 0x030C;
 
         // ============================
-        //  P4 ¸s²Õ ¡X DI/DO ¥\¯à
+        //  P4 ç¾¤çµ„ â€” DI/DO åŠŸèƒ½
         // ============================
         public const ushort P4_006_SoftwareDO = 0x040C;
         public const ushort P4_007_SoftwareDI = 0x040E;
 
-        public const ushort P5_005_HighSpeedHoming_Low = 0x050A; // °ª³tÂk­ìÂI³t«× (32-bit Low)
-        public const ushort P5_006_LowSpeedHoming_Low = 0x050C; // §C³tÂk­ìÂI³t«× (32-bit Low)
+        public const ushort P5_005_HighSpeedHoming_Low = 0x050A; // é«˜é€Ÿæ­¸åŸé»é€Ÿåº¦ (32-bit Low)
+        public const ushort P5_006_LowSpeedHoming_Low = 0x050C; // ä½é€Ÿæ­¸åŸé»é€Ÿåº¦ (32-bit Low)
 
         // ============================
-        //  P5 ¸s²Õ ¡X PR / Motion
+        //  P5 ç¾¤çµ„ â€” PR / Motion
         // ============================
         public const ushort P5_007_PrTrigger = 0x050E;
         public const ushort P5_020_AccDecTime0 = 0x0528;
@@ -69,26 +69,31 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public const ushort P5_060_TargetSpeed0 = 0x0578;
 
         // ============================
-        //  P6 ¸s²Õ ¡X PR Path Definition
+        //  P6 ç¾¤çµ„ â€” PR Path Definition
         // ============================
         public const ushort P6_002_Pr1PathDef_Low = 0x0604;
         public const ushort P6_003_Pr1TargetPos_Low = 0x0606;
 
         // ============================
-        //  ª¬ºA¼È¦s¾¹
+        //  ç‹€æ…‹æš«å­˜å™¨
         // ============================
         public const ushort StatusWord = P4_006_SoftwareDO;
+
+        /// <summary>
+        /// [æœªé©—è­‰/ä¸è¦ä½¿ç”¨] åŸæœ¬æƒ³å°æ‡‰ P0.001 è­¦å ±ä»£ç¢¼æš«å­˜å™¨ï¼Œä½†ä½å€å¾æœªç¶“å¯¦æ©Ÿç¢ºèªéã€‚
+        /// ç›®å‰è®€å–è­¦å ±ç¢¼è«‹æ”¹ç”¨å·²é©—è­‰çš„ <see cref="P0_010_MappedMonitorValue2"/>ï¼ˆç›£æ§æ˜ å°„é€šé“ 2ï¼Œå°æ‡‰ AlarmCodeDecimalï¼‰ã€‚
+        /// </summary>
         public const ushort AlarmCode = 0x0002;
 
         // ============================
-        //  ±`¼Æ
+        //  å¸¸æ•¸
         // ============================
         public const ushort WriteProtectUnlock = 271;
         public const ushort PrNumber_1 = 1;
         public const ushort PrTrigger_Stop = 1000;
 
         // ============================
-        //  DI ¦ì¤¸¾B¸n
+        //  DI ä½å…ƒé®ç½©
         // ============================
         public const ushort DI1_Bit = 0x0001;
         public const ushort DI2_Bit = 0x0002;
@@ -101,7 +106,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         public const ushort DI9_Bit = 0x0100;
 
         // ============================
-        //  Status Bit ¾B¸n
+        //  Status Bit é®ç½©
         // ============================
         public const ushort StatusBit_Brake = 0x0010;
     }

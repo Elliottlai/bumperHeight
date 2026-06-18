@@ -5,8 +5,8 @@ using DeltaAxis_RS485.Interfaces;
 namespace DeltaAxis_RS485.Services;
 
 /// <summary>
-/// Modbus RTU ³q°T¹ê§@
-/// ¨Ï¥Î System.IO.Ports.SerialPort ¶i¦æ RS485 ³q°T
+/// Modbus RTU é€šè¨Šå¯¦ä½œ
+/// ä½¿ç”¨ System.IO.Ports.SerialPort é€²è¡Œ RS485 é€šè¨Š
 /// </summary>
 public class ModbusRtuClient : IModbusRtuClient, IDisposable
 {
@@ -14,13 +14,13 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
     private byte _slaveId;
     private readonly object _lock = new();
 
-    /// <summary>¬O§_¤w³s½u</summary>
+    /// <summary>æ˜¯å¦å·²é€£ç·š</summary>
     public bool IsConnected => _serial?.IsOpen ?? false;
 
-    /// <summary>«Ø¥ß RS485 ³s½u</summary>
+    /// <summary>å»ºç«‹ RS485 é€£ç·š</summary>
     public void Connect(string portName, int baudRate, byte slaveId)
     {
-        // ½T«OÂÂ³s½u¤wÃö³¬¡AÁ×§K SerialPort ­«½Æ¶}±Ò
+        // ç¢ºä¿èˆŠé€£ç·šå·²é—œé–‰ï¼Œé¿å… SerialPort é‡è¤‡é–‹å•Ÿ
         Disconnect();
 
         _slaveId = slaveId;
@@ -42,11 +42,11 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"µLªk¶}±Ò COM Port: {portName}¡A¿ù»~: {ex.Message}", ex);
+            throw new InvalidOperationException($"ç„¡æ³•é–‹å•Ÿ COM Port: {portName}ï¼ŒéŒ¯èª¤: {ex.Message}", ex);
         }
     }
 
-    /// <summary>Â_¶}³s½u</summary>
+    /// <summary>æ–·é–‹é€£ç·š</summary>
     public void Disconnect()
     {
         if (_serial?.IsOpen == true)
@@ -57,123 +57,134 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         _serial = null;
     }
 
-    /// <summary>Åª¨ú³æ¤@¼È¦s¾¹ (FC03)</summary>
+    /// <summary>è®€å–å–®ä¸€æš«å­˜å™¨ (FC03)</summary>
     public ushort ReadRegister(ushort address)
     {
         var result = ReadRegisters(address, 1);
         return result[0];
     }
 
-    /// <summary>Åª¨ú¦h­Ó¼È¦s¾¹ (FC03)</summary>
+    /// <summary>è®€å–å¤šå€‹æš«å­˜å™¨ (FC03)</summary>
     public ushort[] ReadRegisters(ushort address, ushort count)
     {
         lock (_lock)
         {
             EnsureConnected();
 
-            // ²Õ«Ø Modbus RTU ½Ğ¨D: [SlaveId][FC03][AddrHi][AddrLo][CountHi][CountLo][CRC]
-            var request = new byte[8];
-            request[0] = _slaveId;
-            request[1] = 0x03; // Function Code 03: Read Holding Registers
-            request[2] = (byte)(address >> 8);
-            request[3] = (byte)(address & 0xFF);
-            request[4] = (byte)(count >> 8);
-            request[5] = (byte)(count & 0xFF);
-            AppendCrc(request, 6);
-
-            SendAndFlush(request);
-
-            // ¦^À³®æ¦¡: [SlaveId][FC03][ByteCount][Data...][CRC]
-            int expectedBytes = 5 + count * 2; // 1+1+1+(count*2)+2
-            var response = ReadResponse(expectedBytes);
-
-            ValidateResponse(response, 0x03);
-
-            // ¸ÑªR¸ê®Æ
-            var values = new ushort[count];
-            for (int i = 0; i < count; i++)
+            return ExecuteWithRetry(() =>
             {
-                values[i] = (ushort)((response[3 + i * 2] << 8) | response[4 + i * 2]);
-            }
-            return values;
+                // çµ„å»º Modbus RTU è«‹æ±‚: [SlaveId][FC03][AddrHi][AddrLo][CountHi][CountLo][CRC]
+                var request = new byte[8];
+                request[0] = _slaveId;
+                request[1] = 0x03; // Function Code 03: Read Holding Registers
+                request[2] = (byte)(address >> 8);
+                request[3] = (byte)(address & 0xFF);
+                request[4] = (byte)(count >> 8);
+                request[5] = (byte)(count & 0xFF);
+                AppendCrc(request, 6);
+
+                SendAndFlush(request);
+
+                // å›æ‡‰æ ¼å¼: [SlaveId][FC03][ByteCount][Data...][CRC]
+                int expectedBytes = 5 + count * 2; // 1+1+1+(count*2)+2
+                var response = ReadResponse(0x03, expectedBytes);
+
+                ValidateResponse(response, 0x03);
+
+                // è§£æè³‡æ–™
+                var values = new ushort[count];
+                for (int i = 0; i < count; i++)
+                {
+                    values[i] = (ushort)((response[3 + i * 2] << 8) | response[4 + i * 2]);
+                }
+                return values;
+            }, $"ReadRegisters(addr=0x{address:X4}, count={count})");
         }
     }
 
-    /// <summary>¼g¤J³æ¤@¼È¦s¾¹ (FC06)</summary>
+    /// <summary>å¯«å…¥å–®ä¸€æš«å­˜å™¨ (FC06)</summary>
     public void WriteRegister(ushort address, ushort value)
     {
         lock (_lock)
         {
             EnsureConnected();
 
-            // ²Õ«Ø½Ğ¨D: [SlaveId][FC06][AddrHi][AddrLo][ValueHi][ValueLo][CRC]
-            var request = new byte[8];
-            request[0] = _slaveId;
-            request[1] = 0x06; // Function Code 06: Write Single Register
-            request[2] = (byte)(address >> 8);
-            request[3] = (byte)(address & 0xFF);
-            request[4] = (byte)(value >> 8);
-            request[5] = (byte)(value & 0xFF);
-            AppendCrc(request, 6);
+            ExecuteWithRetry(() =>
+            {
+                // çµ„å»ºè«‹æ±‚: [SlaveId][FC06][AddrHi][AddrLo][ValueHi][ValueLo][CRC]
+                var request = new byte[8];
+                request[0] = _slaveId;
+                request[1] = 0x06; // Function Code 06: Write Single Register
+                request[2] = (byte)(address >> 8);
+                request[3] = (byte)(address & 0xFF);
+                request[4] = (byte)(value >> 8);
+                request[5] = (byte)(value & 0xFF);
+                AppendCrc(request, 6);
 
-            SendAndFlush(request);
+                SendAndFlush(request);
 
-            // FC06 ¦^À³»P½Ğ¨D¬Û¦P
-            var response = ReadResponse(8);
-            ValidateResponse(response, 0x06);
+                // FC06 å›æ‡‰èˆ‡è«‹æ±‚ç›¸åŒ
+                var response = ReadResponse(0x06, 8);
+                ValidateResponse(response, 0x06);
+                return true;
+            }, $"WriteRegister(addr=0x{address:X4}, value=0x{value:X4})");
         }
     }
 
-    /// <summary>¼g¤J³æ¤@¼È¦s¾¹ (FC06) ¡X WriteRegister §O¦W¡A»y·N§ó©ú½T</summary>
+    /// <summary>å¯«å…¥å–®ä¸€æš«å­˜å™¨ (FC06) â€” WriteRegister åˆ¥åï¼Œèªæ„æ›´æ˜ç¢º</summary>
     public void WriteSingleRegister(ushort address, ushort value)
     {
         WriteRegister(address, value);
     }
 
-    /// <summary>¼g¤J¦h­Ó¼È¦s¾¹ (FC10)</summary>
+    /// <summary>å¯«å…¥å¤šå€‹æš«å­˜å™¨ (FC10)</summary>
     public void WriteRegisters(ushort address, ushort[] values)
     {
         lock (_lock)
         {
             EnsureConnected();
 
-            int count = values.Length;
-            int byteCount = count * 2;
-
-            // ²Õ«Ø½Ğ¨D: [SlaveId][FC10][AddrHi][AddrLo][CountHi][CountLo][ByteCount][Data...][CRC]
-            var request = new byte[9 + byteCount];
-            request[0] = _slaveId;
-            request[1] = 0x10; // Function Code 10: Write Multiple Registers
-            request[2] = (byte)(address >> 8);
-            request[3] = (byte)(address & 0xFF);
-            request[4] = (byte)(count >> 8);
-            request[5] = (byte)(count & 0xFF);
-            request[6] = (byte)byteCount;
-            for (int i = 0; i < count; i++)
+            ExecuteWithRetry(() =>
             {
-                request[7 + i * 2] = (byte)(values[i] >> 8);
-                request[8 + i * 2] = (byte)(values[i] & 0xFF);
-            }
-            AppendCrc(request, 7 + byteCount);
+                int count = values.Length;
+                int byteCount = count * 2;
 
-            SendAndFlush(request);
+                // çµ„å»ºè«‹æ±‚: [SlaveId][FC10][AddrHi][AddrLo][CountHi][CountLo][ByteCount][Data...][CRC]
+                var request = new byte[9 + byteCount];
+                request[0] = _slaveId;
+                request[1] = 0x10; // Function Code 10: Write Multiple Registers
+                request[2] = (byte)(address >> 8);
+                request[3] = (byte)(address & 0xFF);
+                request[4] = (byte)(count >> 8);
+                request[5] = (byte)(count & 0xFF);
+                request[6] = (byte)byteCount;
+                for (int i = 0; i < count; i++)
+                {
+                    request[7 + i * 2] = (byte)(values[i] >> 8);
+                    request[8 + i * 2] = (byte)(values[i] & 0xFF);
+                }
+                AppendCrc(request, 7 + byteCount);
 
-            // FC10 ¦^À³: [SlaveId][FC10][AddrHi][AddrLo][CountHi][CountLo][CRC]
-            var response = ReadResponse(8);
-            ValidateResponse(response, 0x10);
+                SendAndFlush(request);
+
+                // FC10 å›æ‡‰: [SlaveId][FC10][AddrHi][AddrLo][CountHi][CountLo][CRC]
+                var response = ReadResponse(0x10, 8);
+                ValidateResponse(response, 0x10);
+                return true;
+            }, $"WriteRegisters(addr=0x{address:X4}, count={values.Length})");
         }
     }
 
-    /// <summary>¼g¤J 32-bit ¼Æ­È¡]¦û¨â­Ó³sÄò¼È¦s¾¹¡ALittle-Endian: Low word ¦b§C¦ì§}¡^</summary>
+    /// <summary>å¯«å…¥ 32-bit æ•¸å€¼ï¼ˆä½”å…©å€‹é€£çºŒæš«å­˜å™¨ï¼ŒLittle-Endian: Low word åœ¨ä½ä½å€ï¼‰</summary>
     public void WriteRegister32(ushort address, int value)
     {
         var values = new ushort[2];
-        values[0] = (ushort)(value & 0xFFFF);          // Low word ¡÷ §C¦ì§}
-        values[1] = (ushort)((value >> 16) & 0xFFFF);  // High word ¡÷ °ª¦ì§}
+        values[0] = (ushort)(value & 0xFFFF);          // Low word â†’ ä½ä½å€
+        values[1] = (ushort)((value >> 16) & 0xFFFF);  // High word â†’ é«˜ä½å€
         WriteRegisters(address, values);
     }
 
-    /// <summary>Åª¨ú 32-bit ¼Æ­È¡]¦û¨â­Ó³sÄò¼È¦s¾¹¡ALittle-Endian: Low word ¦b§C¦ì§}¡^</summary>
+    /// <summary>è®€å– 32-bit æ•¸å€¼ï¼ˆä½”å…©å€‹é€£çºŒæš«å­˜å™¨ï¼ŒLittle-Endian: Low word åœ¨ä½ä½å€ï¼‰</summary>
     public int ReadRegister32(ushort address)
     {
         var values = ReadRegisters(address, 2);
@@ -181,29 +192,56 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
     }
 
     // ============================
-    //  ¤º³¡»²§U¤èªk
+    //  å…§éƒ¨è¼”åŠ©æ–¹æ³•
     // ============================
 
-    /// <summary>½T»{³s½uª¬ºA</summary>
+    /// <summary>ç¢ºèªé€£ç·šç‹€æ…‹</summary>
     private void EnsureConnected()
     {
         if (!IsConnected)
-            throw new InvalidOperationException("Modbus RTU ©|¥¼³s½u¡A½Ğ¥ı©I¥s Connect()");
+            throw new InvalidOperationException("Modbus RTU å°šæœªé€£ç·šï¼Œè«‹å…ˆå‘¼å« Connect()");
     }
 
-    /// <summary>°e¥X¸ê®Æ¨Ã²MªÅ±µ¦¬½w½Ä°Ï</summary>
+    /// <summary>é€å‡ºè³‡æ–™ä¸¦æ¸…ç©ºæ¥æ”¶ç·©è¡å€</summary>
     private void SendAndFlush(byte[] request)
     {
         _serial!.DiscardInBuffer();
         _serial.Write(request, 0, request.Length);
     }
 
-    /// <summary>Åª¨ú¦^À³¸ê®Æ</summary>
-    private byte[] ReadResponse(int expectedLength)
+    /// <summary>
+    /// è®€å–å›æ‡‰å°åŒ…ã€‚å…ˆè®€å–å‰ 3 bytes åˆ¤æ–·æ˜¯å¦ç‚º Modbus ç•°å¸¸å›æ‡‰ (Exception Response)ï¼Œ
+    /// ç•°å¸¸å›æ‡‰å›ºå®šåªæœ‰ 5 bytes ([Slave][FC|0x80][ErrorCode][CRC])ï¼Œ
+    /// è‹¥ä¸å…ˆåˆ¤æ–·å°±ç…§æ­£å¸¸é•·åº¦ç­‰å¾…ï¼Œé‡åˆ°ç•°å¸¸å›æ‡‰æœƒå› ç‚ºå°æ–¹æ ¹æœ¬ä¸æœƒé€å‡ºé‚£éº¼å¤š bytesï¼Œ
+    /// å°è‡´ç™½ç™½ç­‰åˆ° ReadTimeout é€¾æ™‚ï¼Œä¸”åŸå§‹éŒ¯èª¤ç¢¼ä¹Ÿè¢«èª¤åˆ¤æˆã€Œé€¾æ™‚ã€ã€‚
+    /// </summary>
+    /// <param name="expectedFc">æœ¬æ¬¡è«‹æ±‚é æœŸçš„ Function Code</param>
+    /// <param name="normalLength">æ­£å¸¸(éç•°å¸¸)å›æ‡‰çš„å®Œæ•´é•·åº¦</param>
+    private byte[] ReadResponse(byte expectedFc, int normalLength)
     {
-        var buffer = new byte[expectedLength];
+        var header = ReadExact(3);
+
+        bool isException = header[1] == (byte)(expectedFc | 0x80);
+        int totalLength = isException ? 5 : normalLength;
+
+        var response = new byte[totalLength];
+        Array.Copy(header, response, 3);
+
+        if (totalLength > 3)
+        {
+            var rest = ReadExact(totalLength - 3);
+            Array.Copy(rest, 0, response, 3, rest.Length);
+        }
+
+        return response;
+    }
+
+    /// <summary>å¾åºåˆ—åŸ ç²¾ç¢ºè®€å–æŒ‡å®šé•·åº¦çš„ bytesï¼Œä¸è¶³å‰‡æŒçºŒç­‰å¾…ç›´åˆ°é€¾æ™‚</summary>
+    private byte[] ReadExact(int length)
+    {
+        var buffer = new byte[length];
         int offset = 0;
-        int remaining = expectedLength;
+        int remaining = length;
 
         while (remaining > 0)
         {
@@ -214,11 +252,11 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
             }
             catch (TimeoutException)
             {
-                throw new TimeoutException($"Modbus RTU ³q°T¹O®É¡A¤w±µ¦¬ {offset}/{expectedLength} bytes");
+                throw new TimeoutException($"Modbus RTU é€šè¨Šé€¾æ™‚ï¼Œå·²æ¥æ”¶ {offset}/{length} bytes");
             }
 
             if (bytesRead == 0)
-                throw new IOException("Modbus RTU ³q°T¤¤Â_¡A¥¼¦¬¨ì¦^À³");
+                throw new IOException("Modbus RTU é€šè¨Šä¸­æ–·ï¼Œæœªæ”¶åˆ°å›æ‡‰");
 
             offset += bytesRead;
             remaining -= bytesRead;
@@ -227,42 +265,68 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         return buffer;
     }
 
-    /// <summary>ÅçÃÒ¦^À³¸ê®Æ¡]ÀË¬d¯¸¸¹¡BFC¡BCRC¡^</summary>
+    /// <summary>
+    /// é‡è©¦åŒ…è£ï¼šé‡å°æš«æ™‚æ€§é€šè¨ŠéŒ¯èª¤ (CRCå¤±æ•—/é€¾æ™‚/ä¸­æ–·) è‡ªå‹•é‡è©¦ï¼Œ
+    /// ä¸é‡è©¦ç”± EnsureConnected() ç­‰é‚è¼¯ä¸Ÿå‡ºçš„ InvalidOperationExceptionã€‚
+    /// </summary>
+    private const int MaxRetryAttempts = 3;
+
+    private T ExecuteWithRetry<T>(Func<T> action, string opDescription)
+    {
+        Exception? lastError = null;
+        for (int attempt = 1; attempt <= MaxRetryAttempts; attempt++)
+        {
+            try
+            {
+                return action();
+            }
+            catch (Exception ex) when (ex is IOException or TimeoutException)
+            {
+                lastError = ex;
+                if (attempt < MaxRetryAttempts)
+                    Thread.Sleep(20 * attempt);
+            }
+        }
+
+        throw new IOException($"Modbus RTU {opDescription} å¤±æ•—ï¼Œå·²é‡è©¦ {MaxRetryAttempts} æ¬¡ä»å¤±æ•—: {lastError!.Message}", lastError);
+    }
+
+    /// <summary>é©—è­‰å›æ‡‰è³‡æ–™ï¼ˆæª¢æŸ¥ç«™è™Ÿã€FCã€CRCï¼‰</summary>
     private void ValidateResponse(byte[] response, byte expectedFc)
     {
-        // ÀË¬d¯¸¸¹
+        // æª¢æŸ¥ç«™è™Ÿ
         if (response[0] != _slaveId)
-            throw new IOException($"¦^À³¯¸¸¹¤£²Å: ¹w´Á={_slaveId}, ¹ê»Ú={response[0]}");
+            throw new IOException($"å›æ‡‰ç«™è™Ÿä¸ç¬¦: é æœŸ={_slaveId}, å¯¦éš›={response[0]}");
 
-        // ÀË¬d¬O§_¬°²§±`¦^À³ (FC + 0x80)
+        // æª¢æŸ¥æ˜¯å¦ç‚ºç•°å¸¸å›æ‡‰ (FC + 0x80)
         if (response[1] == (expectedFc | 0x80))
         {
             byte errorCode = response[2];
-            throw new IOException($"Modbus ²§±`¦^À³: FC=0x{expectedFc:X2}, ErrorCode=0x{errorCode:X2} ({GetErrorDescription(errorCode)})");
+            throw new IOException($"Modbus ç•°å¸¸å›æ‡‰: FC=0x{expectedFc:X2}, ErrorCode=0x{errorCode:X2} ({GetErrorDescription(errorCode)})");
         }
 
-        // ÀË¬d FC
+        // æª¢æŸ¥ FC
         if (response[1] != expectedFc)
-            throw new IOException($"¦^À³ Function Code ¤£²Å: ¹w´Á=0x{expectedFc:X2}, ¹ê»Ú=0x{response[1]:X2}");
+            throw new IOException($"å›æ‡‰ Function Code ä¸ç¬¦: é æœŸ=0x{expectedFc:X2}, å¯¦éš›=0x{response[1]:X2}");
 
-        // ÅçÃÒ CRC
+        // é©—è­‰ CRC
         ushort receivedCrc = (ushort)(response[^1] << 8 | response[^2]);
         ushort calculatedCrc = CalculateCrc(response, response.Length - 2);
         if (receivedCrc != calculatedCrc)
-            throw new IOException($"CRC ®ÕÅç¥¢±Ñ: ¹w´Á=0x{calculatedCrc:X4}, ¹ê»Ú=0x{receivedCrc:X4}");
+            throw new IOException($"CRC æ ¡é©—å¤±æ•—: é æœŸ=0x{calculatedCrc:X4}, å¯¦éš›=0x{receivedCrc:X4}");
     }
 
-    /// <summary>Modbus ²§±`½X»¡©ú</summary>
+    /// <summary>Modbus ç•°å¸¸ç¢¼èªªæ˜</summary>
     private static string GetErrorDescription(byte errorCode) => errorCode switch
     {
-        0x01 => "¤£¦Xªkªº Function Code",
-        0x02 => "¤£¦Xªkªº¼È¦s¾¹¦ì§}",
-        0x03 => "¤£¦Xªkªº¸ê®Æ­È",
-        0x04 => "³]³Æ¬G»Ù",
-        _ => "¥¼ª¾¿ù»~"
+        0x01 => "ä¸åˆæ³•çš„ Function Code",
+        0x02 => "ä¸åˆæ³•çš„æš«å­˜å™¨ä½å€",
+        0x03 => "ä¸åˆæ³•çš„è³‡æ–™å€¼",
+        0x04 => "è¨­å‚™æ•…éšœ",
+        _ => "æœªçŸ¥éŒ¯èª¤"
     };
 
-    /// <summary>¦b«Ê¥]§Àºİ¥[¤W CRC-16 (Modbus)</summary>
+    /// <summary>åœ¨å°åŒ…å°¾ç«¯åŠ ä¸Š CRC-16 (Modbus)</summary>
     private static void AppendCrc(byte[] buffer, int length)
     {
         ushort crc = CalculateCrc(buffer, length);
@@ -270,7 +334,7 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         buffer[length + 1] = (byte)(crc >> 8);       // CRC High
     }
 
-    /// <summary>­pºâ CRC-16 (Modbus RTU)</summary>
+    /// <summary>è¨ˆç®— CRC-16 (Modbus RTU)</summary>
     private static ushort CalculateCrc(byte[] buffer, int length)
     {
         ushort crc = 0xFFFF;
@@ -288,7 +352,7 @@ public class ModbusRtuClient : IModbusRtuClient, IDisposable
         return crc;
     }
 
-    /// <summary>ÄÀ©ñ¸ê·½</summary>
+    /// <summary>é‡‹æ”¾è³‡æº</summary>
     public void Dispose()
     {
         Disconnect();

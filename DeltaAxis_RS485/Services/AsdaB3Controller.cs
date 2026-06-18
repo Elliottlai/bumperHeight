@@ -6,8 +6,8 @@ using System.IO;
 namespace DeltaAxis_RS485.Services;
 
 /// <summary>
-/// Delta ASDA-B3 ¦øªAÅX°Ê¾¹±±¨î¾¹
-/// ¹ê§@ Servo ±±¨î¡BAbsolute ½s½X¾¹ºŞ²z¡BPR mode ©w¦ì
+/// Delta ASDA-B3 ä¼ºæœé©…å‹•å™¨æ§åˆ¶å™¨
+/// å¯¦ä½œ Servo æ§åˆ¶ã€Absolute ç·¨ç¢¼å™¨ç®¡ç†ã€PR mode å®šä½
 /// </summary>
 public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionController, IPrMotionSettings, IDisposable
 {
@@ -16,36 +16,36 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     private bool _disposed;
 
     // ============================
-    //  IPrMotionSettings Äİ©Ê
+    //  IPrMotionSettings å±¬æ€§
     // ============================
 
-    /// <summary>¥Ø¼Ğ³t«× (rpm)</summary>
+    /// <summary>ç›®æ¨™é€Ÿåº¦ (rpm)</summary>
     public int TargetSpeed { get; set; } = 1000;
 
-    /// <summary>¥[³t®É¶¡ (ms)</summary>
+    /// <summary>åŠ é€Ÿæ™‚é–“ (ms)</summary>
     public int AccelerationTime { get; set; } = 200;
 
-    /// <summary>´î³t®É¶¡ (ms)</summary>
+    /// <summary>æ¸›é€Ÿæ™‚é–“ (ms)</summary>
     public int DecelerationTime { get; set; } = 200;
 
-    /// <summary>©µ¿ğ®É¶¡ (ms)</summary>
+    /// <summary>å»¶é²æ™‚é–“ (ms)</summary>
     public int DelayTime { get; set; } = 0;
 
-    /// <summary>¨ì¦ì¹O®É (ms)</summary>
+    /// <summary>åˆ°ä½é€¾æ™‚ (ms)</summary>
     public int InPositionTimeout { get; set; } = 5000;
 
-    /// <summary>¨C mm ¹ïÀ³ªº PUU ¼Æ¶q</summary>
+    /// <summary>æ¯ mm å°æ‡‰çš„ PUU æ•¸é‡</summary>
     public double PuuPerMm { get; set; } = 1000.0;
 
-    /// <summary>¬O§_¤w¿EºÏ</summary>
+    /// <summary>æ˜¯å¦å·²æ¿€ç£</summary>
     public bool IsServoOn { get; private set; }
 
     /// <summary>
-    /// «Øºc¨ç¦¡
+    /// å»ºæ§‹å‡½å¼
     /// </summary>
-    /// <param name="modbus">Modbus RTU ³q°T¹ê¨Ò</param>
-    /// <param name="connSettings">³s½u³]©w</param>
-    /// <param name="motionSettings">¹B°Ê°Ñ¼Æ¡]¥i¿ï¡^</param>
+    /// <param name="modbus">Modbus RTU é€šè¨Šå¯¦ä¾‹</param>
+    /// <param name="connSettings">é€£ç·šè¨­å®š</param>
+    /// <param name="motionSettings">é‹å‹•åƒæ•¸ï¼ˆå¯é¸ï¼‰</param>
     public AsdaB3Controller(IModbusRtuClient modbus, ConnectionSettings connSettings, MotionSettings? motionSettings = null)
     {
         _modbus = modbus ?? throw new ArgumentNullException(nameof(modbus));
@@ -63,10 +63,10 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     // ============================
-    //  IServoDriver ¹ê§@
+    //  IServoDriver å¯¦ä½œ
     // ============================
 
-    /// <summary>«Ø¥ß³q°T³s½u¨Ãªì©l¤ÆÅX°Ê¾¹</summary>
+    /// <summary>å»ºç«‹é€šè¨Šé€£ç·šä¸¦åˆå§‹åŒ–é©…å‹•å™¨</summary>
     public void Connect()
     {
         ThrowIfDisposed();
@@ -80,23 +80,23 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         catch (Exception ex) when (ex is not ObjectDisposedException)
         {
             throw new InvalidOperationException(
-                $"µLªk³s½u¦Ü {_connSettings.PortName} (BaudRate={_connSettings.BaudRate}, SlaveId={_connSettings.SlaveId})", ex);
+                $"ç„¡æ³•é€£ç·šè‡³ {_connSettings.PortName} (BaudRate={_connSettings.BaudRate}, SlaveId={_connSettings.SlaveId})", ex);
         }
 
-        // ³]©w P2.030 = 5: ¨¾¤î EEPROM ¦]³q°T³sÄò¼g¤J¦Ó´îµu¹Ø©R
+        // è¨­å®š P2.030 = 5: é˜²æ­¢ EEPROM å› é€šè¨Šé€£çºŒå¯«å…¥è€Œæ¸›çŸ­å£½å‘½
         _modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, AsdaB3RegisterMap.AuxFunction_NoEepromSave);
 
         //_modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, 5);
 
 
-        // ³]©w±±¨î¼Ò¦¡¬° PR mode
+        // è¨­å®šæ§åˆ¶æ¨¡å¼ç‚º PR mode
        // _modbus.WriteRegister(AsdaB3RegisterMap.P1_001_ControlMode, AsdaB3RegisterMap.ControlMode_PR);
 
-        // ³]©wºÊµøÅÜ¼Æ¬M®g:
-        // P0.009 ¡÷ FeedbackPosition_PUU (¦^±Â¦ì¸m)
-        // P0.010 ¡÷ AlarmCodeDecimal (Äµ³ø½X)
-        // P0.011 ¡÷ DiStatusIntegrated (DI ¾ã¦Xª¬ºA)
-        // P0.012 ¡÷ DoStatusHardware (DO µwÅéª¬ºA)
+        // è¨­å®šç›£è¦–è®Šæ•¸æ˜ å°„:
+        // P0.009 â†’ FeedbackPosition_PUU (å›æˆä½ç½®)
+        // P0.010 â†’ AlarmCodeDecimal (è­¦å ±ç¢¼)
+        // P0.011 â†’ DiStatusIntegrated (DI æ•´åˆç‹€æ…‹)
+        // P0.012 â†’ DoStatusHardware (DO ç¡¬é«”ç‹€æ…‹)
         ConfigureMonitorMapping(
             AsdaB3MonitorCode.FeedbackPosition_PUU,
             AsdaB3MonitorCode.AlarmCodeDecimal,
@@ -104,40 +104,40 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
             AsdaB3MonitorCode.DoStatusHardware);
     }
 
-    /// <summary>¦øªA¿EºÏ (Servo ON)</summary>
+    /// <summary>ä¼ºæœæ¿€ç£ (Servo ON)</summary>
     public void ServoOn()
     {
         ThrowIfDisposed();
         EnsureNoAlarm();
 
-        // ¨BÆJ 1: ±N DI1 (ServoOn) ¤Á´«¬°³nÅé DI ¨Ó·½
-        //   P3.006 Bit0 = 1 ¡÷ DI1 ¥Ñ P4.007 ±±¨î
+        // æ­¥é©Ÿ 1: å°‡ DI1 (ServoOn) åˆ‡æ›ç‚ºè»Ÿé«” DI ä¾†æº
+        //   P3.006 Bit0 = 1 â†’ DI1 ç”± P4.007 æ§åˆ¶
         ushort diControl = _modbus.ReadRegister(AsdaB3RegisterMap.P3_006_DiControl);
         diControl |= AsdaB3RegisterMap.DI1_Bit;
         _modbus.WriteRegister(AsdaB3RegisterMap.P3_006_DiControl, diControl);
 
-        // ¨BÆJ 2: ±N DI5 (²§±`²M°£ ARST) ¤]¤Á¬°³nÅé DI
-        //   P3.006 Bit4 = 1 ¡÷ DI5 ¥Ñ P4.007 ±±¨î
+        // æ­¥é©Ÿ 2: å°‡ DI5 (ç•°å¸¸æ¸…é™¤ ARST) ä¹Ÿåˆ‡ç‚ºè»Ÿé«” DI
+        //   P3.006 Bit4 = 1 â†’ DI5 ç”± P4.007 æ§åˆ¶
         diControl |= AsdaB3RegisterMap.DI5_Bit;
         _modbus.WriteRegister(AsdaB3RegisterMap.P3_006_DiControl, diControl);
 
-        // ¨BÆJ 3: ³z¹L P4.007 ³]©w DI1 = ON (Bit0 = 1) ¡÷ Servo ON
+        // æ­¥é©Ÿ 3: é€é P4.007 è¨­å®š DI1 = ON (Bit0 = 1) â†’ Servo ON
         ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
         softDi |= AsdaB3RegisterMap.DI1_Bit;  // DI1 = Servo On
         _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
 
-        // µ¥«İ¿EºÏ§¹¦¨¡]µ¹ÅX°Ê¾¹¤ÏÀ³®É¶¡¡^
+        // ç­‰å¾…æ¿€ç£å®Œæˆï¼ˆçµ¦é©…å‹•å™¨åæ‡‰æ™‚é–“ï¼‰
         Thread.Sleep(500);
 
         IsServoOn = true;
     }
 
-    /// <summary>¦øªA¸ÑºÏ (Servo OFF)</summary>
+    /// <summary>ä¼ºæœè§£ç£ (Servo OFF)</summary>
     public void ServoOff()
     {
         ThrowIfDisposed();
 
-        // ³z¹L P4.007 ²M°£ DI1 = OFF (Bit0 = 0) ¡÷ Servo OFF
+        // é€é P4.007 æ¸…é™¤ DI1 = OFF (Bit0 = 0) â†’ Servo OFF
         ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
         softDi &= unchecked((ushort)~AsdaB3RegisterMap.DI1_Bit);
         _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
@@ -146,7 +146,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         IsServoOn = false;
     }
 
-    /// <summary>ÀË¬d¬O§_¦³Äµ³ø¡]³z¹L P0.046 Bit6 §PÂ_¡^</summary>
+    /// <summary>æª¢æŸ¥æ˜¯å¦æœ‰è­¦å ±ï¼ˆé€é P0.046 Bit6 åˆ¤æ–·ï¼‰</summary>
     public bool HasAlarm()
     {
         ThrowIfDisposed();
@@ -155,7 +155,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return status.HasFlag(DriverStatusFlags.Alarm);
     }
 
-    /// <summary>ÀË¬d¦øªA¬O§_ Ready¡]³z¹L P0.046 Bit0 §PÂ_¡^</summary>
+    /// <summary>æª¢æŸ¥ä¼ºæœæ˜¯å¦ Readyï¼ˆé€é P0.046 Bit0 åˆ¤æ–·ï¼‰</summary>
     public bool IsServoReady()
     {
         ThrowIfDisposed();
@@ -164,7 +164,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return status.HasFlag(DriverStatusFlags.ServoReady);
     }
 
-    /// <summary>ÀË¬d¬O§_¨ì¦ì¡]³z¹L P0.046 Bit4 §PÂ_¡^</summary>
+    /// <summary>æª¢æŸ¥æ˜¯å¦åˆ°ä½ï¼ˆé€é P0.046 Bit4 åˆ¤æ–·ï¼‰</summary>
     public bool IsInPosition()
     {
         ThrowIfDisposed();
@@ -174,10 +174,10 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     // ============================
-    //  IAbsoluteEncoder ¹ê§@
+    //  IAbsoluteEncoder å¯¦ä½œ
     // ============================
 
-    /// <summary>ÀË¬d absolute ®y¼Ğ¬O§_¥ş³¡¥¿±` (P0.050 = 0 ªí¥Ü¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥ absolute åº§æ¨™æ˜¯å¦å…¨éƒ¨æ­£å¸¸ (P0.050 = 0 è¡¨ç¤ºæ­£å¸¸)</summary>
     public bool AbsOk()
     {
         ThrowIfDisposed();
@@ -185,7 +185,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return ReadAbsoluteStatus() == AbsoluteStatusFlags.None;
     }
 
-    /// <summary>Åª¨ú P0.050 §¹¾ãª¬ºAºX¼Ğ</summary>
+    /// <summary>è®€å– P0.050 å®Œæ•´ç‹€æ…‹æ——æ¨™</summary>
     public AbsoluteStatusFlags ReadAbsoluteStatus()
     {
         ThrowIfDisposed();
@@ -194,7 +194,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return (AbsoluteStatusFlags)raw;
     }
 
-    /// <summary>ÀË¬dµ´¹ï¦ì¸m¬O§_¥¿±` (P0.050 Bit0 = 0 ¬°¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥çµ•å°ä½ç½®æ˜¯å¦æ­£å¸¸ (P0.050 Bit0 = 0 ç‚ºæ­£å¸¸)</summary>
     public bool IsAbsolutePositionOk()
     {
         ThrowIfDisposed();
@@ -203,7 +203,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return !status.HasFlag(AbsoluteStatusFlags.AbsolutePosition);
     }
 
-    /// <summary>ÀË¬d¹q¦À¹qÀ£¬O§_¥¿±` (P0.050 Bit1 = 0 ¬°¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥é›»æ± é›»å£“æ˜¯å¦æ­£å¸¸ (P0.050 Bit1 = 0 ç‚ºæ­£å¸¸)</summary>
     public bool IsBatteryVoltageOk()
     {
         ThrowIfDisposed();
@@ -212,7 +212,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return !status.HasFlag(AbsoluteStatusFlags.BatteryVoltage);
     }
 
-    /// <summary>ÀË¬dµ´¹ï°é¼Æ¬O§_¥¿±` (P0.050 Bit2 = 0 ¬°¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥çµ•å°åœˆæ•¸æ˜¯å¦æ­£å¸¸ (P0.050 Bit2 = 0 ç‚ºæ­£å¸¸)</summary>
     public bool IsAbsoluteRevolutionOk()
     {
         ThrowIfDisposed();
@@ -221,7 +221,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return !status.HasFlag(AbsoluteStatusFlags.AbsoluteRevolution);
     }
 
-    /// <summary>ÀË¬d PUU ª¬ºA¬O§_¥¿±` (P0.050 Bit3 = 0 ¬°¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥ PUU ç‹€æ…‹æ˜¯å¦æ­£å¸¸ (P0.050 Bit3 = 0 ç‚ºæ­£å¸¸)</summary>
     public bool IsPuuStatusOk()
     {
         ThrowIfDisposed();
@@ -230,7 +230,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return !status.HasFlag(AbsoluteStatusFlags.Puu);
     }
 
-    /// <summary>ÀË¬dµ´¹ï®y¼Ğ¬O§_¥¿±` (P0.050 Bit4 = 0 ¬°¥¿±`)</summary>
+    /// <summary>æª¢æŸ¥çµ•å°åº§æ¨™æ˜¯å¦æ­£å¸¸ (P0.050 Bit4 = 0 ç‚ºæ­£å¸¸)</summary>
     public bool IsAbsoluteCoordinateOk()
     {
         ThrowIfDisposed();
@@ -240,31 +240,31 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     /// <summary>
-    /// ­««Ø absolute origin
-    /// ·í absolute ®y¼Ğ¿ò¥¢®É¡A¨Ì§Ç¡G
-    /// 1. ¼g P2.008 = 271 ¸Ñ°£¼g«OÅ@
-    /// 2. ¼g P2.071 = 1 «Ø¥ß absolute origin
+    /// é‡å»º absolute origin
+    /// ç•¶ absolute åº§æ¨™éºå¤±æ™‚ï¼Œä¾åºï¼š
+    /// 1. å¯« P2.008 = 271 è§£é™¤å¯«ä¿è­·
+    /// 2. å¯« P2.071 = 1 å»ºç«‹ absolute origin
     /// </summary>
     public void RebuildAbsoluteOrigin()
     {
         ThrowIfDisposed();
 
-        // ¨BÆJ 1: ¸Ñ°£¼g«OÅ@
+        // æ­¥é©Ÿ 1: è§£é™¤å¯«ä¿è­·
         _modbus.WriteRegister(AsdaB3RegisterMap.P2_008_WriteProtect, AsdaB3RegisterMap.WriteProtectUnlock);
         Thread.Sleep(100);
 
-        // ¨BÆJ 2: «Ø¥ß absolute origin
+        // æ­¥é©Ÿ 2: å»ºç«‹ absolute origin
         _modbus.WriteRegister(AsdaB3RegisterMap.P2_071_BuildAbsOrigin, 1);
         Thread.Sleep(500);
 
-        // ÅçÃÒ¬O§_«Ø¥ß¦¨¥\
+        // é©—è­‰æ˜¯å¦å»ºç«‹æˆåŠŸ
         if (!AbsOk())
         {
-            throw new InvalidOperationException("­««Ø absolute origin ¥¢±Ñ¡AP0.050 ¤´¬°²§±`ª¬ºA");
+            throw new InvalidOperationException("é‡å»º absolute origin å¤±æ•—ï¼ŒP0.050 ä»ç‚ºç•°å¸¸ç‹€æ…‹");
         }
     }
 
-    /// <summary>Åª¨ú¥Ø«e¦h°é¦ì¸m (P0.051, 32-bit)</summary>
+    /// <summary>è®€å–ç›®å‰å¤šåœˆä½ç½® (P0.051, 32-bit)</summary>
     public int GetMultiTurnPosition()
     {
         ThrowIfDisposed();
@@ -272,7 +272,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_051_MultiTurnPos_Low);
     }
 
-    /// <summary>Åª¨ú¥Ø«e³æ°é¦ì¸m (P0.052, 32-bit)</summary>
+    /// <summary>è®€å–ç›®å‰å–®åœˆä½ç½® (P0.052, 32-bit)</summary>
     public int GetSingleTurnPosition()
     {
         ThrowIfDisposed();
@@ -280,7 +280,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_052_SingleTurnPos_Low);
     }
 
-    /// <summary>Åª¨úÅX°Ê¾¹ª¬ºA (P0.046)</summary>
+    /// <summary>è®€å–é©…å‹•å™¨ç‹€æ…‹ (P0.046)</summary>
     public DriverStatusFlags ReadDriverStatus()
     {
         ThrowIfDisposed();
@@ -289,16 +289,16 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     // ============================
-    //  IPrMotionController ¹ê§@
+    //  IPrMotionController å¯¦ä½œ
     // ============================
 
-    /// <summary>±N mm ´«ºâ¦¨ PUU</summary>
+    /// <summary>å°‡ mm æ›ç®—æˆ PUU</summary>
     public int MmToPuu(double mm)
     {
         return (int)(mm * PuuPerMm);
     }
 
-    /// <summary>Åª¨ú¥Ø«e¦ì¸m (mm)¡A³z¹L¦h°éµ´¹ï¦ì¸m P0.051 ´«ºâ</summary>
+    /// <summary>è®€å–ç›®å‰ä½ç½® (mm)ï¼Œé€éå¤šåœˆçµ•å°ä½ç½® P0.051 æ›ç®—</summary>
     public double GetCurrentPositionMm()
     {
         ThrowIfDisposed();
@@ -307,7 +307,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return puu / PuuPerMm;
     }
 
-    /// <summary>§ó·s PR#1 ªº¥Ø¼Ğ¦ì¸m (32-bit PUU¡A¨Ï¥Î FC16 ¤@¦¸¼g¤J Low/High)</summary>
+    /// <summary>æ›´æ–° PR#1 çš„ç›®æ¨™ä½ç½® (32-bit PUUï¼Œä½¿ç”¨ FC16 ä¸€æ¬¡å¯«å…¥ Low/High)</summary>
     public void UpdatePr1TargetPosition(int puu)
     {
         ThrowIfDisposed();
@@ -315,7 +315,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         _modbus.WriteRegister32(AsdaB3RegisterMap.P6_003_Pr1TargetPos_Low, puu);
     }
 
-    /// <summary>Ä²µo PR#1 °õ¦æ (¼g P5.007 = 1)</summary>
+    /// <summary>è§¸ç™¼ PR#1 åŸ·è¡Œ (å¯« P5.007 = 1)</summary>
     public void TriggerPr1()
     {
         ThrowIfDisposed();
@@ -324,14 +324,14 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, AsdaB3RegisterMap.PrNumber_1);
     }
 
-    /// <summary>°±¤î¥Ø«e¹B°Ê (¼g P5.007 = 1000)</summary>
+    /// <summary>åœæ­¢ç›®å‰é‹å‹• (å¯« P5.007 = 1000)</summary>
     public void Stop()
     {
         ThrowIfDisposed();
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, AsdaB3RegisterMap.PrTrigger_Stop);
     }
 
-    /// <summary>µ¥«İ¨ì¦ì§¹¦¨¡]½ü¸ß P0.046 InPosition ¦ì¤¸¡A§t¹O®É»PÄµ³øÀË¬d¡^</summary>
+    /// <summary>ç­‰å¾…åˆ°ä½å®Œæˆï¼ˆè¼ªè©¢ P0.046 InPosition ä½å…ƒï¼Œå«é€¾æ™‚èˆ‡è­¦å ±æª¢æŸ¥ï¼‰</summary>
     public void WaitInPosition()
     {
         ThrowIfDisposed();
@@ -341,23 +341,23 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
             {
                 var status = ReadDriverStatus();
 
-                // P0.046 Bit6: Äµ³ø
+                // P0.046 Bit6: è­¦å ±
                 if (status.HasFlag(DriverStatusFlags.Alarm))
                 {
-                    throw new ServoAlarmException(0, "µ¥«İ¨ì¦ì´Á¶¡µo¥ÍÄµ³ø (P0.046 Alarm bit)");
+                    throw new ServoAlarmException(0, "ç­‰å¾…åˆ°ä½æœŸé–“ç™¼ç”Ÿè­¦å ± (P0.046 Alarm bit)");
                 }
 
-                // P0.046 Bit4: ¥Ø¼Ğ¦ì¸m¨ì¹F
+                // P0.046 Bit4: ç›®æ¨™ä½ç½®åˆ°é”
                 return status.HasFlag(DriverStatusFlags.TargetPositionReached);
             },
             timeoutMs: InPositionTimeout,
-            errorMessage: $"¨ì¦ì¹O®É¡]¶W¹L {InPositionTimeout} ms¡^¡A½ĞÀË¬d¾÷ºc©Î°Ñ¼Æ"
+            errorMessage: $"åˆ°ä½é€¾æ™‚ï¼ˆè¶…é {InPositionTimeout} msï¼‰ï¼Œè«‹æª¢æŸ¥æ©Ÿæ§‹æˆ–åƒæ•¸"
         );
     }
 
     /// <summary>
-    /// ²¾°Ê¨ì«ü©w¦ì¸m (mm)
-    /// ¾ã¦X¡Gmm ¡÷ PUU ¡÷ ¼g¤J PR#1 ¡÷ Ä²µo ¡÷ µ¥«İ¨ì¦ì
+    /// ç§»å‹•åˆ°æŒ‡å®šä½ç½® (mm)
+    /// æ•´åˆï¼šmm â†’ PUU â†’ å¯«å…¥ PR#1 â†’ è§¸ç™¼ â†’ ç­‰å¾…åˆ°ä½
     /// </summary>
     public void MoveToPositionMm(double mm)
     {
@@ -371,80 +371,80 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     // ============================
-    //  IPrMotionSettings ¹ê§@
+    //  IPrMotionSettings å¯¦ä½œ
     // ============================
 
     /// <summary>
-    /// ±N¹B°Ê°Ñ¼Æ¼g¤JÅX°Ê¾¹
-    /// ¥]§t speed #1 (32-bit)¡Bacc/dec #1¡Bdelay #1¡BPR#1 path definition (32-bit)
+    /// å°‡é‹å‹•åƒæ•¸å¯«å…¥é©…å‹•å™¨
+    /// åŒ…å« speed #1 (32-bit)ã€acc/dec #1ã€delay #1ã€PR#1 path definition (32-bit)
     /// </summary>
     public void ApplySettings()
     {
         ThrowIfDisposed();
 
-        // ¼g¤J speed #1 (P5.061, 32-bit) ¡X ¨Ï¥Î FC16 ¤@¦¸¼g¤J
+        // å¯«å…¥ speed #1 (P5.061, 32-bit) â€” ä½¿ç”¨ FC16 ä¸€æ¬¡å¯«å…¥
         _modbus.WriteRegister32(AsdaB3RegisterMap.P5_060_TargetSpeed0, TargetSpeed);
 
-        // ¼g¤J acceleration / deceleration time #1 (P5.020)
+        // å¯«å…¥ acceleration / deceleration time #1 (P5.020)
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_020_AccDecTime0, (ushort)AccelerationTime);
 
-        // ¼g¤J delay time #1 (P5.040)
+        // å¯«å…¥ delay time #1 (P5.040)
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_040_DelayTime0, (ushort)DelayTime);
 
-        // ³]©w PR#1 path definition (P6.002, 32-bit) ¡X ¨Ï¥Î FC16 ¤@¦¸¼g¤J
-        int pathDef = 0x0000_0002; // µ´¹ï©w¦ì¼Ò¦¡, ¨Ï¥Î speed #1, acc/dec #1
+        // è¨­å®š PR#1 path definition (P6.002, 32-bit) â€” ä½¿ç”¨ FC16 ä¸€æ¬¡å¯«å…¥
+        int pathDef = 0x0000_0002; // çµ•å°å®šä½æ¨¡å¼, ä½¿ç”¨ speed #1, acc/dec #1
         _modbus.WriteRegister32(AsdaB3RegisterMap.P6_002_Pr1PathDef_Low, pathDef);
     }
 
-    /// <summary>²M°£Äµ³ø</summary>
+    /// <summary>æ¸…é™¤è­¦å ±</summary>
     public void ClearAlarm()
     {
         ThrowIfDisposed();
 
-        // ³z¹L P4.007 DI5 (²§±`²M°£) °µ¤W¤É½tÄ²µo
+        // é€é P4.007 DI5 (ç•°å¸¸æ¸…é™¤) åšä¸Šå‡ç·£è§¸ç™¼
         ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
 
-        // ©Ô°ª DI5 (Bit4)
+        // æ‹‰é«˜ DI5 (Bit4)
         softDi |= AsdaB3RegisterMap.DI5_Bit;
         _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
         Thread.Sleep(100);
 
-        // ©ñ¶} DI5
+        // æ”¾é–‹ DI5
         softDi &= unchecked((ushort)~AsdaB3RegisterMap.DI5_Bit);
         _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
     }
 
     // ============================
-    //  ·¥­­ / ­ìÂI / ·Ù¨® ¥\¯à
+    //  æ¥µé™ / åŸé» / ç…è»Š åŠŸèƒ½
     // ============================
 
-    /// <summary>Åª¨ú DI °T¸¹ª¬ºA (P0.045)</summary>
+    /// <summary>è®€å– DI è¨Šè™Ÿç‹€æ…‹ (P0.045)</summary>
     public ushort ReadDiStatus()
     {
         ThrowIfDisposed();
         return _modbus.ReadRegister(AsdaB3RegisterMap.P0_045_DiStatus);
     }
 
-    /// <summary>¥¿·¥­­¬O§_Ä²µo¡]DI ¹ïÀ³ªº¥¿Âà¸T¤î«H¸¹¡A§C¹q¦ì¦³®Ä¡^</summary>
+    /// <summary>æ­£æ¥µé™æ˜¯å¦è§¸ç™¼ï¼ˆDI å°æ‡‰çš„æ­£è½‰ç¦æ­¢ä¿¡è™Ÿï¼Œä½é›»ä½æœ‰æ•ˆï¼‰</summary>
     public bool IsPositiveLimitActive()
     {
         ThrowIfDisposed();
         var status = ReadDriverStatus();
-        // ³z¹L P0.046 Warning bit ·f°t DI ª¬ºA§PÂ_
-        // ª½±µÅª¨ú DI ª¬ºA¼È¦s¾¹¡A¥¿·¥­­³q±`°t¸m¦b DI7 (Bit6)
+        // é€é P0.046 Warning bit æ­é… DI ç‹€æ…‹åˆ¤æ–·
+        // ç›´æ¥è®€å– DI ç‹€æ…‹æš«å­˜å™¨ï¼Œæ­£æ¥µé™é€šå¸¸é…ç½®åœ¨ DI7 (Bit6)
         ushort diStatus = ReadDiStatus();
-        return (diStatus & AsdaB3RegisterMap.DI7_Bit) == 0; // B contact: §C¹q¦ì = Ä²µo
+        return (diStatus & AsdaB3RegisterMap.DI7_Bit) == 0; // B contact: ä½é›»ä½ = è§¸ç™¼
     }
 
-    /// <summary>­t·¥­­¬O§_Ä²µo¡]DI ¹ïÀ³ªº¤ÏÂà¸T¤î«H¸¹¡A§C¹q¦ì¦³®Ä¡^</summary>
+    /// <summary>è² æ¥µé™æ˜¯å¦è§¸ç™¼ï¼ˆDI å°æ‡‰çš„åè½‰ç¦æ­¢ä¿¡è™Ÿï¼Œä½é›»ä½æœ‰æ•ˆï¼‰</summary>
     public bool IsNegativeLimitActive()
     {
         ThrowIfDisposed();
         ushort diStatus = ReadDiStatus();
-        return (diStatus & AsdaB3RegisterMap.DI8_Bit) == 0; // B contact: §C¹q¦ì = Ä²µo
+        return (diStatus & AsdaB3RegisterMap.DI8_Bit) == 0; // B contact: ä½é›»ä½ = è§¸ç™¼
     }
 
-    /// <summary>­ìÂI½áÂk¬O§_§¹¦¨¡]P0.046 Bit8¡^</summary>
+    /// <summary>åŸé»è³¦æ­¸æ˜¯å¦å®Œæˆï¼ˆP0.046 Bit8ï¼‰</summary>
     public bool IsHomeCompleted()
     {
         ThrowIfDisposed();
@@ -452,7 +452,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         return status.HasFlag(DriverStatusFlags.HomeComplete);
     }
 
-    /// <summary>¹qºÏ·Ù¨®¬O§_ÄÀ©ñ¡]P0.046 Bit7¡^</summary>
+    /// <summary>é›»ç£ç…è»Šæ˜¯å¦é‡‹æ”¾ï¼ˆP0.046 Bit7ï¼‰</summary>
     public bool IsBrakeReleased()
     {
         ThrowIfDisposed();
@@ -461,7 +461,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     /// <summary>
-    /// °õ¦æ­ìÂI½áÂk°Ê§@¡]Ä²µo PR#0 = Homing¡^
+    /// åŸ·è¡ŒåŸé»è³¦æ­¸å‹•ä½œï¼ˆè§¸ç™¼ PR#0 = Homingï¼‰
     /// </summary>
     public void ExecuteHoming()
     {
@@ -469,29 +469,29 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         EnsureNoAlarm();
 
         if (!IsServoOn)
-            throw new InvalidOperationException("½Ğ¥ı¿EºÏ (Servo ON) ¦A°õ¦æ­ìÂI½áÂk");
+            throw new InvalidOperationException("è«‹å…ˆæ¿€ç£ (Servo ON) å†åŸ·è¡ŒåŸé»è³¦æ­¸");
 
-        // Ä²µo Homing: ¼g P5.007 = 0 (PR#0 ¬°­ìÂI½áÂk¸ô®|)
+        // è§¸ç™¼ Homing: å¯« P5.007 = 0 (PR#0 ç‚ºåŸé»è³¦æ­¸è·¯å¾‘)
         _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
 
-        // µ¥«İ­ìÂI½áÂk§¹¦¨
+        // ç­‰å¾…åŸé»è³¦æ­¸å®Œæˆ
         WaitForCondition(
             () =>
             {
                 var status = ReadDriverStatus();
                 if (status.HasFlag(DriverStatusFlags.Alarm))
-                    throw new ServoAlarmException(0, "­ìÂI½áÂk´Á¶¡µo¥ÍÄµ³ø");
+                    throw new ServoAlarmException(0, "åŸé»è³¦æ­¸æœŸé–“ç™¼ç”Ÿè­¦å ±");
                 return status.HasFlag(DriverStatusFlags.HomeComplete);
             },
             timeoutMs: InPositionTimeout * 3,
-            errorMessage: $"­ìÂI½áÂk¹O®É¡]¶W¹L {InPositionTimeout * 3} ms¡^"
+            errorMessage: $"åŸé»è³¦æ­¸é€¾æ™‚ï¼ˆè¶…é {InPositionTimeout * 3} msï¼‰"
         );
     }
 
     /// <summary>
-    /// ±±¨î¹qºÏ·Ù¨®¡]³z¹L³nÅé DO ±±¨î¡^
+    /// æ§åˆ¶é›»ç£ç…è»Šï¼ˆé€éè»Ÿé«” DO æ§åˆ¶ï¼‰
     /// </summary>
-    /// <param name="release">true = ÄÀ©ñ·Ù¨®; false = Âê¦í·Ù¨®</param>
+    /// <param name="release">true = é‡‹æ”¾ç…è»Š; false = é–ä½ç…è»Š</param>
     public void SetBrake(bool release)
     {
         ThrowIfDisposed();
@@ -499,29 +499,32 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         ushort softDo = _modbus.ReadRegister(AsdaB3RegisterMap.P4_006_SoftwareDO);
 
         if (release)
-            softDo |= AsdaB3RegisterMap.StatusBit_Brake; // Bit4 = 1: ÄÀ©ñ·Ù¨®
+            softDo |= AsdaB3RegisterMap.StatusBit_Brake; // Bit4 = 1: é‡‹æ”¾ç…è»Š
         else
-            softDo &= unchecked((ushort)~AsdaB3RegisterMap.StatusBit_Brake); // Bit4 = 0: Âê¦í·Ù¨®
+            softDo &= unchecked((ushort)~AsdaB3RegisterMap.StatusBit_Brake); // Bit4 = 0: é–ä½ç…è»Š
 
         _modbus.WriteRegister(AsdaB3RegisterMap.P4_006_SoftwareDO, softDo);
         Thread.Sleep(200);
     }
 
     // ============================
-    //  ¤º³¡»²§U¤èªk
+    //  å…§éƒ¨è¼”åŠ©æ–¹æ³•
     // ============================
 
-    /// <summary>½T»{µLÄµ³ø¡A§_«h©ß¥X ServoAlarmException</summary>
+    /// <summary>ç¢ºèªç„¡è­¦å ±ï¼Œå¦å‰‡æ‹‹å‡º ServoAlarmException</summary>
     private void EnsureNoAlarm()
     {
         if (HasAlarm())
         {
-            var alarmCode = _modbus.ReadRegister(AsdaB3RegisterMap.AlarmCode);
-            throw new ServoAlarmException(alarmCode, $"ÅX°Ê¾¹¦s¦bÄµ³ø: 0x{alarmCode:X4}¡A½Ğ¥ı±Æ°£Äµ³ø");
+            // æ³¨æ„ï¼šä¸è¦ç”¨ AsdaB3RegisterMap.AlarmCode (ä½å€æœªç¶“å¯¦æ©Ÿç¢ºèª)ï¼Œ
+            // æ”¹ç”¨ Connect()/Initialize() æ™‚å·²è¨­å®šå¥½çš„ç›£æ§æ˜ å°„é€šé“ 2 (P0.010 å°æ‡‰ AlarmCodeDecimal)ï¼Œ
+            // èˆ‡ ReadSnapshot() è®€å–è­¦å ±ç¢¼æ˜¯åŒä¸€æ¢å·²é©—è­‰å¯ä¿¡çš„è·¯å¾‘ã€‚
+            var alarmCode = (ushort)_modbus.ReadRegister32(AsdaB3RegisterMap.P0_010_MappedMonitorValue2);
+            throw new ServoAlarmException(alarmCode, $"é©…å‹•å™¨å­˜åœ¨è­¦å ±: 0x{alarmCode:X4}ï¼Œè«‹å…ˆæ’é™¤è­¦å ±");
         }
     }
 
-    /// <summary>µ¥«İ±ø¥ó¦¨¥ß¡A§t¹O®ÉÀË¬d</summary>
+    /// <summary>ç­‰å¾…æ¢ä»¶æˆç«‹ï¼Œå«é€¾æ™‚æª¢æŸ¥</summary>
     private static void WaitForCondition(Func<bool> condition, int timeoutMs, string errorMessage)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -530,17 +533,17 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
             if (sw.ElapsedMilliseconds > timeoutMs)
                 throw new TimeoutException(errorMessage);
 
-            Thread.Sleep(10); // ½ü¸ß¶¡¹j 10ms
+            Thread.Sleep(10); // è¼ªè©¢é–“éš” 10ms
         }
     }
 
-    /// <summary>ÀË¬dª«¥ó¬O§_¤w³QÄÀ©ñ</summary>
+    /// <summary>æª¢æŸ¥ç‰©ä»¶æ˜¯å¦å·²è¢«é‡‹æ”¾</summary>
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
-    /// <summary>ÄÀ©ñ¸ê·½</summary>
+    /// <summary>é‡‹æ”¾è³‡æº</summary>
     public void Dispose()
     {
         if (_disposed)
@@ -552,7 +555,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         {
             if (IsServoOn)
             {
-                // ³z¹L P4.007 ²M°£ DI1 ¡÷ Servo OFF
+                // é€é P4.007 æ¸…é™¤ DI1 â†’ Servo OFF
                 ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
                 softDi &= unchecked((ushort)~AsdaB3RegisterMap.DI1_Bit);
                 _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
@@ -561,7 +564,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException)
         {
-            // ¶È©¿²¤³q°T¬ÛÃöªº¿ù»~
+            // åƒ…å¿½ç•¥é€šè¨Šç›¸é—œçš„éŒ¯èª¤
         }
 
         _modbus.Disconnect();
@@ -569,10 +572,10 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     // ============================
-    //  ºÊµøÅÜ¼Æ¬M®g (³q°TÅª¨ú)
+    //  ç›£è¦–è®Šæ•¸æ˜ å°„ (é€šè¨Šè®€å–)
     // ============================
 
-    /// <summary>¬M®g¿ï¾Ü¼È¦s¾¹ (P0.017~P0.020)</summary>
+    /// <summary>æ˜ å°„é¸æ“‡æš«å­˜å™¨ (P0.017~P0.020)</summary>
     private static readonly ushort[] MonitorSelRegisters =
     [
         AsdaB3RegisterMap.P0_017_MappedMonitorSel1,
@@ -581,7 +584,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         AsdaB3RegisterMap.P0_020_MappedMonitorSel4,
     ];
 
-    /// <summary>¬M®g¦^¶Ç­È¼È¦s¾¹ (P0.009~P0.012)</summary>
+    /// <summary>æ˜ å°„å›å‚³å€¼æš«å­˜å™¨ (P0.009~P0.012)</summary>
     private static readonly ushort[] MonitorValueRegisters =
     [
         AsdaB3RegisterMap.P0_009_MappedMonitorValue1,
@@ -591,17 +594,17 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     ];
 
     /// <summary>
-    /// ³]©wºÊµøÅÜ¼Æ¬M®g¡]³Ì¦h 4 ²Õ¡^
-    /// <para>±N«ü©wªººÊµø¥N½X¼g¤J P0.017~P0.020¡A«áÄò¥i³z¹L ReadMonitorValues Åª¨ú</para>
+    /// è¨­å®šç›£è¦–è®Šæ•¸æ˜ å°„ï¼ˆæœ€å¤š 4 çµ„ï¼‰
+    /// <para>å°‡æŒ‡å®šçš„ç›£è¦–ä»£ç¢¼å¯«å…¥ P0.017~P0.020ï¼Œå¾ŒçºŒå¯é€é ReadMonitorValues è®€å–</para>
     /// </summary>
-    /// <param name="monitorCodes">ºÊµøÅÜ¼Æ¥N½X°}¦C¡A¨Ï¥Î <see cref="AsdaB3MonitorCode"/> ©w¸qªº±`¼Æ</param>
-    /// <exception cref="ArgumentException">¶W¹L 4 ²Õ¬M®g</exception>
+    /// <param name="monitorCodes">ç›£è¦–è®Šæ•¸ä»£ç¢¼é™£åˆ—ï¼Œä½¿ç”¨ <see cref="AsdaB3MonitorCode"/> å®šç¾©çš„å¸¸æ•¸</param>
+    /// <exception cref="ArgumentException">è¶…é 4 çµ„æ˜ å°„</exception>
     public void ConfigureMonitorMapping(params ushort[] monitorCodes)
     {
         ThrowIfDisposed();
 
         if (monitorCodes.Length > MonitorSelRegisters.Length)
-            throw new ArgumentException($"³Ì¦h¶È¤ä´© {MonitorSelRegisters.Length} ²Õ¬M®gºÊµøÅÜ¼Æ", nameof(monitorCodes));
+            throw new ArgumentException($"æœ€å¤šåƒ…æ”¯æ´ {MonitorSelRegisters.Length} çµ„æ˜ å°„ç›£è¦–è®Šæ•¸", nameof(monitorCodes));
 
         for (int i = 0; i < monitorCodes.Length; i++)
         {
@@ -610,17 +613,17 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     /// <summary>
-    /// Åª¨ú¤w¬M®gªººÊµøÅÜ¼Æ­È¡]¹ïÀ³ P0.009~P0.012¡^
-    /// <para>©I¥s«e¶·¥ı³z¹L <see cref="ConfigureMonitorMapping"/> ³]©w¬M®g¥N½X</para>
+    /// è®€å–å·²æ˜ å°„çš„ç›£è¦–è®Šæ•¸å€¼ï¼ˆå°æ‡‰ P0.009~P0.012ï¼‰
+    /// <para>å‘¼å«å‰é ˆå…ˆé€é <see cref="ConfigureMonitorMapping"/> è¨­å®šæ˜ å°„ä»£ç¢¼</para>
     /// </summary>
-    /// <param name="count">±ıÅª¨úªº²Õ¼Æ (1~4)</param>
-    /// <returns>¦U²Õ¬M®gºÊµøÅÜ¼Æªº 16-bit ­È</returns>
+    /// <param name="count">æ¬²è®€å–çš„çµ„æ•¸ (1~4)</param>
+    /// <returns>å„çµ„æ˜ å°„ç›£è¦–è®Šæ•¸çš„ 16-bit å€¼</returns>
     public ushort[] ReadMonitorValues(int count = 4)
     {
         ThrowIfDisposed();
 
         if (count < 1 || count > MonitorValueRegisters.Length)
-            throw new ArgumentOutOfRangeException(nameof(count), $"count ¶·¤¶©ó 1~{MonitorValueRegisters.Length}");
+            throw new ArgumentOutOfRangeException(nameof(count), $"count é ˆä»‹æ–¼ 1~{MonitorValueRegisters.Length}");
 
         var results = new ushort[count];
         for (int i = 0; i < count; i++)
@@ -632,39 +635,42 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
     }
 
     /// <summary>
-    /// Åª¨ú³æ¤@¬M®gºÊµøÅÜ¼Æ¡]32-bit¡A¾A¥Î Low/High word ¦X¨ÖªººÊµøÅÜ¼Æ¡^
+    /// è®€å–å–®ä¸€æ˜ å°„ç›£è¦–è®Šæ•¸ï¼ˆ32-bitï¼Œé©ç”¨ Low/High word åˆä½µçš„ç›£è¦–è®Šæ•¸ï¼‰
     /// </summary>
-    /// <param name="channel">¬M®g³q¹D (0~3¡A¹ïÀ³ P0.009~P0.012)</param>
-    /// <returns>32-bit ºÊµø­È</returns>
+    /// <param name="channel">æ˜ å°„é€šé“ (0~3ï¼Œå°æ‡‰ P0.009~P0.012)</param>
+    /// <returns>32-bit ç›£è¦–å€¼</returns>
     public int ReadMonitorValue32(int channel)
     {
         ThrowIfDisposed();
 
         if (channel < 0 || channel >= MonitorValueRegisters.Length)
-            throw new ArgumentOutOfRangeException(nameof(channel), $"channel ¶·¤¶©ó 0~{MonitorValueRegisters.Length - 1}");
+            throw new ArgumentOutOfRangeException(nameof(channel), $"channel é ˆä»‹æ–¼ 0~{MonitorValueRegisters.Length - 1}");
 
         return _modbus.ReadRegister32(MonitorValueRegisters[channel]);
     }
 
     // ============================
-    //  §å¦¸Åª¨ú (´î¤Ö³q°T¦¸¼Æ)
+    //  æ‰¹æ¬¡è®€å– (æ¸›å°‘é€šè¨Šæ¬¡æ•¸)
     // ============================
 
     /// <summary>
-    /// §å¦¸Åª¨úÅX°Ê¾¹§Y®Éª¬ºA§Ö·Ó
-    /// <para>¤@¦¸ Modbus Åª¨ú P0.045~P0.046 (2 regs)¡A¦AÅª P0.050~P0.053 (4 regs)¡A¦@ 2 ¦¸³q°T</para>
+    /// æ‰¹æ¬¡è®€å–é©…å‹•å™¨å³æ™‚ç‹€æ…‹å¿«ç…§
+    /// <para>ä¸€æ¬¡ Modbus è®€å– P0.045~P0.046 (2 regs)ï¼Œå†è®€ P0.050~P0.053 (4 regs)ï¼Œå…± 2 æ¬¡é€šè¨Š</para>
     /// </summary>
     public DriverSnapshot ReadSnapshot()
     {
         ThrowIfDisposed();
 
-        // P0.046 DO ¿é¥X°T¸¹ª¬ºA (0x005C)
-        ushort doStatus = _modbus.ReadRegister(AsdaB3RegisterMap.P0_046_DriverStatus);
+        // P0.045~P0.046 ä¸€æ¬¡è®€ 3 registers (0x005A~0x005Cï¼Œä¸­é–“ 0x005B ç‚ºä¿ç•™ä½)ï¼š
+        // statusBatch[0] = P0.045 DI ä¸‰ç·šç‹€æ…‹ï¼ŒstatusBatch[2] = P0.046 DO ä¸‰ç·šç‹€æ…‹
+        ushort[] statusBatch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_045_DiStatus, 3);
+        ushort diStatus = statusBatch[0];
+        ushort doStatus = statusBatch[2];
 
-        // P0.050~P0.054 (¨C°Ñ¼Æ¦û 2 addr¡A¦@ 10 registers)
+        // P0.050~P0.054 (æ¯åƒæ•¸ä½” 2 addrï¼Œå…± 10 registers)
         ushort[] batch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_050_AbsStatus, 10);
 
-        // Åª¨ú¬M®gºÊµøÅÜ¼Æ P0.009~P0.012 (¦ì§} 0x0012 °_¡A³sÄò 8 ­Ó 16-bit = 4 ­Ó 32-bit)
+        // è®€å–æ˜ å°„ç›£è¦–è®Šæ•¸ P0.009~P0.012 (ä½å€ 0x0012 èµ·ï¼Œé€£çºŒ 8 å€‹ 16-bit = 4 å€‹ 32-bit)
         ushort[] monBatch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_009_MappedMonitorValue1, 8);
 
         int feedbackPos = (int)(monBatch[0] | (monBatch[1] << 16));   // P0.009 (32-bit)
@@ -674,7 +680,7 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
 
         return new DriverSnapshot
         {
-            DiStatus = 0,
+            DiStatus = diStatus,
             DriverStatus = (DriverStatusFlags)doStatus,
             AbsoluteStatus = (AbsoluteStatusFlags)batch[0],
             MultiTurnPosition = (int)(batch[2] | (batch[3] << 16)),

@@ -1,262 +1,265 @@
 namespace DeltaAxis_RS485.Models;
 
 /// <summary>
-/// Delta ASDA-B3 ÅX°Ê¾¹ Modbus ±H¦s¾¹¦ì§}¹ï·Óªí
+/// Delta ASDA-B3 é©…å‹•å™¨ Modbus å¯„å­˜å™¨ä½å€å°ç…§è¡¨
 /// 
-/// »¡©ú¡G
-/// 1. ¥»ªí¥H ASDA-B3 ¤â¥Uªº°Ñ¼Æ¦a§}®æ¦¡¾ã²z
-/// 2. 32-bit °Ñ¼Æ¥H Low Word °_©l¦ì§}ªí¥Ü
-/// 3. Åª¼g 32-bit ®É¡A½Ğ¦P®É¾Ş§@ Low / High ¨â­Ó 16-bit register
-/// 4. ¤Ö¼Æ¥¼§¹¥ş®Ö¹ê¤§¦ì§}¤´«O¯d TODO¡AÁ×§K»~¼g
+/// èªªæ˜ï¼š
+/// 1. æœ¬è¡¨ä»¥ ASDA-B3 æ‰‹å†Šçš„åƒæ•¸åœ°å€æ ¼å¼æ•´ç†
+/// 2. 32-bit åƒæ•¸ä»¥ Low Word èµ·å§‹ä½å€è¡¨ç¤º
+/// 3. è®€å¯« 32-bit æ™‚ï¼Œè«‹åŒæ™‚æ“ä½œ Low / High å…©å€‹ 16-bit register
+/// 4. å°‘æ•¸æœªå®Œå…¨æ ¸å¯¦ä¹‹ä½å€ä»ä¿ç•™ TODOï¼Œé¿å…èª¤å¯«
 /// </summary>
 public static class AsdaB3RegisterMap
 {
     // ============================
-    //  P0 ¸s²Õ ¡X ºÊµø / Absolute
+    //  P0 ç¾¤çµ„ â€” ç›£è¦– / Absolute
     // ============================
     public const ushort P0_000_Version = 0x0000;
 
   
-    /// <summary>P0.045 ¡X DI °T¸¹ª¬ºAÅã¥Ü (16-bit, HEX, ¦U bit ¹ïÀ³ DI1~DI14)</summary>
+    /// <summary>P0.045 â€” DI è¨Šè™Ÿç‹€æ…‹é¡¯ç¤º (16-bit, HEX, å„ bit å°æ‡‰ DI1~DI14)</summary>
     public const ushort P0_045_DiStatus = 0x005A;
 
-    /// <summary>P0.046 ¡X ÅX°Ê¾¹¼Æ¦ì¿é¥X(DO)°T¸¹ª¬ºAÅã¥Ü (16-bit, HEX)</summary>
+    /// <summary>P0.046 â€” é©…å‹•å™¨æ•¸ä½è¼¸å‡º(DO)è¨Šè™Ÿç‹€æ…‹é¡¯ç¤º (16-bit, HEX)</summary>
     public const ushort P0_046_DriverStatus = 0x005C;
 
-    /// <summary>P0.050 ¡X µ´¹ï«¬®y¼Ğ¨t²Îª¬ºA (16-bit, HEX, 0x0000~0x001F)</summary>
+    /// <summary>P0.050 â€” çµ•å°å‹åº§æ¨™ç³»çµ±ç‹€æ…‹ (16-bit, HEX, 0x0000~0x001F)</summary>
     public const ushort P0_050_AbsStatus = 0x0064;
 
-    /// <summary>P0.051 ¡X ¦h°éµ´¹ï¦ì¸m (32-bit, Low word)</summary>
+    /// <summary>P0.051 â€” å¤šåœˆçµ•å°ä½ç½® (32-bit, Low word)</summary>
     public const ushort P0_051_MultiTurnPos_Low = 0x0066;
 
-    /// <summary>P0.052 ¡X ³æ°éµ´¹ï¦ì¸m (32-bit, Low word)</summary>
+    /// <summary>P0.052 â€” å–®åœˆçµ•å°ä½ç½® (32-bit, Low word)</summary>
     public const ushort P0_052_SingleTurnPos_Low = 0x0068;
 
     // ============================
-    //  P0 ¸s²Õ ¡X ºÊµøÅÜ¼Æ¬M®g (³q°TÅª¨ú¥Î)
+    //  P0 ç¾¤çµ„ â€” ç›£è¦–è®Šæ•¸æ˜ å°„ (é€šè¨Šè®€å–ç”¨)
     // ============================
 
-    /// <summary>P0.009 ¡X ¬M®gºÊµøÅÜ¼Æ #1 ¦^¶Ç­È (¹ïÀ³ P0.017 «ü©wªººÊµø¥N½X)</summary>
+    /// <summary>P0.009 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #1 å›å‚³å€¼ (å°æ‡‰ P0.017 æŒ‡å®šçš„ç›£è¦–ä»£ç¢¼)</summary>
     public const ushort P0_009_MappedMonitorValue1 = 0x0012;
 
-    /// <summary>P0.010 ¡X ¬M®gºÊµøÅÜ¼Æ #2 ¦^¶Ç­È (¹ïÀ³ P0.018 «ü©wªººÊµø¥N½X)</summary>
+    /// <summary>P0.010 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #2 å›å‚³å€¼ (å°æ‡‰ P0.018 æŒ‡å®šçš„ç›£è¦–ä»£ç¢¼)</summary>
     public const ushort P0_010_MappedMonitorValue2 = 0x0014;
 
-    /// <summary>P0.011 ¡X ¬M®gºÊµøÅÜ¼Æ #3 ¦^¶Ç­È (¹ïÀ³ P0.019 «ü©wªººÊµø¥N½X)</summary>
+    /// <summary>P0.011 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #3 å›å‚³å€¼ (å°æ‡‰ P0.019 æŒ‡å®šçš„ç›£è¦–ä»£ç¢¼)</summary>
     public const ushort P0_011_MappedMonitorValue3 = 0x0016;
 
-    /// <summary>P0.012 ¡X ¬M®gºÊµøÅÜ¼Æ #4 ¦^¶Ç­È (¹ïÀ³ P0.020 «ü©wªººÊµø¥N½X)</summary>
+    /// <summary>P0.012 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #4 å›å‚³å€¼ (å°æ‡‰ P0.020 æŒ‡å®šçš„ç›£è¦–ä»£ç¢¼)</summary>
     public const ushort P0_012_MappedMonitorValue4 = 0x0018;
 
-    /// <summary>P0.013 ¡X ¬M®gºÊµøÅÜ¼Æ #5 ¦^¶Ç­È</summary>
+    /// <summary>P0.013 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #5 å›å‚³å€¼</summary>
     public const ushort P0_013_MappedMonitorValue5 = 0x001A;
 
-    /// <summary>P0.017 ¡X ¬M®gºÊµøÅÜ¼Æ #1 ¥N½X³]©w (¶ñ¤J AsdaB3MonitorCode)</summary>
+    /// <summary>P0.017 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #1 ä»£ç¢¼è¨­å®š (å¡«å…¥ AsdaB3MonitorCode)</summary>
     public const ushort P0_017_MappedMonitorSel1 = 0x0022;
 
-    /// <summary>P0.018 ¡X ¬M®gºÊµøÅÜ¼Æ #2 ¥N½X³]©w</summary>
+    /// <summary>P0.018 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #2 ä»£ç¢¼è¨­å®š</summary>
     public const ushort P0_018_MappedMonitorSel2 = 0x0024;
 
-    /// <summary>P0.019 ¡X ¬M®gºÊµøÅÜ¼Æ #3 ¥N½X³]©w</summary>
+    /// <summary>P0.019 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #3 ä»£ç¢¼è¨­å®š</summary>
     public const ushort P0_019_MappedMonitorSel3 = 0x0026;
 
-    /// <summary>P0.020 ¡X ¬M®gºÊµøÅÜ¼Æ #4 ¥N½X³]©w</summary>
+    /// <summary>P0.020 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #4 ä»£ç¢¼è¨­å®š</summary>
     public const ushort P0_020_MappedMonitorSel4 = 0x0028;
 
 
-    /// <summary>P0.021 ¡X ¬M®gºÊµøÅÜ¼Æ #4 ¥N½X³]©w</summary>
+    /// <summary>P0.021 â€” æ˜ å°„ç›£è¦–è®Šæ•¸ #4 ä»£ç¢¼è¨­å®š</summary>
     public const ushort P0_021_MappedMonitorSel4 = 0x002A;
 
 
     // ============================
-    //  P1 ¸s²Õ ¡X °ò¥»°Ñ¼Æ
+    //  P1 ç¾¤çµ„ â€” åŸºæœ¬åƒæ•¸
     // ============================
 
-    /// <summary>P1.001 ¡X ±±¨î¼Ò¦¡</summary>
-    public const ushort P1_001_ControlMode = 0x0102;         // ±À©w­È¡A«ØÄ³¹ê¾÷¦A®Ö
+    /// <summary>P1.001 â€” æ§åˆ¶æ¨¡å¼</summary>
+    public const ushort P1_001_ControlMode = 0x0102;         // æ¨å®šå€¼ï¼Œå»ºè­°å¯¦æ©Ÿå†æ ¸
 
-    /// <summary>P1.054 ¡X ¨ì¦ì®e³\»~®t</summary>
-    public const ushort P1_054_InPosWindow = 0x016C;         // ±À©w­È¡A«ØÄ³¹ê¾÷¦A®Ö
+    /// <summary>P1.054 â€” åˆ°ä½å®¹è¨±èª¤å·®</summary>
+    public const ushort P1_054_InPosWindow = 0x016C;         // æ¨å®šå€¼ï¼Œå»ºè­°å¯¦æ©Ÿå†æ ¸
 
     // ============================
-    //  P2 ¸s²Õ ¡X ÂX¥R / Absolute
+    //  P2 ç¾¤çµ„ â€” æ“´å…… / Absolute
     // ============================
 
-    /// <summary>P2.008 ¡X ¯S®í°Ñ¼Æ¼g«OÅ@¸Ñ°£</summary>
+    /// <summary>P2.008 â€” ç‰¹æ®Šåƒæ•¸å¯«ä¿è­·è§£é™¤</summary>
     public const ushort P2_008_WriteProtect = 0x0210;
 
     /// <summary>
-    /// P2.030 ¡X »²§U¾÷¯à
-    /// <para>³]©w 5: Â_¹q«á¤£«O«ù°Ñ¼Æ¡A¨¾¤î EEPROM ³sÄò¼g¤J´îµu¹Ø©R¡]³q°T±±¨î®É¥²¶·³]©w¡^</para>
+    /// P2.030 â€” è¼”åŠ©æ©Ÿèƒ½
+    /// <para>è¨­å®š 5: æ–·é›»å¾Œä¸ä¿æŒåƒæ•¸ï¼Œé˜²æ­¢ EEPROM é€£çºŒå¯«å…¥æ¸›çŸ­å£½å‘½ï¼ˆé€šè¨Šæ§åˆ¶æ™‚å¿…é ˆè¨­å®šï¼‰</para>
     /// </summary>
     public const ushort P2_030_AuxFunction = 0x023C;
 
-    /// <summary>P2.030 ³]©w­È: ¤£«O«ù¼g¤J¸ê®Æ¡A«OÅ@ EEPROM</summary>
+    /// <summary>P2.030 è¨­å®šå€¼: ä¸ä¿æŒå¯«å…¥è³‡æ–™ï¼Œä¿è­· EEPROM</summary>
     public const ushort AuxFunction_NoEepromSave = 5;
 
-    /// <summary>P2.070 ¡X Absolute ¸ê®ÆÅª¨ú³]©w</summary>
+    /// <summary>P2.070 â€” Absolute è³‡æ–™è®€å–è¨­å®š</summary>
     public const ushort P2_070_AbsReadSetting = 0x028C;
 
-    /// <summary>P2.071 ¡X «Ø¥ß absolute origin</summary>
-    public const ushort P2_071_BuildAbsOrigin = 0x028E;      // ±À©w­È¡A«ØÄ³¹ê¾÷¦A®Ö
+    /// <summary>P2.071 â€” å»ºç«‹ absolute origin</summary>
+    public const ushort P2_071_BuildAbsOrigin = 0x028E;      // æ¨å®šå€¼ï¼Œå»ºè­°å¯¦æ©Ÿå†æ ¸
 
     // ============================
-    //  P3 ¸s²Õ ¡X ³q°T°Ñ¼Æ
+    //  P3 ç¾¤çµ„ â€” é€šè¨Šåƒæ•¸
     // ============================
 
-    /// <summary>P3.000 ¡X RS485 ¯¸¸¹</summary>
+    /// <summary>P3.000 â€” RS485 ç«™è™Ÿ</summary>
     public const ushort P3_000_StationId = 0x0300;
 
-    /// <summary>P3.001 ¡X Àj²v</summary>
-    public const ushort P3_001_BaudRate = 0x0302;            // ±À©w­È
+    /// <summary>P3.001 â€” é®‘ç‡</summary>
+    public const ushort P3_001_BaudRate = 0x0302;            // æ¨å®šå€¼
 
-    /// <summary>P3.002 ¡X ¨ó©w</summary>
-    public const ushort P3_002_Protocol = 0x0304;            // ±À©w­È
+    /// <summary>P3.002 â€” å”å®š</summary>
+    public const ushort P3_002_Protocol = 0x0304;            // æ¨å®šå€¼
 
-    /// <summary>P3.003 ¡X ³q°T¿ù»~³B²z</summary>
-    public const ushort P3_003_CommErrHandle = 0x0306;       // ±À©w­È
+    /// <summary>P3.003 â€” é€šè¨ŠéŒ¯èª¤è™•ç†</summary>
+    public const ushort P3_003_CommErrHandle = 0x0306;       // æ¨å®šå€¼
 
-    /// <summary>P3.004 ¡X ³q°T Timeout</summary>
-    public const ushort P3_004_CommTimeout = 0x0308;         // ±À©w­È
+    /// <summary>P3.004 â€” é€šè¨Š Timeout</summary>
+    public const ushort P3_004_CommTimeout = 0x0308;         // æ¨å®šå€¼
 
     /// <summary>
-    /// P3.006 ¡X DI ¨Ó·½±±¨î¶}Ãö (16-bit, HEX)
-    /// <para>¨C 1 ¦ì¤¸¨M©w 1 ­Ó DI ¤§«H¸¹¿é¤J¨Ó·½¡GBit0~Bit12 ¹ïÀ³ DI1~DI13</para>
-    /// <para>0: ¥Ñ¥~³¡µwÅéºİ¤l±±¨î¡F1: ¥Ñ P4.007 ³nÅé DI ±±¨î</para>
+    /// P3.006 â€” DI ä¾†æºæ§åˆ¶é–‹é—œ (16-bit, HEX)
+    /// <para>æ¯ 1 ä½å…ƒæ±ºå®š 1 å€‹ DI ä¹‹ä¿¡è™Ÿè¼¸å…¥ä¾†æºï¼šBit0~Bit12 å°æ‡‰ DI1~DI13</para>
+    /// <para>0: ç”±å¤–éƒ¨ç¡¬é«”ç«¯å­æ§åˆ¶ï¼›1: ç”± P4.007 è»Ÿé«” DI æ§åˆ¶</para>
     /// </summary>
     public const ushort P3_006_DiControl = 0x030C;
 
-    /// <summary>P3.007 ¡X ¦^À³©µ¿ğ</summary>
-    public const ushort P3_007_ResponseDelay = 0x030E;       // ±À©w­È
+    /// <summary>P3.007 â€” å›æ‡‰å»¶é²</summary>
+    public const ushort P3_007_ResponseDelay = 0x030E;       // æ¨å®šå€¼
 
     // ============================
-    //  P4 ¸s²Õ ¡X DI/DO ¥\¯à
+    //  P4 ç¾¤çµ„ â€” DI/DO åŠŸèƒ½
     // ============================
 
     /// <summary>
-    /// P4.006 ¡X ³nÅé DO ¸ê®Æ¼È¦s¾¹ (¥iÅª¼g, 16-bit, HEX)
-    /// <para>Bit0~Bit15 ¹ïÀ³ DO code 0x30~0x3F</para>
-    /// <para>­Y P2.018=0x0130¡A«h DO1 ¿é¥X§Y¬° P4.006 ªº bit00 ª¬ºA¡A¨Ì¦¹Ãş±À</para>
-    /// <para>³]©w½d³ò: 0x0000~0xFFFF</para>
+    /// P4.006 â€” è»Ÿé«” DO è³‡æ–™æš«å­˜å™¨ (å¯è®€å¯«, 16-bit, HEX)
+    /// <para>Bit0~Bit15 å°æ‡‰ DO code 0x30~0x3F</para>
+    /// <para>è‹¥ P2.018=0x0130ï¼Œå‰‡ DO1 è¼¸å‡ºå³ç‚º P4.006 çš„ bit00 ç‹€æ…‹ï¼Œä¾æ­¤é¡æ¨</para>
+    /// <para>è¨­å®šç¯„åœ: 0x0000~0xFFFF</para>
     /// </summary>
     public const ushort P4_006_SoftwareDO = 0x040C;
 
     /// <summary>
-    /// P4.007 ¡X ¼Æ¦ì¿é¤J±µÂI¦h­«¥\¯à (³nÅé DI, 16-bit, HEX)
-    /// <para>·í P3.006 ¹ïÀ³¦ì¤¸¬° 1 ®É¡ADI ¨Ó·½¥Ñ¦¹°Ñ¼Æ±±¨î</para>
-    /// <para>Bit0~Bit13 ¹ïÀ³ DI1~DI14¡A³]©w½d³ò: 0x0000~0x3FFF</para>
+    /// P4.007 â€” æ•¸ä½è¼¸å…¥æ¥é»å¤šé‡åŠŸèƒ½ (è»Ÿé«” DI, 16-bit, HEX)
+    /// <para>ç•¶ P3.006 å°æ‡‰ä½å…ƒç‚º 1 æ™‚ï¼ŒDI ä¾†æºç”±æ­¤åƒæ•¸æ§åˆ¶</para>
+    /// <para>Bit0~Bit13 å°æ‡‰ DI1~DI14ï¼Œè¨­å®šç¯„åœ: 0x0000~0x3FFF</para>
     /// </summary>
     public const ushort P4_007_SoftwareDI = 0x040E;
 
     // ============================
-    //  P5 ¸s²Õ ¡X PR / Motion
+    //  P5 ç¾¤çµ„ â€” PR / Motion
     // ============================
 
-    /// <summary>P5.004 ¡X Homing method</summary>
-    public const ushort P5_004_HomingMethod = 0x0508;        // ±À©w­È
+    /// <summary>P5.004 â€” Homing method</summary>
+    public const ushort P5_004_HomingMethod = 0x0508;        // æ¨å®šå€¼
 
-    /// <summary>P5.005 ¡X °ª³t Homing ³t«× (32-bit, Low word)</summary>
+    /// <summary>P5.005 â€” é«˜é€Ÿ Homing é€Ÿåº¦ (32-bit, Low word)</summary>
     public const ushort P5_005_HighSpeedHoming_Low = 0x050A;
 
-    /// <summary>P5.005 ¡X °ª³t Homing ³t«× (32-bit, High word)</summary>
+    /// <summary>P5.005 â€” é«˜é€Ÿ Homing é€Ÿåº¦ (32-bit, High word)</summary>
     public const ushort P5_005_HighSpeedHoming_High = 0x050B;
 
-    /// <summary>P5.006 ¡X §C³t Homing ³t«× (32-bit, Low word)</summary>
+    /// <summary>P5.006 â€” ä½é€Ÿ Homing é€Ÿåº¦ (32-bit, Low word)</summary>
     public const ushort P5_006_LowSpeedHoming_Low = 0x050C;
 
-    /// <summary>P5.006 ¡X §C³t Homing ³t«× (32-bit, High word)</summary>
+    /// <summary>P5.006 â€” ä½é€Ÿ Homing é€Ÿåº¦ (32-bit, High word)</summary>
     public const ushort P5_006_LowSpeedHoming_High = 0x050D;
 
-    /// <summary>P5.007 ¡X PR command trigger¡]¼g 1 = °õ¦æ PR#1¡^</summary>
+    /// <summary>P5.007 â€” PR command triggerï¼ˆå¯« 1 = åŸ·è¡Œ PR#1ï¼‰</summary>
     public const ushort P5_007_PrTrigger = 0x050E;
 
-    /// <summary>P5.008 ¡X ¥¿¦V³n­­¦ì (32-bit, Low word)</summary>
+    /// <summary>P5.008 â€” æ­£å‘è»Ÿé™ä½ (32-bit, Low word)</summary>
     public const ushort P5_008_PosLimit_Low = 0x0510;
 
-    /// <summary>P5.008 ¡X ¥¿¦V³n­­¦ì (32-bit, High word)</summary>
+    /// <summary>P5.008 â€” æ­£å‘è»Ÿé™ä½ (32-bit, High word)</summary>
     public const ushort P5_008_PosLimit_High = 0x0511;
 
-    /// <summary>P5.009 ¡X ¤Ï¦V³n­­¦ì (32-bit, Low word)</summary>
+    /// <summary>P5.009 â€” åå‘è»Ÿé™ä½ (32-bit, Low word)</summary>
     public const ushort P5_009_NegLimit_Low = 0x0512;
 
-    /// <summary>P5.009 ¡X ¤Ï¦V³n­­¦ì (32-bit, High word)</summary>
+    /// <summary>P5.009 â€” åå‘è»Ÿé™ä½ (32-bit, High word)</summary>
     public const ushort P5_009_NegLimit_High = 0x0513;
 
-    /// <summary>P5.020 ¡X Acc/Dec Time #1</summary>
-    public const ushort P5_020_AccDecTime0 = 0x0528;         // ±À©w­È
+    /// <summary>P5.020 â€” Acc/Dec Time #1</summary>
+    public const ushort P5_020_AccDecTime0 = 0x0528;         // æ¨å®šå€¼
 
-    /// <summary>P5.040 ¡X Delay Time #1</summary>
-    public const ushort P5_040_DelayTime0 = 0x0550;          // ±À©w­È
+    /// <summary>P5.040 â€” Delay Time #1</summary>
+    public const ushort P5_040_DelayTime0 = 0x0550;          // æ¨å®šå€¼
 
-    /// <summary>P5.061 ¡X Target Speed #1 (32-bit, Low word)</summary>
+    /// <summary>P5.061 â€” Target Speed #1 (32-bit, Low word)</summary>
     public const ushort P5_060_TargetSpeed0 = 0x0578;
 
-    /// <summary>P5.061 ¡X Target Speed #1 (32-bit, High word)</summary>
+    /// <summary>P5.061 â€” Target Speed #1 (32-bit, High word)</summary>
     public const ushort P5_061_TargetSpeed1_High = 0x057B;
 
     // ============================
-    //  P6 ¸s²Õ ¡X PR Path Definition
+    //  P6 ç¾¤çµ„ â€” PR Path Definition
     // ============================
 
-    /// <summary>P6.000 ¡X Homing definition (32-bit, Low word)</summary>
+    /// <summary>P6.000 â€” Homing definition (32-bit, Low word)</summary>
     public const ushort P6_000_HomingDef_Low = 0x0600;
 
-    /// <summary>P6.000 ¡X Homing definition (32-bit, High word)</summary>
+    /// <summary>P6.000 â€” Homing definition (32-bit, High word)</summary>
     public const ushort P6_000_HomingDef_High = 0x0601;
 
-    /// <summary>P6.002 ¡X PR#1 path definition (32-bit, Low word)</summary>
+    /// <summary>P6.002 â€” PR#1 path definition (32-bit, Low word)</summary>
     public const ushort P6_002_Pr1PathDef_Low = 0x0604;
 
-    /// <summary>P6.002 ¡X PR#1 path definition (32-bit, High word)</summary>
+    /// <summary>P6.002 â€” PR#1 path definition (32-bit, High word)</summary>
     public const ushort P6_002_Pr1PathDef_High = 0x0605;
 
-    /// <summary>P6.003 ¡X PR#1 ¥Ø¼Ğ¦ì¸m (32-bit, Low word)</summary>
+    /// <summary>P6.003 â€” PR#1 ç›®æ¨™ä½ç½® (32-bit, Low word)</summary>
     public const ushort P6_003_Pr1TargetPos_Low = 0x0606;
 
-    /// <summary>P6.003 ¡X PR#1 ¥Ø¼Ğ¦ì¸m (32-bit, °ª word)</summary>
+    /// <summary>P6.003 â€” PR#1 ç›®æ¨™ä½ç½® (32-bit, é«˜ word)</summary>
     public const ushort P6_003_Pr1TargetPos_High = 0x0607;
 
     // ============================
-    //  ª¬ºA¼È¦s¾¹ ¡X ³z¹L P4.006 ³nÅé DO Åª¨ú
+    //  ç‹€æ…‹æš«å­˜å™¨ â€” é€é P4.006 è»Ÿé«” DO è®€å–
     // ============================
 
     /// <summary>
-    /// ÅX°Ê¾¹ª¬ºA¦r ¡X ¨Ï¥Î P4.006 ³nÅé DO ¼È¦s¾¹
-    /// <para>DO1 Bit0: ¦øªA·Ç³Æ§¹²¦ (Servo Ready, DO code 0x01)</para>
-    /// <para>DO2 Bit1: °¨¹F¹s³t«× (Zero Speed, DO code 0x03)</para>
-    /// <para>DO3 Bit2: ­ìÂI½áÂk§¹¦¨ (Home Complete, DO code 0x09)</para>
-    /// <para>DO4 Bit3: ¥Ø¼Ğ¦ì¸m¨ì¹F (In Position, DO code 0x05)</para>
-    /// <para>DO5 Bit4: ¹qºÏ·Ù¨®±±¨î (Brake, DO code 0x08)</para>
-    /// <para>DO6 Bit5: ¦øªAÄµ¥Ü B contact (Alarm, DO code 0x07)</para>
+    /// é©…å‹•å™¨ç‹€æ…‹å­— â€” ä½¿ç”¨ P4.006 è»Ÿé«” DO æš«å­˜å™¨
+    /// <para>DO1 Bit0: ä¼ºæœæº–å‚™å®Œç•¢ (Servo Ready, DO code 0x01)</para>
+    /// <para>DO2 Bit1: é¦¬é”é›¶é€Ÿåº¦ (Zero Speed, DO code 0x03)</para>
+    /// <para>DO3 Bit2: åŸé»è³¦æ­¸å®Œæˆ (Home Complete, DO code 0x09)</para>
+    /// <para>DO4 Bit3: ç›®æ¨™ä½ç½®åˆ°é” (In Position, DO code 0x05)</para>
+    /// <para>DO5 Bit4: é›»ç£ç…è»Šæ§åˆ¶ (Brake, DO code 0x08)</para>
+    /// <para>DO6 Bit5: ä¼ºæœè­¦ç¤º B contact (Alarm, DO code 0x07)</para>
     /// </summary>
     public const ushort StatusWord = P4_006_SoftwareDO;  // 0x040C
 
-    /// <summary>Äµ³ø¥N½X¼È¦s¾¹ (P0.001 ±À©w)</summary>
-    public const ushort AlarmCode = 0x0002;  // TODO: ½Ğ¨Ì¥¿¦¡ Modbus map ½T»{ P0.001 ¦ì§}
+    /// <summary>
+    /// [æœªé©—è­‰/ä¸è¦ä½¿ç”¨] åŸæœ¬æƒ³å°æ‡‰ P0.001 è­¦å ±ä»£ç¢¼æš«å­˜å™¨ï¼Œä½†ä½å€å¾æœªç¶“å¯¦æ©Ÿç¢ºèªéã€‚
+    /// ç›®å‰è®€å–è­¦å ±ç¢¼è«‹æ”¹ç”¨å·²é©—è­‰çš„ <see cref="P0_010_MappedMonitorValue2"/>ï¼ˆç›£æ§æ˜ å°„é€šé“ 2ï¼Œå°æ‡‰ AlarmCodeDecimalï¼‰ã€‚
+    /// </summary>
+    public const ushort AlarmCode = 0x0002;
  
     // ============================
-    //  Status Word ¦ì¤¸¾B¸n¡]¹ïÀ³ P4.006 DO bit¡^
+    //  Status Word ä½å…ƒé®ç½©ï¼ˆå°æ‡‰ P4.006 DO bitï¼‰
     // ============================
 
-    /// <summary>DO1 Bit0 ¡X ¦øªA·Ç³Æ§¹²¦ (Servo Ready)</summary>
+    /// <summary>DO1 Bit0 â€” ä¼ºæœæº–å‚™å®Œç•¢ (Servo Ready)</summary>
     public const ushort StatusBit_ServoReady = 0x0001;
 
-    /// <summary>DO2 Bit1 ¡X °¨¹F¹s³t«×</summary>
+    /// <summary>DO2 Bit1 â€” é¦¬é”é›¶é€Ÿåº¦</summary>
     public const ushort StatusBit_ZeroSpeed = 0x0002;
 
-    /// <summary>DO3 Bit2 ¡X ­ìÂI½áÂk§¹¦¨</summary>
+    /// <summary>DO3 Bit2 â€” åŸé»è³¦æ­¸å®Œæˆ</summary>
     public const ushort StatusBit_HomeComplete = 0x0004;
 
-    /// <summary>DO4 Bit3 ¡X ¥Ø¼Ğ¦ì¸m¨ì¹F (In Position)</summary>
+    /// <summary>DO4 Bit3 â€” ç›®æ¨™ä½ç½®åˆ°é” (In Position)</summary>
     public const ushort StatusBit_InPosition = 0x0008;
 
-    /// <summary>DO5 Bit4 ¡X ¹qºÏ·Ù¨®±±¨î</summary>
+    /// <summary>DO5 Bit4 â€” é›»ç£ç…è»Šæ§åˆ¶</summary>
     public const ushort StatusBit_Brake = 0x0010;
 
-    /// <summary>DO6 Bit5 ¡X ¦øªAÄµ¥Ü (B contact, 0=¦³Äµ³ø)</summary>
+    /// <summary>DO6 Bit5 â€” ä¼ºæœè­¦ç¤º (B contact, 0=æœ‰è­¦å ±)</summary>
     public const ushort StatusBit_AlarmB = 0x0020;
 
-    // DO ¥\¯à½X
+    // DO åŠŸèƒ½ç¢¼
     public const ushort DO_Func_ServoReady = 0x01;
     public const ushort DO_Func_ZeroSpeed = 0x03;
     public const ushort DO_Func_InPosition = 0x05;
@@ -265,54 +268,54 @@ public static class AsdaB3RegisterMap
     public const ushort DO_Func_HomeComplete = 0x09;
 
     // ============================
-    //  ±`¼Æ
+    //  å¸¸æ•¸
     // ============================
 
-    /// <summary>P1.001 ³]¬° PR mode ªº­È</summary>
-    public const ushort ControlMode_PR = 0x0101; // «ØÄ³¦A¨Ì¼Ò¦¡­Èªí½T»{
+    /// <summary>P1.001 è¨­ç‚º PR mode çš„å€¼</summary>
+    public const ushort ControlMode_PR = 0x0101; // å»ºè­°å†ä¾æ¨¡å¼å€¼è¡¨ç¢ºèª
 
-    /// <summary>P2.008 ¸ÑÂê­È</summary>
+    /// <summary>P2.008 è§£é–å€¼</summary>
     public const ushort WriteProtectUnlock = 271;
 
-    /// <summary>PR#1 Ä²µo­È</summary>
+    /// <summary>PR#1 è§¸ç™¼å€¼</summary>
     public const ushort PrNumber_1 = 1;
 
-    /// <summary>P5.007 ¼g¤J 1000 = °±¤î¥Ø«e¹B°Ê</summary>
+    /// <summary>P5.007 å¯«å…¥ 1000 = åœæ­¢ç›®å‰é‹å‹•</summary>
     public const ushort PrTrigger_Stop = 1000;
 
     // ============================
-    //  DI ¥\¯à½X¡]P4.007 ¦U bit ¹ïÀ³ªº DI ¹w³]¥\¯à¡^
+    //  DI åŠŸèƒ½ç¢¼ï¼ˆP4.007 å„ bit å°æ‡‰çš„ DI é è¨­åŠŸèƒ½ï¼‰
     // ============================
 
-    /// <summary>DI ¥\¯à: ¤£§@¥Î</summary>
+    /// <summary>DI åŠŸèƒ½: ä¸ä½œç”¨</summary>
     public const ushort DI_Func_None = 0x00;
 
-    /// <summary>DI ¥\¯à: ¦øªA±Ò°Ê (Servo On)</summary>
+    /// <summary>DI åŠŸèƒ½: ä¼ºæœå•Ÿå‹• (Servo On)</summary>
     public const ushort DI_Func_ServoOn = 0x01;
 
-    /// <summary>DI ¥\¯à: ²§±`²M°£</summary>
+    /// <summary>DI åŠŸèƒ½: ç•°å¸¸æ¸…é™¤</summary>
     public const ushort DI_Func_AlarmClear = 0x02;
 
-    /// <summary>DI ¥\¯à: ¯ßªi²M°£</summary>
+    /// <summary>DI åŠŸèƒ½: è„ˆæ³¢æ¸…é™¤</summary>
     public const ushort DI_Func_PulseClear = 0x04;
 
-    /// <summary>DI ¥\¯à: ¤º³¡¼È¦s¾¹§á¯x©R¥O¿ï¾Ü Bit0</summary>
+    /// <summary>DI åŠŸèƒ½: å…§éƒ¨æš«å­˜å™¨æ‰­çŸ©å‘½ä»¤é¸æ“‡ Bit0</summary>
     public const ushort DI_Func_TorqueSel_Bit0 = 0x16;
 
-    /// <summary>DI ¥\¯à: ¤º³¡¼È¦s¾¹§á¯x©R¥O¿ï¾Ü Bit1</summary>
+    /// <summary>DI åŠŸèƒ½: å…§éƒ¨æš«å­˜å™¨æ‰­çŸ©å‘½ä»¤é¸æ“‡ Bit1</summary>
     public const ushort DI_Func_TorqueSel_Bit1 = 0x17;
 
-    /// <summary>DI ¥\¯à: ¤ÏÂà¸T¤î·¥­­ (B contact)</summary>
+    /// <summary>DI åŠŸèƒ½: åè½‰ç¦æ­¢æ¥µé™ (B contact)</summary>
     public const ushort DI_Func_NegLimit = 0x22;
 
-    /// <summary>DI ¥\¯à: ¥¿Âà¸T¤î·¥­­ (B contact)</summary>
+    /// <summary>DI åŠŸèƒ½: æ­£è½‰ç¦æ­¢æ¥µé™ (B contact)</summary>
     public const ushort DI_Func_PosLimit = 0x23;
 
-    /// <summary>DI ¥\¯à: ´_Âk­ìÂI (B contact)</summary>
+    /// <summary>DI åŠŸèƒ½: å¾©æ­¸åŸé» (B contact)</summary>
     public const ushort DI_Func_Home = 0x24;
 
     // ============================
-    //  P3.006 / P4.007 DI ¦ì¤¸¾B¸n
+    //  P3.006 / P4.007 DI ä½å…ƒé®ç½©
     // ============================
 
     public const ushort DI1_Bit = 0x0001;
@@ -326,7 +329,7 @@ public static class AsdaB3RegisterMap
     public const ushort DI9_Bit = 0x0100;
 
     // ============================
-    //  DO ¥\¯à½X¡]P4.006 ¦U bit ¹ïÀ³ªº DO code¡^
+    //  DO åŠŸèƒ½ç¢¼ï¼ˆP4.006 å„ bit å°æ‡‰çš„ DO codeï¼‰
     // ============================
 
     public const ushort DO_Code_0x30 = 0x30;  // bit00
@@ -346,7 +349,7 @@ public static class AsdaB3RegisterMap
     public const ushort DO_Code_0x3E = 0x3E;  // bit14
     public const ushort DO_Code_0x3F = 0x3F;  // bit15
 
-    // P4.006 DO ¦ì¤¸¾B¸n
+    // P4.006 DO ä½å…ƒé®ç½©
     public const ushort DO_Bit00 = 0x0001;
     public const ushort DO_Bit01 = 0x0002;
     public const ushort DO_Bit02 = 0x0004;

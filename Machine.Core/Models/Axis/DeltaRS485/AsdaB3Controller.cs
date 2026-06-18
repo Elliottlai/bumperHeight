@@ -3,8 +3,8 @@ using System.Diagnostics;
 namespace Machine.Core.Models.Axis.DeltaRS485
 {
     /// <summary>
-    /// Delta ASDA-B3 ¦øªAÅX°Ê±±¨î¾¹
-    /// ¾Ş§@ Servo ¶}Ãö¡BAbsolute ½s½X¾¹ºŞ²z¡BPR mode ©w¦ì
+    /// Delta ASDA-B3 ä¼ºæœé©…å‹•æ§åˆ¶å™¨
+    /// æ“ä½œ Servo é–‹é—œã€Absolute ç·¨ç¢¼å™¨ç®¡ç†ã€PR mode å®šä½
     /// </summary>
     public class AsdaB3Controller : IDisposable
     {
@@ -12,25 +12,25 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         private readonly object _modbusLock = new();
         private bool _disposed;
 
-        /// <summary>¥Ø¼Ğ³t«× (rpm)</summary>
+        /// <summary>ç›®æ¨™é€Ÿåº¦ (rpm)</summary>
         public int TargetSpeed { get; set; } = 1000;
 
-        /// <summary>¥[³t®É¶¡ (ms)</summary>
+        /// <summary>åŠ é€Ÿæ™‚é–“ (ms)</summary>
         public int AccelerationTime { get; set; } = 200;
 
-        /// <summary>´î³t®É¶¡ (ms)</summary>
+        /// <summary>æ¸›é€Ÿæ™‚é–“ (ms)</summary>
         public int DecelerationTime { get; set; } = 200;
 
-        /// <summary>©µ¿ğ®É¶¡ (ms)</summary>
+        /// <summary>å»¶é²æ™‚é–“ (ms)</summary>
         public int DelayTime { get; set; }
 
-        /// <summary>¨ì¦ì¹O®É (ms)</summary>
+        /// <summary>åˆ°ä½é€¾æ™‚ (ms)</summary>
         public int InPositionTimeout { get; set; } = 5000;
 
-        /// <summary>¨C mm ¹ïÀ³ªº PUU ¼Æ¶q</summary>
+        /// <summary>æ¯ mm å°æ‡‰çš„ PUU æ•¸é‡</summary>
         public double PuuPerMm { get; set; } = 1000.0;
 
-        /// <summary>¬O§_¤w¿EºÏ</summary>
+        /// <summary>æ˜¯å¦å·²æ¿€ç£</summary>
         public bool IsServoOn { get; private set; }
 
         public AsdaB3Controller(IModbusRtuClient modbus)
@@ -38,26 +38,26 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             _modbus = modbus ?? throw new ArgumentNullException(nameof(modbus));
         }
 
-        /// <summary>³s½u«áªì©l¤ÆÅX°Ê¾¹</summary>
+        /// <summary>é€£ç·šå¾Œåˆå§‹åŒ–é©…å‹•å™¨</summary>
         public void Initialize()
         {
             ThrowIfDisposed();
 
-            // Åª¨úª©¥»½T»{³q°T¥¿±`
+            // è®€å–ç‰ˆæœ¬ç¢ºèªé€šè¨Šæ­£å¸¸
             _modbus.ReadRegister(AsdaB3RegisterMap.P0_000_Version);
 
-            // ³]©w P2.030 = 5: ¤£¼g¤J EEPROM¡]³q°T³sÄò¼g¤J®ÉÁ×§K¹Ø©R·l¯Ó¡^
+            // è¨­å®š P2.030 = 5: ä¸å¯«å…¥ EEPROMï¼ˆé€šè¨Šé€£çºŒå¯«å…¥æ™‚é¿å…å£½å‘½æè€—ï¼‰
             _modbus.WriteRegister(AsdaB3RegisterMap.P2_030_AuxFunction, AsdaB3RegisterMap.AuxFunction_NoEepromSave);
 
-            // ¨C¦¸³s½u«á¥ß§Y³]©wÂk­ìÂI³t«×¡]°ª³t 4000 rpm¡A§C³t 800 rpm¡^
+            // æ¯æ¬¡é€£ç·šå¾Œç«‹å³è¨­å®šæ­¸åŸé»é€Ÿåº¦ï¼ˆé«˜é€Ÿ 4000 rpmï¼Œä½é€Ÿ 800 rpmï¼‰
             _modbus.WriteRegister32(AsdaB3RegisterMap.P5_005_HighSpeedHoming_Low, 4000);
-            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_006_LowSpeedHoming_Low, 800); // §C³t  800 rpm
+            _modbus.WriteRegister32(AsdaB3RegisterMap.P5_006_LowSpeedHoming_Low, 800); // ä½é€Ÿ  800 rpm
 
-            // ³]©wºÊµøÅÜ¼Æ¬M®g:
-            // P0.009 ¡÷ FeedbackPosition_PUU (¦^±Â¦ì¸m)
-            // P0.010 ¡÷ AlarmCodeDecimal (Äµ³ø½X)
-            // P0.011 ¡÷ DiStatusIntegrated (DI ¿é¥Xª¬ºA)
-            // P0.012 ¡÷ DoStatusHardware (DO µwÅéª¬ºA)
+            // è¨­å®šç›£è¦–è®Šæ•¸æ˜ å°„:
+            // P0.009 â†’ FeedbackPosition_PUU (å›æˆä½ç½®)
+            // P0.010 â†’ AlarmCodeDecimal (è­¦å ±ç¢¼)
+            // P0.011 â†’ DiStatusIntegrated (DI è¼¸å‡ºç‹€æ…‹)
+            // P0.012 â†’ DoStatusHardware (DO ç¡¬é«”ç‹€æ…‹)
             ConfigureMonitorMapping(
                 AsdaB3MonitorCode.FeedbackPosition_PUU,
                 AsdaB3MonitorCode.AlarmCodeDecimal,
@@ -69,18 +69,18 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         //  Servo ON/OFF
         // ============================
 
-        /// <summary>¦øªA¿EºÏ (Servo ON)</summary>
+        /// <summary>ä¼ºæœæ¿€ç£ (Servo ON)</summary>
         public void ServoOn()
         {
             ThrowIfDisposed();
             EnsureNoAlarm();
 
-            // ±N DI1 (ServoOn) ©M DI5 (²§±`²M°£ ARST) ³]¬°³nÅé DI ¨Ó·½
+            // å°‡ DI1 (ServoOn) å’Œ DI5 (ç•°å¸¸æ¸…é™¤ ARST) è¨­ç‚ºè»Ÿé«” DI ä¾†æº
             ushort diControl = _modbus.ReadRegister(AsdaB3RegisterMap.P3_006_DiControl);
             diControl |= (ushort)(AsdaB3RegisterMap.DI1_Bit | AsdaB3RegisterMap.DI5_Bit);
             _modbus.WriteRegister(AsdaB3RegisterMap.P3_006_DiControl, diControl);
 
-            // ³z¹L P4.007 ³]©w DI1 = ON ¡÷ Servo ON
+            // é€é P4.007 è¨­å®š DI1 = ON â†’ Servo ON
             ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
             softDi |= AsdaB3RegisterMap.DI1_Bit;
             _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
@@ -89,7 +89,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             IsServoOn = true;
         }
 
-        /// <summary>¦øªA²æºÏ (Servo OFF)</summary>
+        /// <summary>ä¼ºæœè„«ç£ (Servo OFF)</summary>
         public void ServoOff()
         {
             ThrowIfDisposed();
@@ -103,68 +103,68 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         }
 
         // ============================
-        //  Äµ³ø
+        //  è­¦å ±
         // ============================
 
-        /// <summary>ÀË¬d¬O§_¦³Äµ³ø (P0.046 Bit6)</summary>
+        /// <summary>æª¢æŸ¥æ˜¯å¦æœ‰è­¦å ± (P0.046 Bit6)</summary>
         public bool HasAlarm()
         {
             ThrowIfDisposed();
             return ReadDriverStatus().HasFlag(DriverStatusFlags.Alarm);
         }
 
-        /// <summary>²M°£Äµ³ø (DI5 ¤W¤É½tÄ²µo)</summary>
+        /// <summary>æ¸…é™¤è­¦å ± (DI5 ä¸Šå‡ç·£è§¸ç™¼)</summary>
         public void ClearAlarm()
         {
             ThrowIfDisposed();
             ushort softDi = _modbus.ReadRegister(AsdaB3RegisterMap.P4_007_SoftwareDI);
 
-            // ©Ô°ª DI5
+            // æ‹‰é«˜ DI5
             softDi |= AsdaB3RegisterMap.DI5_Bit;
             _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
             Thread.Sleep(100);
 
-            // ©ñ¶} DI5
+            // æ”¾é–‹ DI5
             softDi &= unchecked((ushort)~AsdaB3RegisterMap.DI5_Bit);
             _modbus.WriteRegister(AsdaB3RegisterMap.P4_007_SoftwareDI, softDi);
         }
 
         // ============================
-        //  ¦ì¸mÅª¨ú
+        //  ä½ç½®è®€å–
         // ============================
 
-        /// <summary>Åª¨úÅX°Ê¾¹ª¬ºA (P0.046)</summary>
+        /// <summary>è®€å–é©…å‹•å™¨ç‹€æ…‹ (P0.046)</summary>
         public DriverStatusFlags ReadDriverStatus()
         {
             ThrowIfDisposed();
             return (DriverStatusFlags)_modbus.ReadRegister(AsdaB3RegisterMap.P0_046_DriverStatus);
         }
 
-        /// <summary>Åª¨ú¦^±Â¦ì¸m PUU (P0.051, 32-bit ¦h°éµ´¹ï¦ì¸m)</summary>
+        /// <summary>è®€å–å›æˆä½ç½® PUU (P0.051, 32-bit å¤šåœˆçµ•å°ä½ç½®)</summary>
         public int GetFeedbackPositionPuu()
         {
             ThrowIfDisposed();
             return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_051_MultiTurnPos_Low);
         }
 
-        /// <summary>Åª¨ú¥Ø«e¦ì¸m (mm)</summary>
+        /// <summary>è®€å–ç›®å‰ä½ç½® (mm)</summary>
         public double GetCurrentPositionMm() => GetFeedbackPositionPuu() / PuuPerMm;
 
-        /// <summary>±N mm Âàºâ¦¨ PUU</summary>
+        /// <summary>å°‡ mm è½‰ç®—æˆ PUU</summary>
         public int MmToPuu(double mm) => (int)(mm * PuuPerMm);
 
         // ============================
-        //  PR Mode ©w¦ì
+        //  PR Mode å®šä½
         // ============================
 
-        /// <summary>§ó·s PR#1 ªº¥Ø¼Ğ¦ì¸m (32-bit PUU)</summary>
+        /// <summary>æ›´æ–° PR#1 çš„ç›®æ¨™ä½ç½® (32-bit PUU)</summary>
         public void UpdatePr1TargetPosition(int puu)
         {
             ThrowIfDisposed();
             _modbus.WriteRegister32(AsdaB3RegisterMap.P6_003_Pr1TargetPos_Low, puu);
         }
 
-        /// <summary>Ä²µo PR#1 ¹B¦æ (¼g P5.007 = 1)</summary>
+        /// <summary>è§¸ç™¼ PR#1 é‹è¡Œ (å¯« P5.007 = 1)</summary>
         public void TriggerPr1()
         {
             ThrowIfDisposed();
@@ -172,14 +172,14 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, AsdaB3RegisterMap.PrNumber_1);
         }
 
-        /// <summary>°±¤î¥Ø«e¹B°Ê (¼g P5.007 = 1000)</summary>
+        /// <summary>åœæ­¢ç›®å‰é‹å‹• (å¯« P5.007 = 1000)</summary>
         public void Stop()
         {
             ThrowIfDisposed();
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, AsdaB3RegisterMap.PrTrigger_Stop);
         }
 
-        /// <summary>µ¥«İ¨ì¦ì§¹¦¨¡]½ü¸ß P0.046 InPosition ¦ì¤¸¡A§t¹O®É¤ÎÄµ³øÀË¬d¡^</summary>
+        /// <summary>ç­‰å¾…åˆ°ä½å®Œæˆï¼ˆè¼ªè©¢ P0.046 InPosition ä½å…ƒï¼Œå«é€¾æ™‚åŠè­¦å ±æª¢æŸ¥ï¼‰</summary>
         public void WaitInPosition()
         {
             ThrowIfDisposed();
@@ -188,16 +188,16 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                 {
                     var status = ReadDriverStatus();
                     if (status.HasFlag(DriverStatusFlags.Alarm))
-                        throw new ServoAlarmException(0, "µ¥«İ¨ì¦ì´Á¶¡µo¥ÍÄµ³ø (P0.046 Alarm bit)");
+                        throw new ServoAlarmException(0, "ç­‰å¾…åˆ°ä½æœŸé–“ç™¼ç”Ÿè­¦å ± (P0.046 Alarm bit)");
                     return status.HasFlag(DriverStatusFlags.TargetPositionReached);
                 },
                 InPositionTimeout,
-                $"¨ì¦ì¹O®É¡]¶W¹L {InPositionTimeout} ms¡^¡A½ĞÀË¬d¾÷ºc©Î°Ñ¼Æ");
+                $"åˆ°ä½é€¾æ™‚ï¼ˆè¶…é {InPositionTimeout} msï¼‰ï¼Œè«‹æª¢æŸ¥æ©Ÿæ§‹æˆ–åƒæ•¸");
         }
 
         /// <summary>
-        /// ²¾°Ê¨ì«ü©w¦ì¸m (mm)
-        /// ¬yµ{¡Gmm ¡÷ PUU ¡÷ ¼g¤J PR#1 ¡÷ Ä²µo ¡÷ µ¥«İ¨ì¦ì
+        /// ç§»å‹•åˆ°æŒ‡å®šä½ç½® (mm)
+        /// æµç¨‹ï¼šmm â†’ PUU â†’ å¯«å…¥ PR#1 â†’ è§¸ç™¼ â†’ ç­‰å¾…åˆ°ä½
         /// </summary>
         public void MoveToPositionMm(double mm)
         {
@@ -210,47 +210,47 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         }
 
         // ============================
-        //  ¹B°Ê°Ñ¼Æ¼g¤J
+        //  é‹å‹•åƒæ•¸å¯«å…¥
         // ============================
 
-        /// <summary>±N¹B°Ê°Ñ¼Æ¼g¤JÅX°Ê¾¹¡]§t speed¡Bacc/dec¡Bdelay¡BPR#1 path definition¡^</summary>
+        /// <summary>å°‡é‹å‹•åƒæ•¸å¯«å…¥é©…å‹•å™¨ï¼ˆå« speedã€acc/decã€delayã€PR#1 path definitionï¼‰</summary>
         public void ApplySettings()
         {
             ThrowIfDisposed();
 
-            // ¼g¤J speed #1 (P5.060, 32-bit)
+            // å¯«å…¥ speed #1 (P5.060, 32-bit)
             _modbus.WriteRegister32(AsdaB3RegisterMap.P5_060_TargetSpeed0, TargetSpeed);
 
-            // ¼g¤J acceleration/deceleration time #1 (P5.020)
+            // å¯«å…¥ acceleration/deceleration time #1 (P5.020)
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_020_AccDecTime0, (ushort)AccelerationTime);
 
-            // ¼g¤J delay time #1 (P5.040)
+            // å¯«å…¥ delay time #1 (P5.040)
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_040_DelayTime0, (ushort)DelayTime);
 
-            // ³]©w PR#1 path definition (P6.002, 32-bit) ¡X µ´¹ï©w¦ì¼Ò¦¡, speed #1, acc/dec #1
+            // è¨­å®š PR#1 path definition (P6.002, 32-bit) â€” çµ•å°å®šä½æ¨¡å¼, speed #1, acc/dec #1
             int pathDef = 0x0000_0002;
             _modbus.WriteRegister32(AsdaB3RegisterMap.P6_002_Pr1PathDef_Low, pathDef);
         }
 
         // ============================
-        //  Absolute ½s½X¾¹
+        //  Absolute ç·¨ç¢¼å™¨
         // ============================
 
-        /// <summary>Åª¨ú P0.050 §¹¾ãª¬ºAºX¼Ğ</summary>
+        /// <summary>è®€å– P0.050 å®Œæ•´ç‹€æ…‹æ——æ¨™</summary>
         public AbsoluteStatusFlags ReadAbsoluteStatus()
         {
             ThrowIfDisposed();
             return (AbsoluteStatusFlags)_modbus.ReadRegister(AsdaB3RegisterMap.P0_050_AbsStatus);
         }
 
-        /// <summary>ÀË¬d absolute ®y¼Ğ¬O§_§¹¥ş¥¿±` (P0.050 = 0)</summary>
+        /// <summary>æª¢æŸ¥ absolute åº§æ¨™æ˜¯å¦å®Œå…¨æ­£å¸¸ (P0.050 = 0)</summary>
         public bool AbsOk() => ReadAbsoluteStatus() == AbsoluteStatusFlags.None;
 
         /// <summary>
-        /// ­««Ø absolute origin
-        /// ·í absolute ®y¼Ğ¿ò¥¢®É¨Ì§Ç¡G
-        /// 1. ¼g P2.008 = 271 ¸Ñ°£¼g«OÅ@
-        /// 2. ¼g P2.071 = 1 «Ø¥ß absolute origin
+        /// é‡å»º absolute origin
+        /// ç•¶ absolute åº§æ¨™éºå¤±æ™‚ä¾åºï¼š
+        /// 1. å¯« P2.008 = 271 è§£é™¤å¯«ä¿è­·
+        /// 2. å¯« P2.071 = 1 å»ºç«‹ absolute origin
         /// </summary>
         public void RebuildAbsoluteOrigin()
         {
@@ -260,45 +260,45 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             _modbus.WriteRegister(AsdaB3RegisterMap.P2_071_BuildAbsOrigin, 1);
             Thread.Sleep(500);
             if (!AbsOk())
-                throw new InvalidOperationException("­««Ø absolute origin ¥¢±Ñ¡AP0.050 Åã¥Ü²§±`ª¬ºA");
+                throw new InvalidOperationException("é‡å»º absolute origin å¤±æ•—ï¼ŒP0.050 é¡¯ç¤ºç•°å¸¸ç‹€æ…‹");
         }
 
         // ============================
-        //  ·¥­­ / ­ìÂI / ·Ù¨®
+        //  æ¥µé™ / åŸé» / ç…è»Š
         // ============================
 
-        /// <summary>Åª¨ú DI °T¸¹ª¬ºA (P0.045)</summary>
+        /// <summary>è®€å– DI è¨Šè™Ÿç‹€æ…‹ (P0.045)</summary>
         public ushort ReadDiStatus()
         {
             ThrowIfDisposed();
             return _modbus.ReadRegister(AsdaB3RegisterMap.P0_045_DiStatus);
         }
 
-        /// <summary>¥¿·¥­­¬O§_Ä²µo¡]DI7, B contact §C¹q¥­¦³®Ä¡^</summary>
+        /// <summary>æ­£æ¥µé™æ˜¯å¦è§¸ç™¼ï¼ˆDI7, B contact ä½é›»å¹³æœ‰æ•ˆï¼‰</summary>
         public bool IsPositiveLimitActive()
         {
             ThrowIfDisposed();
             return (ReadDiStatus() & AsdaB3RegisterMap.DI7_Bit) == 0;
         }
 
-        /// <summary>­t·¥­­¬O§_Ä²µo¡]DI8, B contact §C¹q¥­¦³®Ä¡^</summary>
+        /// <summary>è² æ¥µé™æ˜¯å¦è§¸ç™¼ï¼ˆDI8, B contact ä½é›»å¹³æœ‰æ•ˆï¼‰</summary>
         public bool IsNegativeLimitActive()
         {
             ThrowIfDisposed();
             return (ReadDiStatus() & AsdaB3RegisterMap.DI8_Bit) == 0;
         }
 
-        /// <summary>­ìÂI½áÂk¬O§_§¹¦¨ (P0.046 Bit8)</summary>
+        /// <summary>åŸé»è³¦æ­¸æ˜¯å¦å®Œæˆ (P0.046 Bit8)</summary>
         public bool IsHomeCompleted() => ReadDriverStatus().HasFlag(DriverStatusFlags.HomeComplete);
 
-        /// <summary>¬O§_¨ì¦ì (P0.046 Bit4)</summary>
+        /// <summary>æ˜¯å¦åˆ°ä½ (P0.046 Bit4)</summary>
         public bool IsInPosition() => ReadDriverStatus().HasFlag(DriverStatusFlags.TargetPositionReached);
 
-        /// <summary>¦øªA¬O§_ Ready (P0.046 Bit0)</summary>
+        /// <summary>ä¼ºæœæ˜¯å¦ Ready (P0.046 Bit0)</summary>
         public bool IsServoReady() => ReadDriverStatus().HasFlag(DriverStatusFlags.ServoReady);
 
         /// <summary>
-        /// ³]©wÂk­ìÂI³t«×¡]¼g¤J P5.005 °ª³t / P5.006 §C³t¡A³æ¦ì rpm¡^¡C
+        /// è¨­å®šæ­¸åŸé»é€Ÿåº¦ï¼ˆå¯«å…¥ P5.005 é«˜é€Ÿ / P5.006 ä½é€Ÿï¼Œå–®ä½ rpmï¼‰ã€‚
         /// </summary>
         public void SetHomingSpeed(int highSpeedRpm, int? lowSpeedRpm = null)
         {
@@ -312,9 +312,9 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             ThrowIfDisposed();
             EnsureNoAlarm();
             if (!IsServoOn)
-                throw new InvalidOperationException("½Ğ¥ı¿EºÏ (Servo ON) ¦A°õ¦æ­ìÂI½áÂk");
+                throw new InvalidOperationException("è«‹å…ˆæ¿€ç£ (Servo ON) å†åŸ·è¡ŒåŸé»è³¦æ­¸");
 
-            // Ä²µo Homing: ¼g P5.007 = 0 (PR#0 ¬°­ìÂI½áÂk¸ô®|)
+            // è§¸ç™¼ Homing: å¯« P5.007 = 0 (PR#0 ç‚ºåŸé»è³¦æ­¸è·¯å¾‘)
             _modbus.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
 
             WaitForCondition(
@@ -322,17 +322,17 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                 {
                     var status = ReadDriverStatus();
                     if (status.HasFlag(DriverStatusFlags.Alarm))
-                        throw new ServoAlarmException(0, "­ìÂI½áÂk´Á¶¡µo¥ÍÄµ³ø");
+                        throw new ServoAlarmException(0, "åŸé»è³¦æ­¸æœŸé–“ç™¼ç”Ÿè­¦å ±");
                     return status.HasFlag(DriverStatusFlags.HomeComplete);
                 },
                 InPositionTimeout * 3,
-                $"­ìÂI½áÂk¹O®É¡]¶W¹L {InPositionTimeout * 3} ms¡^");
+                $"åŸé»è³¦æ­¸é€¾æ™‚ï¼ˆè¶…é {InPositionTimeout * 3} msï¼‰");
         }
 
         /// <summary>
-        /// ±±¨î¹qºÏ·Ù¨®¡]³z¹L³nÅé DO ±±¨î¡^
+        /// æ§åˆ¶é›»ç£ç…è»Šï¼ˆé€éè»Ÿé«” DO æ§åˆ¶ï¼‰
         /// </summary>
-        /// <param name="release">true = ÄÀ©ñ·Ù¨®; false = Âê©w·Ù¨®</param>
+        /// <param name="release">true = é‡‹æ”¾ç…è»Š; false = é–å®šç…è»Š</param>
         public void SetBrake(bool release)
         {
             ThrowIfDisposed();
@@ -348,7 +348,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         }
 
         // ============================
-        //  ºÊ±±¬M®g
+        //  ç›£æ§æ˜ å°„
         // ============================
 
         private static readonly ushort[] MonitorSelRegisters =
@@ -359,30 +359,34 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             AsdaB3RegisterMap.P0_020_MappedMonitorSel4,
         ];
 
-        /// <summary>³]©wºÊµøÅÜ¼Æ¬M®g¡]³Ì¦h 4 ²Õ¡^</summary>
+        /// <summary>è¨­å®šç›£è¦–è®Šæ•¸æ˜ å°„ï¼ˆæœ€å¤š 4 çµ„ï¼‰</summary>
         public void ConfigureMonitorMapping(params ushort[] monitorCodes)
         {
             ThrowIfDisposed();
             if (monitorCodes.Length > MonitorSelRegisters.Length)
-                throw new ArgumentException($"³Ì¦h¶È¤ä´© {MonitorSelRegisters.Length} ²Õ¬M®gºÊµøÅÜ¼Æ", nameof(monitorCodes));
+                throw new ArgumentException($"æœ€å¤šåƒ…æ”¯æ´ {MonitorSelRegisters.Length} çµ„æ˜ å°„ç›£è¦–è®Šæ•¸", nameof(monitorCodes));
 
             for (int i = 0; i < monitorCodes.Length; i++)
                 _modbus.WriteRegister(MonitorSelRegisters[i], monitorCodes[i]);
         }
 
         // ============================
-        //  §å¦¸§Ö·ÓÅª¨ú
+        //  æ‰¹æ¬¡å¿«ç…§è®€å–
         // ============================
 
         /// <summary>
-        /// §å¦¸Åª¨úÅX°Ê¾¹§Y®Éª¬ºA§Ö·Ó
-        /// ¤@¦¸ Modbus Åª¨ú P0.046 + P0.050~P0.054 + P0.009~P0.012¡A¦@ 3 ¦¸³q°T
+        /// æ‰¹æ¬¡è®€å–é©…å‹•å™¨å³æ™‚ç‹€æ…‹å¿«ç…§
+        /// ä¸€æ¬¡ Modbus è®€å– P0.046 + P0.050~P0.054 + P0.009~P0.012ï¼Œå…± 3 æ¬¡é€šè¨Š
         /// </summary>
         public DriverSnapshot ReadSnapshot()
         {
             ThrowIfDisposed();
 
-            ushort doStatus = _modbus.ReadRegister(AsdaB3RegisterMap.P0_046_DriverStatus);
+            // P0.045~P0.046 ä¸€æ¬¡è®€ 3 registers (0x005A~0x005Cï¼Œä¸­é–“ 0x005B ç‚ºä¿ç•™ä½)ï¼š
+            // statusBatch[0] = P0.045 DI ä¸‰ç·šç‹€æ…‹ï¼ŒstatusBatch[2] = P0.046 DO ä¸‰ç·šç‹€æ…‹
+            ushort[] statusBatch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_045_DiStatus, 3);
+            ushort diStatus = statusBatch[0];
+            ushort doStatus = statusBatch[2];
             ushort[] batch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_050_AbsStatus, 10);
             ushort[] monBatch = _modbus.ReadRegisters(AsdaB3RegisterMap.P0_009_MappedMonitorValue1, 8);
 
@@ -393,7 +397,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
 
             return new DriverSnapshot
             {
-                DiStatus = 0,
+                DiStatus = diStatus,
                 DriverStatus = (DriverStatusFlags)doStatus,
                 AbsoluteStatus = (AbsoluteStatusFlags)batch[0],
                 MultiTurnPosition = batch[2] | (batch[3] << 16),
@@ -405,28 +409,31 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             };
         }
 
-        /// <summary>¥Î lock «OÅ@ªº Modbus ¾Ş§@¡]¨Ñ¥~³¡©I¥s®É»P polling ¤¬¥¸¡^</summary>
+        /// <summary>ç”¨ lock ä¿è­·çš„ Modbus æ“ä½œï¼ˆä¾›å¤–éƒ¨å‘¼å«æ™‚èˆ‡ polling äº’æ–¥ï¼‰</summary>
         public void ExecuteWithLock(Action action)
         {
             lock (_modbusLock) { action(); }
         }
 
-        /// <summary>¥Î lock «OÅ@ªº Modbus ¾Ş§@¡]¨Ñ¥~³¡©I¥s®É»P polling ¤¬¥¸¡^</summary>
+        /// <summary>ç”¨ lock ä¿è­·çš„ Modbus æ“ä½œï¼ˆä¾›å¤–éƒ¨å‘¼å«æ™‚èˆ‡ polling äº’æ–¥ï¼‰</summary>
         public T ExecuteWithLock<T>(Func<T> func)
         {
             lock (_modbusLock) { return func(); }
         }
 
         // ============================
-        //  ¤º³¡»²§U
+        //  å…§éƒ¨è¼”åŠ©
         // ============================
 
         private void EnsureNoAlarm()
         {
             if (HasAlarm())
             {
-                var alarmCode = _modbus.ReadRegister(AsdaB3RegisterMap.AlarmCode);
-                throw new ServoAlarmException(alarmCode, $"ÅX°Ê¾¹¦s¦bÄµ³ø: 0x{alarmCode:X4}¡A½Ğ¥ı²M°£Äµ³ø");
+                // æ³¨æ„ï¼šä¸è¦ç”¨ AsdaB3RegisterMap.AlarmCode (ä½å€æœªç¶“å¯¦æ©Ÿç¢ºèª)ï¼Œ
+                // æ”¹ç”¨ Connect()/Initialize() æ™‚å·²è¨­å®šå¥½çš„ç›£æ§æ˜ å°„é€šé“ 2 (P0.010 å°æ‡‰ AlarmCodeDecimal)ï¼Œ
+                // èˆ‡ ReadSnapshot() è®€å–è­¦å ±ç¢¼æ˜¯åŒä¸€æ¢å·²é©—è­‰å¯ä¿¡çš„è·¯å¾‘ã€‚
+                var alarmCode = (ushort)_modbus.ReadRegister32(AsdaB3RegisterMap.P0_010_MappedMonitorValue2);
+                throw new ServoAlarmException(alarmCode, $"é©…å‹•å™¨å­˜åœ¨è­¦å ±: 0x{alarmCode:X4}ï¼Œè«‹å…ˆæ¸…é™¤è­¦å ±");
             }
         }
 
@@ -443,7 +450,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
 
         private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
-        /// <summary>ÄÀ©ñ¸ê·½</summary>
+        /// <summary>é‡‹æ”¾è³‡æº</summary>
         public void Dispose()
         {
             if (_disposed) return;
@@ -459,7 +466,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                     IsServoOn = false;
                 }
             }
-            catch { /* ©¿²¤³q°T¼hÂ_½u¿ù»~ */ }
+            catch { /* å¿½ç•¥é€šè¨Šå±¤æ–·ç·šéŒ¯èª¤ */ }
 
             _modbus.Disconnect();
             GC.SuppressFinalize(this);
