@@ -3,6 +3,7 @@ using System.Windows.Threading;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
+using Slot_Inspection.Views;
 
 namespace Slot_Inspection
 {
@@ -44,6 +45,21 @@ namespace Slot_Inspection
                 LogManager.GetCurrentClassLogger().Error(ex.Exception, "[Task] Unobserved task exception");
                 ex.SetObserved();
             };
+
+            // ── 3. 先建立並顯示主畫面（尚未登入＝鎖定狀態，畫面看得到但操作不了）──
+            var main = new MainWindow();
+            main.Show();
+
+            // ── 4. 同時彈出登入視窗；登入成功才解鎖，從未登入過就取消/失敗則直接結束程式 ──
+            var login = new LoginWindow { Owner = main };
+            if (login.ShowDialog() == true && login.AuthenticatedUser != null)
+            {
+                ((Slot_Inspection.ViewModels.MainViewModel)main.DataContext).CompleteLogin(login.AuthenticatedUser);
+            }
+            else
+            {
+                Shutdown();
+            }
 
             base.OnStartup(e);
         }

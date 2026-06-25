@@ -130,6 +130,7 @@ public partial class ImageViewerWindow : Window
     {
         if (_snapshot.Count == 0 || _currentSlot == null) return;
         PreviewImage.Source = (BitmapSource)_currentSlot.ImageSource!;
+        DefectBoxesOverlay.ItemsSource = _currentSlot.DefectBoxes;
         TitleText.Text      = _currentSlot.Name;
         IndexText.Text      = _snapshot.Count > 1 ? $"{_currentIndex + 1} / {_snapshot.Count}" : "";
         FitToWindow();
@@ -168,6 +169,13 @@ public partial class ImageViewerWindow : Window
         ScaleT.ScaleY = _zoom;
         TranslateT.X = _translateX;
         TranslateT.Y = _translateY;
+
+        // 缺陷外框疊圖層跟著圖片同步縮放/平移，避免脫節
+        BoxScaleT.ScaleX = _zoom;
+        BoxScaleT.ScaleY = _zoom;
+        BoxTranslateT.X = _translateX;
+        BoxTranslateT.Y = _translateY;
+
         ZoomText.Text = $"{_zoom * 100:F0}%";
     }
 

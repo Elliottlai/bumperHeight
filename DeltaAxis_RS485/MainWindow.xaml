@@ -12,11 +12,21 @@
         <ToolBar DockPanel.Dock="Top">
             <Button Content="全部連線" Command="{Binding ConnectAllCommand}" />
             <Button Content="全部斷線" Command="{Binding DisconnectAllCommand}" />
+            <Separator />
+            <TextBlock Text="Slot_Inspection Config路徑：" VerticalAlignment="Center" Margin="8,0,4,0" />
+            <TextBox Text="{Binding SlotInspectionConfigPath}" Width="320" VerticalAlignment="Center" />
+            <Button Content="讀取安全設定" Command="{Binding LoadSafetyConfigCommand}" Margin="4,0,0,0" />
         </ToolBar>
 
         <!-- 底部狀態列 -->
         <StatusBar DockPanel.Dock="Bottom">
-            <TextBlock Text="{Binding SelectedAxis.StatusMessage, FallbackValue='就緒'}" />
+            <StatusBarItem>
+                <TextBlock Text="{Binding SafetyConfigStatusMessage}" Margin="0,0,16,0" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem>
+                <TextBlock Text="{Binding SelectedAxis.StatusMessage, FallbackValue='就緒'}" />
+            </StatusBarItem>
         </StatusBar>
 
         <!-- 每軸一個 Tab -->

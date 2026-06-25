@@ -109,7 +109,7 @@
                        Grid.Row="0" Grid.Column="4" Margin="0,2" />
 
               <TextBlock Text="PUU/mm" Grid.Row="1" Grid.Column="3" VerticalAlignment="Center" />
-              <TextBox Text="{Binding PuuPerMm, UpdateSourceTrigger=PropertyChanged}"
+              <TextBox Text="{Binding PuuPerMm, UpdateSourceTrigger=LostFocus}"
                        Grid.Row="1" Grid.Column="4" Margin="0,2" />
 
               <TextBlock Text="逾時 (ms)" Grid.Row="2" Grid.Column="3" VerticalAlignment="Center" />
@@ -132,35 +132,99 @@
                             </WrapPanel>
               <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="目標 (mm):" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <TextBox Text="{Binding TargetPositionMm, UpdateSourceTrigger=PropertyChanged}"
-                         Width="120" Margin="0,0,8,0" />
+                <TextBox Text="{Binding TargetPositionMm, UpdateSourceTrigger=LostFocus}"
+                         Width="120" Margin="0,0,8,0"
+                         GotFocus="NumericTextBox_GotFocus"
+                         PreviewMouseLeftButtonDown="NumericTextBox_PreviewMouseLeftButtonDown" />
                 <Button Content="移動" Command="{Binding MoveToPositionCommand}"
                         Width="80" Margin="0,0,4,0" /> 
               </StackPanel>
-              <StackPanel Orientation="Horizontal">
-                <TextBlock Text="Jog:" VerticalAlignment="Center" Margin="0,0,8,0" FontWeight="Bold" />
-                <Button Content="-10" Command="{Binding JogNegative10Command}"
-                        Width="60" Margin="0,0,2,0" />
-                <Button Content="-1" Command="{Binding JogNegative1Command}"
-                        Width="60" Margin="0,0,2,0" />
-                <Button Content="-0.1" Command="{Binding JogNegative01Command}"
-                        Width="60" Margin="0,0,2,0" />
-                <Button Content="-0.01" Command="{Binding JogNegative001Command}"
-                        Width="80" Margin="0,0,2,0" />
-                <Button Content="-0.003" Command="{Binding JogNegative0003Command}"
-                        Width="80" Margin="0,0,6,0" />
-                <Button Content="停止" Command="{Binding StopCommand}"
-                        Width="80" Margin="0,0,6,0" Background="OrangeRed" Foreground="White" FontWeight="Bold" />
-                <Button Content="+0.003" Command="{Binding JogPositive0003Command}"
-                        Width="80" Margin="0,0,2,0" />
-                <Button Content="+0.01" Command="{Binding JogPositive001Command}"
-                        Width="80" Margin="0,0,2,0" />
-                <Button Content="+0.1" Command="{Binding JogPositive01Command}"
-                        Width="60" Margin="0,0,2,0" />
-                <Button Content="+1" Command="{Binding JogPositive1Command}"
-                        Width="60" Margin="0,0,2,0" />
-                <Button Content="+10" Command="{Binding JogPositive10Command}"
-                        Width="60" />
+              <StackPanel>
+                <TextBlock Text="Jog:" Margin="0,0,0,4" FontWeight="Bold" />
+
+                <!-- 單排顯示（預設，JogButtonsMultiRow=false 的軸用，例如ZL/ZR） -->
+                <WrapPanel>
+                  <WrapPanel.Style>
+                    <Style TargetType="WrapPanel">
+                      <Setter Property="Visibility" Value="Visible" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Config.JogButtonsMultiRow}" Value="True">
+                          <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </WrapPanel.Style>
+                  <Button Content="{Binding JogNegative10Label}" Command="{Binding JogNegative10Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogNegative1Label}" Command="{Binding JogNegative1Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogNegative01Label}" Command="{Binding JogNegative01Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogNegative001Label}" Command="{Binding JogNegative001Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogNegative0003Label}" Command="{Binding JogNegative0003Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,6,4" />
+                  <Button Content="停止" Command="{Binding StopCommand}"
+                          Width="80" Margin="0,0,6,4" Background="OrangeRed" Foreground="White" FontWeight="Bold" />
+                  <Button Content="{Binding JogPositive0003Label}" Command="{Binding JogPositive0003Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogPositive001Label}" Command="{Binding JogPositive001Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogPositive01Label}" Command="{Binding JogPositive01Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogPositive1Label}" Command="{Binding JogPositive1Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                  <Button Content="{Binding JogPositive10Label}" Command="{Binding JogPositive10Command}"
+                          MinWidth="60" Padding="8,4" Margin="0,0,0,4" />
+                </WrapPanel>
+
+                <!-- 多排顯示（JogButtonsMultiRow=true 的軸用，例如Y/X軸：方向標籤較長，分負/停止/正三排） -->
+                <StackPanel>
+                  <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding Config.JogButtonsMultiRow}" Value="True">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </StackPanel.Style>
+
+                  <!-- 負方向（靠近原點/上升）獨立一行 -->
+                  <WrapPanel Margin="0,0,0,4">
+                    <Button Content="{Binding JogNegative10Label}" Command="{Binding JogNegative10Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogNegative1Label}" Command="{Binding JogNegative1Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogNegative01Label}" Command="{Binding JogNegative01Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogNegative001Label}" Command="{Binding JogNegative001Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogNegative0003Label}" Command="{Binding JogNegative0003Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,0,4" />
+                  </WrapPanel>
+
+                  <!-- 停止獨立一行，避免夾在正負方向中間不容易注意到 -->
+                  <WrapPanel Margin="0,0,0,4">
+                    <Button Content="停止" Command="{Binding StopCommand}"
+                            Width="80" Background="OrangeRed" Foreground="White" FontWeight="Bold" />
+                  </WrapPanel>
+
+                  <!-- 正方向（遠離原點/下降）獨立一行 -->
+                  <WrapPanel>
+                    <Button Content="{Binding JogPositive0003Label}" Command="{Binding JogPositive0003Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogPositive001Label}" Command="{Binding JogPositive001Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogPositive01Label}" Command="{Binding JogPositive01Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogPositive1Label}" Command="{Binding JogPositive1Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,2,4" />
+                    <Button Content="{Binding JogPositive10Label}" Command="{Binding JogPositive10Command}"
+                            MinWidth="60" Padding="8,4" Margin="0,0,0,4" />
+                  </WrapPanel>
+                </StackPanel>
               </StackPanel>
             </StackPanel>
           </GroupBox>

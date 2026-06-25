@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using Slot_Inspection.Models;
 
 namespace Slot_Inspection.ViewModels;
@@ -52,9 +53,121 @@ public sealed class PositionSettingsViewModel : ObservableObject
     // ── 取料位座標（讀碼 Y）──
     public ObservableCollection<AxisPositionEntry> PickPositions { get; } = [];
 
+    // ── Recipe（Y/ZL/ZR 參數組合）名稱清單 ──
+    public ObservableCollection<string> RecipeNames { get; } = [];
+
+    private InspectionConfig? _config;
+
+    /// <summary>目前登入的使用者，由 MainViewModel.OnPositionSettings 設定，供Recipe操作寫Audit Log用。</summary>
+    public UserAccount? CurrentUser { get; set; }
+
+    private string _selectedRecipeName = "";
+    /// <summary>Recipe 選擇/輸入框目前的名稱（讀取/建立/刪除皆以此為對象）。</summary>
+    public string SelectedRecipeName
+    {
+        get => _selectedRecipeName;
+        set => SetProperty(ref _selectedRecipeName, value);
+    }
+
+    private bool _isDirty;
+    /// <summary>座標數值是否在「上次備份／讀取」之後又被手動修改過，尚未備份。用於離開視窗前提醒使用者備份。</summary>
+    public bool IsDirty
+    {
+        get => _isDirty;
+        set => SetProperty(ref _isDirty, value);
+    }
+
+    private string _currentRecipeName = "";
+    /// <summary>目前套用中的 Recipe 名稱，顯示在UI上；變更時同步寫回 InspectionConfig 並存檔。</summary>
+    public string CurrentRecipeName
+    {
+        get => _currentRecipeName;
+        set
+        {
+            if (SetProperty(ref _currentRecipeName, value) && _config != null)
+            {
+                _config.CurrentRecipeName = value;
+                _config.Save();
+            }
+        }
+    }
+
+    /// <summary>重新從 Config/Recipes 載入 Recipe 名稱清單。</summary>
+    public void RefreshRecipeList()
+    {
+        RecipeNames.Clear();
+        foreach (var name in AxisRecipeManager.List())
+            RecipeNames.Add(name);
+    }
+
+    /// <summary>把目前編輯畫面上的 Y/ZL/ZR 數值組成一份 AxisRecipeData（用於「建立」Recipe）。</summary>
+    public AxisRecipeData BuildRecipeData()
+    {
+        var data = new AxisRecipeData();
+        for (int i = 0; i < data.YPositions_R.Length && i < YPositions_R.Count; i++)
+            data.YPositions_R[i] = YPositions_R[i].Value;
+        for (int i = 0; i < data.YPositions_L.Length && i < YPositions_L.Count; i++)
+            data.YPositions_L[i] = YPositions_L[i].Value;
+
+        if (ZLPositions_R.Count >= 2)
+        {
+            data.CameraHeightZL_R = ZLPositions_R[0].Value;
+            data.ZLSafeHeight_R   = ZLPositions_R[1].Value;
+        }
+        if (ZLPositions_L.Count >= 2)
+        {
+            data.CameraHeightZL_L = ZLPositions_L[0].Value;
+            data.ZLSafeHeight_L   = ZLPositions_L[1].Value;
+        }
+        if (ZRPositions_R.Count >= 2)
+        {
+            data.CameraHeightZR_R = ZRPositions_R[0].Value;
+            data.ZRSafeHeight_R   = ZRPositions_R[1].Value;
+        }
+        if (ZRPositions_L.Count >= 2)
+        {
+            data.CameraHeightZR_L = ZRPositions_L[0].Value;
+            data.ZRSafeHeight_L   = ZRPositions_L[1].Value;
+        }
+        return data;
+    }
+
+    /// <summary>把一份 AxisRecipeData 套用到目前編輯畫面（用於「讀取」Recipe）。</summary>
+    public void ApplyRecipeData(AxisRecipeData data)
+    {
+        for (int i = 0; i < YPositions_R.Count && i < data.YPositions_R.Length; i++)
+            YPositions_R[i].Value = data.YPositions_R[i];
+        for (int i = 0; i < YPositions_L.Count && i < data.YPositions_L.Length; i++)
+            YPositions_L[i].Value = data.YPositions_L[i];
+
+        if (ZLPositions_R.Count >= 2)
+        {
+            ZLPositions_R[0].Value = data.CameraHeightZL_R;
+            ZLPositions_R[1].Value = data.ZLSafeHeight_R;
+        }
+        if (ZLPositions_L.Count >= 2)
+        {
+            ZLPositions_L[0].Value = data.CameraHeightZL_L;
+            ZLPositions_L[1].Value = data.ZLSafeHeight_L;
+        }
+        if (ZRPositions_R.Count >= 2)
+        {
+            ZRPositions_R[0].Value = data.CameraHeightZR_R;
+            ZRPositions_R[1].Value = data.ZRSafeHeight_R;
+        }
+        if (ZRPositions_L.Count >= 2)
+        {
+            ZRPositions_L[0].Value = data.CameraHeightZR_L;
+            ZRPositions_L[1].Value = data.ZRSafeHeight_L;
+        }
+    }
+
     /// <summary>從 InspectionConfig 與 SlotPositionTable 載入目前值。</summary>
     public void LoadFrom(InspectionConfig config)
     {
+        _config = config;
+        SetProperty(ref _currentRecipeName, config.CurrentRecipeName, nameof(CurrentRecipeName));
+
         SlotPositionTable.Load();   // 從 JSON 讀取最新已存座標
 
         YPositions_R.Clear();
@@ -87,6 +200,16 @@ public sealed class PositionSettingsViewModel : ObservableObject
 
         PickPositions.Clear();
         PickPositions.Add(new AxisPositionEntry("讀碼位置 Y", config.BarcodePositionY));
+
+        RefreshRecipeList();
+
+        // 載入完成後才開始追蹤「使用者手動修改」，避免LoadFrom本身的賦值被誤判為已修改
+        foreach (var entry in YPositions_R.Concat(YPositions_L)
+                     .Concat(ZLPositions_R).Concat(ZRPositions_R)
+                     .Concat(ZLPositions_L).Concat(ZRPositions_L)
+                     .Concat(XPositions).Concat(PickPositions))
+            entry.PropertyChanged += (_, __) => IsDirty = true;
+        IsDirty = false;
     }
 
     /// <summary>將目前值寫回 InspectionConfig 與 SlotPositionTable。</summary>

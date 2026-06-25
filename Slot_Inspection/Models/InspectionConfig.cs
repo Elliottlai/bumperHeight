@@ -4,7 +4,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-/// <summary>³æ¤@¬Û¾÷ªºµô¤Á ROI ³]©w¡C-1 ªí¥Ü¤£µô¤Á¡C</summary>
+/// <summary>å–®ä¸€ç›¸æ©Ÿçš„è£åˆ‡ ROI è¨­å®šã€‚-1 è¡¨ç¤ºä¸è£åˆ‡ã€‚</summary>
 public sealed class CameraRoi
 {
     public string CameraId { get; set; } = "";
@@ -13,7 +13,7 @@ public sealed class CameraRoi
     public int W { get; set; } = -1;
     public int H { get; set; } = -1;
 
-    /// <summary>¥|­Ó­È³£¦³®Ä¤~±Ò¥Îµô¤Á¡C</summary>
+    /// <summary>å››å€‹å€¼éƒ½æœ‰æ•ˆæ‰å•Ÿç”¨è£åˆ‡ã€‚</summary>
     public bool IsEnabled => X >= 0 && Y >= 0 && W > 0 && H > 0;
 }
 
@@ -37,16 +37,16 @@ public sealed class InspectionConfig
     public bool SaveImages { get; set; } = true;
     public string ImageSavePath { get; set; } = @"D:\InspectionImages";
 
-    // -- Axis settle delay (¨¾¤î ZL/ZR ¨ì¦ì«á®¶°Ê©ç·Ó¼Ò½k) --
+    // -- Axis settle delay (é˜²æ­¢ ZL/ZR åˆ°ä½å¾ŒæŒ¯å‹•æ‹ç…§æ¨¡ç³Š) --
     /// <summary>
-    /// ¬O§_¦b ZL/ZR ¶b¨ì¦ì«á¡AÃB¥~µ¥«İ <see cref="AxisSettleDelayMs"/> ms ¤~©ç·Ó¡A
-    /// ¥HÁ×§K¾÷±ñ®¶°Ê³y¦¨¼v¹³¼Ò½k¡C¥i³z¹L UI CheckBox Ãö³¬¡C
+    /// æ˜¯å¦åœ¨ ZL/ZR è»¸åˆ°ä½å¾Œï¼Œé¡å¤–ç­‰å¾… <see cref="AxisSettleDelayMs"/> ms æ‰æ‹ç…§ï¼Œ
+    /// ä»¥é¿å…æ©Ÿæ¢°æŒ¯å‹•é€ æˆå½±åƒæ¨¡ç³Šã€‚å¯é€é UI CheckBox é—œé–‰ã€‚
     /// </summary>
     public bool EnableAxisSettleDelay { get; set; } = true;
 
     /// <summary>
-    /// ZL/ZR ¨ì¦ì«áµ¥«İ®¶°Ê¥­®§ªº®É¶¡ (ms)¡A¹w³] 150 ms¡C
-    /// <see cref="EnableAxisSettleDelay"/> ¬° false ®É¤£¥Í®Ä¡C
+    /// ZL/ZR åˆ°ä½å¾Œç­‰å¾…æŒ¯å‹•å¹³æ¯çš„æ™‚é–“ (ms)ï¼Œé è¨­ 150 msã€‚
+    /// <see cref="EnableAxisSettleDelay"/> ç‚º false æ™‚ä¸ç”Ÿæ•ˆã€‚
     /// </summary>
     public int AxisSettleDelayMs { get; set; } = 150;
 
@@ -69,60 +69,60 @@ public sealed class InspectionConfig
     public string SimImageFolderPath { get; set; } = @"D:\TestImages";
 
     // =========================================
-    //  Barcode Åª½X¶b³]©w¡]¥u¦³ X ¶b²¾°Ê¡^
-    //  TODO: ¨Ì¹ê»Ú teaching µ²ªG½Õ¾ã
+    //  Barcode è®€ç¢¼è»¸è¨­å®šï¼ˆåªæœ‰ X è»¸ç§»å‹•ï¼‰
+    //  TODO: ä¾å¯¦éš› teaching çµæœèª¿æ•´
     // =========================================
 
-    /// <summary>Åª½X®É Y ¶b²¾°Ê¥Ø¼Ğ¦ì¸m (mm)</summary>
+    /// <summary>è®€ç¢¼æ™‚ Y è»¸ç§»å‹•ç›®æ¨™ä½ç½® (mm)</summary>
     public double BarcodePositionY { get; set; } = 491.0;
 
-    /// <summary>±½¥ª°¼±ø½X®É¡AX ¶b¦ì¸m</summary>
+    /// <summary>æƒå·¦å´æ¢ç¢¼æ™‚ï¼ŒX è»¸ä½ç½®</summary>
     public double BarcodePositionLeftX { get; set; } = -5.121;
 
-    /// <summary>±½¥k°¼±ø½X®É¡AX ¶b¦ì¸m</summary>
+    /// <summary>æƒå³å´æ¢ç¢¼æ™‚ï¼ŒX è»¸ä½ç½®</summary>
     public double BarcodePositionRightX { get; set; } = 189.922;
 
-    /// <summary>¨Ì¸ü¥x¦b®u¦ì¸m¦^¶ÇÅª½X¾¹ªº X ¶b®y¼Ğ</summary>
+    /// <summary>ä¾è¼‰å°åœ¨å¸­ä½ç½®å›å‚³è®€ç¢¼å™¨çš„ X è»¸åº§æ¨™</summary>
     public double GetBarcodePositionX(Services.MachineController.CarrierPosition position)
         => position == Services.MachineController.CarrierPosition.Right
             ? BarcodePositionRightX
             : BarcodePositionLeftX;
 
     // =========================================
-    //  Z ¶b°ª«×³]©w ¡X R ²Õ¡]X12=true¡AªO¤l¦b¥k°¼¡^
-    //  TODO: ¨Ì¹ê»Ú teaching µ²ªG½Õ¾ã
+    //  Z è»¸é«˜åº¦è¨­å®š â€” R çµ„ï¼ˆX12=trueï¼Œæ¿å­åœ¨å³å´ï¼‰
+    //  TODO: ä¾å¯¦éš› teaching çµæœèª¿æ•´
     // =========================================
 
-    /// <summary>R²Õ¡GZL ¤U­°«áªºÀË´ú°ª«×¡]mm¡^</summary>
+    /// <summary>Rçµ„ï¼šZL ä¸‹é™å¾Œçš„æª¢æ¸¬é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double CameraHeightZL_R { get; set; } = 24.7;
 
-    /// <summary>R²Õ¡GZR ¤U­°«áªºÀË´ú°ª«×¡]mm¡^</summary>
+    /// <summary>Rçµ„ï¼šZR ä¸‹é™å¾Œçš„æª¢æ¸¬é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double CameraHeightZR_R { get; set; } = 0.0;
 
-    /// <summary>R²Õ¡GZL ¦w¥ş°ª«×¡]mm¡^</summary>
+    /// <summary>Rçµ„ï¼šZL å®‰å…¨é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double ZLSafeHeight_R { get; set; } = 0.0;
 
-    /// <summary>R²Õ¡GZR ¦w¥ş°ª«×¡]mm¡^</summary>
+    /// <summary>Rçµ„ï¼šZR å®‰å…¨é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double ZRSafeHeight_R { get; set; } = 0.0;
 
     // =========================================
-    //  Z ¶b°ª«×³]©w ¡X L ²Õ¡]X13=true¡AªO¤l¦b¥ª°¼¡^
-    //  TODO: ¨Ì¹ê»Ú teaching µ²ªG½Õ¾ã
+    //  Z è»¸é«˜åº¦è¨­å®š â€” L çµ„ï¼ˆX13=trueï¼Œæ¿å­åœ¨å·¦å´ï¼‰
+    //  TODO: ä¾å¯¦éš› teaching çµæœèª¿æ•´
     // =========================================
 
-    /// <summary>L²Õ¡GZL ¤U­°«áªºÀË´ú°ª«×¡]mm¡^</summary>
+    /// <summary>Lçµ„ï¼šZL ä¸‹é™å¾Œçš„æª¢æ¸¬é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double CameraHeightZL_L { get; set; } = 24.7;
 
-    /// <summary>L²Õ¡GZR ¤U­°«áªºÀË´ú°ª«×¡]mm¡^</summary>
+    /// <summary>Lçµ„ï¼šZR ä¸‹é™å¾Œçš„æª¢æ¸¬é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double CameraHeightZR_L { get; set; } = 0.0;
 
-    /// <summary>L²Õ¡GZL ¦w¥ş°ª«×¡]mm¡^</summary>
+    /// <summary>Lçµ„ï¼šZL å®‰å…¨é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double ZLSafeHeight_L { get; set; } = 0.0;
 
-    /// <summary>L²Õ¡GZR ¦w¥ş°ª«×¡]mm¡^</summary>
+    /// <summary>Lçµ„ï¼šZR å®‰å…¨é«˜åº¦ï¼ˆmmï¼‰</summary>
     public double ZRSafeHeight_L { get; set; } = 0.0;
 
-    // ¢w¢w ¬Û®eÂÂÄİ©Ê¡]Åª¨ú®É«O¯d¡A¦s¦^·sÄæ¦ì¡^¢w¢w
+    // â”€â”€ ç›¸å®¹èˆŠå±¬æ€§ï¼ˆè®€å–æ™‚ä¿ç•™ï¼Œå­˜å›æ–°æ¬„ä½ï¼‰â”€â”€
     [JsonIgnore]
     public double CameraHeightZL
     {
@@ -149,53 +149,59 @@ public sealed class InspectionConfig
     }
 
     /// <summary>
-    /// ¨Ì X12/X13 °T¸¹¨ú±o¹ïÀ³ªº ZL ÀË´ú°ª«×¡C
-    /// x12=true ¡÷ R²Õ¡Fx13=true ¡÷ L²Õ¡C
+    /// ä¾ X12/X13 è¨Šè™Ÿå–å¾—å°æ‡‰çš„ ZL æª¢æ¸¬é«˜åº¦ã€‚
+    /// x12=true â†’ Rçµ„ï¼›x13=true â†’ Lçµ„ã€‚
     /// </summary>
     public double GetCameraHeightZL(bool x12, bool x13)
         => x12 ? CameraHeightZL_R : CameraHeightZL_L;
 
     /// <summary>
-    /// ¨Ì X12/X13 °T¸¹¨ú±o¹ïÀ³ªº ZR ÀË´ú°ª«×¡C
+    /// ä¾ X12/X13 è¨Šè™Ÿå–å¾—å°æ‡‰çš„ ZR æª¢æ¸¬é«˜åº¦ã€‚
     /// </summary>
     public double GetCameraHeightZR(bool x12, bool x13)
         => x12 ? CameraHeightZR_R : CameraHeightZR_L;
 
     /// <summary>
-    /// ¨Ì X12/X13 °T¸¹¨ú±o¹ïÀ³ªº ZL ¦w¥ş°ª«×¡C
+    /// ä¾ X12/X13 è¨Šè™Ÿå–å¾—å°æ‡‰çš„ ZL å®‰å…¨é«˜åº¦ã€‚
     /// </summary>
     public double GetZLSafeHeight(bool x12, bool x13)
         => x12 ? ZLSafeHeight_R : ZLSafeHeight_L;
 
     /// <summary>
-    /// ¨Ì X12/X13 °T¸¹¨ú±o¹ïÀ³ªº ZR ¦w¥ş°ª«×¡C
+    /// ä¾ X12/X13 è¨Šè™Ÿå–å¾—å°æ‡‰çš„ ZR å®‰å…¨é«˜åº¦ã€‚
     /// </summary>
     public double GetZRSafeHeight(bool x12, bool x13)
         => x12 ? ZRSafeHeight_R : ZRSafeHeight_L;
 
     /// <summary>
-    /// ZL/ZR §PÂ_¡u¤w¦b¦w¥ş°ª«×¡vªº®e®t¡]mm¡^¡C
-    /// ¹ê»Ú¦ì¸m ? SafeHeight + ZSafeTolerance µø¬°¦w¥ş¡C
+    /// ZL/ZR åˆ¤æ–·ã€Œå·²åœ¨å®‰å…¨é«˜åº¦ã€çš„å®¹å·®ï¼ˆmmï¼‰ã€‚
+    /// å¯¦éš›ä½ç½® ? SafeHeight + ZSafeTolerance è¦–ç‚ºå®‰å…¨ã€‚
     /// </summary>
     public double ZSafeTolerance { get; set; } = 1.0;
 
+    /// <summary>ç›®å‰å¥—ç”¨ä¸­çš„ Recipe åç¨±ï¼ˆä¾›UIé¡¯ç¤ºèˆ‡ä¸‹æ¬¡é–‹çª—æ™‚é‚„åŸï¼‰ï¼Œç©ºå­—ä¸²ä»£è¡¨æ²’æœ‰ç‰¹å®šå°æ‡‰çš„Recipeã€‚</summary>
+    public string CurrentRecipeName { get; set; } = "";
+
+    /// <summary>é–’ç½®å¤šä¹…ï¼ˆåˆ†é˜ï¼‰è‡ªå‹•é–å®šç•«é¢ï¼Œåƒ…Adminå¯åœ¨å¸³è™Ÿç®¡ç†è¦–çª—èª¿æ•´ã€‚</summary>
+    public int IdleLockTimeoutMinutes { get; set; } = 10;
+
     // =========================================
-    //  µô¤Á ROI ³]©w¡]C1~C4 ¦U¦Û¿W¥ß¡^
+    //  è£åˆ‡ ROI è¨­å®šï¼ˆC1~C4 å„è‡ªç¨ç«‹ï¼‰
     // =========================================
 
-    /// <summary>C1 ¬Û¾÷ ROI¡]X13=true, Right ¬Û¾÷¡^</summary>
+    /// <summary>C1 ç›¸æ©Ÿ ROIï¼ˆX13=true, Right ç›¸æ©Ÿï¼‰</summary>
     public CameraRoi RoiC1 { get; set; } = new() { CameraId = "C1" };
 
-    /// <summary>C2 ¬Û¾÷ ROI¡]X13=true, Left ¬Û¾÷¡^</summary>
+    /// <summary>C2 ç›¸æ©Ÿ ROIï¼ˆX13=true, Left ç›¸æ©Ÿï¼‰</summary>
     public CameraRoi RoiC2 { get; set; } = new() { CameraId = "C2" };
 
-    /// <summary>C3 ¬Û¾÷ ROI¡]X12=true, Right ¬Û¾÷¡^</summary>
+    /// <summary>C3 ç›¸æ©Ÿ ROIï¼ˆX12=true, Right ç›¸æ©Ÿï¼‰</summary>
     public CameraRoi RoiC3 { get; set; } = new() { CameraId = "C3" };
 
-    /// <summary>C4 ¬Û¾÷ ROI¡]X12=true, Left ¬Û¾÷¡^</summary>
+    /// <summary>C4 ç›¸æ©Ÿ ROIï¼ˆX12=true, Left ç›¸æ©Ÿï¼‰</summary>
     public CameraRoi RoiC4 { get; set; } = new() { CameraId = "C4" };
 
-    /// <summary>¨Ì¬Û¾÷¦WºÙ¨ú±o¹ïÀ³ ROI¡C</summary>
+    /// <summary>ä¾ç›¸æ©Ÿåç¨±å–å¾—å°æ‡‰ ROIã€‚</summary>
     public CameraRoi GetRoi(string cameraId) => cameraId switch
     {
         "C1" => RoiC1,
@@ -206,19 +212,19 @@ public sealed class InspectionConfig
     };
 
     // =========================================
-    //  BumperFlat ºtºâªk JSON ³]©w
+    //  BumperFlat æ¼”ç®—æ³• JSON è¨­å®š
     // =========================================
 
     /// <summary>
-    /// ºtºâªk¹w³] JSON Key¡]¹ïÀ³ Config ¸ê®Æ§¨¤Uªº .json ÀÉ¦W¡^¡C
-    /// ¨Ò¦p "Parameter" ¡÷ Config/Parameter.json
+    /// æ¼”ç®—æ³•é è¨­ JSON Keyï¼ˆå°æ‡‰ Config è³‡æ–™å¤¾ä¸‹çš„ .json æª”åï¼‰ã€‚
+    /// ä¾‹å¦‚ "Parameter" â†’ Config/Parameter.json
     /// </summary>
     public string DefaultAlgJsonKey { get; set; } = "Parameter";
 
     /// <summary>
-    /// ¨Ì Slot ¦ì¸m¨ú±o¹ïÀ³ªººtºâªk JSON Key¡C
-    /// ¥Ø«e©Ò¦³ Slot ¦@¥Î¦P¤@²Õ°Ñ¼Æ¡F
-    /// ­Y¥¼¨Ó»İ­n per-slot ³]©w¡A¥i§ï¦^¶Ç $"{target}_S{slotIndex + 1}"¡C
+    /// ä¾ Slot ä½ç½®å–å¾—å°æ‡‰çš„æ¼”ç®—æ³• JSON Keyã€‚
+    /// ç›®å‰æ‰€æœ‰ Slot å…±ç”¨åŒä¸€çµ„åƒæ•¸ï¼›
+    /// è‹¥æœªä¾†éœ€è¦ per-slot è¨­å®šï¼Œå¯æ”¹å›å‚³ $"{target}_S{slotIndex + 1}"ã€‚
     /// </summary>
     public string GetAlgJsonKey(
         SlotInspectionProgress.TargetCollection target,
@@ -228,11 +234,11 @@ public sealed class InspectionConfig
     }
 
     /// <summary>
-    /// ®Ú¾Ú¼v¹³ÀÉ¦W±À¾Éºtºâªk JSON key¡]¤ñ·Ó TestALG¡^¡G
-    /// 1) ¥ı¨úÀÉ¦W¡]µL°ÆÀÉ¦W¡^
-    /// 2) ­Y§t¦Ü¤Ö¨â­Ó '_'¡A¨ú­Ë¼Æ²Ä¤G­Ó '_' «á­±ªº¦r¦ê¡]¨Ò¦p C1_LSlot01¡^
-    /// 3) ¥u¦³¤@­Ó '_' «h¨ú³Ì«á¤@­Ó '_' «á­±ªº¦r¦ê
-    /// 4) ¦^¶ÇªÅ­È®É fallback DefaultAlgJsonKey
+    /// æ ¹æ“šå½±åƒæª”åæ¨å°æ¼”ç®—æ³• JSON keyï¼ˆæ¯”ç…§ TestALGï¼‰ï¼š
+    /// 1) å…ˆå–æª”åï¼ˆç„¡å‰¯æª”åï¼‰
+    /// 2) è‹¥å«è‡³å°‘å…©å€‹ '_'ï¼Œå–å€’æ•¸ç¬¬äºŒå€‹ '_' å¾Œé¢çš„å­—ä¸²ï¼ˆä¾‹å¦‚ C1_LSlot01ï¼‰
+    /// 3) åªæœ‰ä¸€å€‹ '_' å‰‡å–æœ€å¾Œä¸€å€‹ '_' å¾Œé¢çš„å­—ä¸²
+    /// 4) å›å‚³ç©ºå€¼æ™‚ fallback DefaultAlgJsonKey
     /// </summary>
     public string GetAlgJsonKeyFromImagePath(string imagePath)
     {
@@ -243,7 +249,7 @@ public sealed class InspectionConfig
         if (string.IsNullOrWhiteSpace(name))
             return DefaultAlgJsonKey;
 
-        // §ä­Ë¼Æ²Ä¤G­Ó '_'
+        // æ‰¾å€’æ•¸ç¬¬äºŒå€‹ '_'
         int lastIdx = name.LastIndexOf('_');
         if (lastIdx > 0)
         {
@@ -254,12 +260,12 @@ public sealed class InspectionConfig
                 return key;
         }
 
-        // ÀÉ¦W¨S¦³©³½u ¡÷ ¨Ï¥Î¹w³] JSON key
+        // æª”åæ²’æœ‰åº•ç·š â†’ ä½¿ç”¨é è¨­ JSON key
         return DefaultAlgJsonKey;
     }
 
     // =========================================
-    //  ³]©wÀÉ¦sÅª¡]JSON¡^
+    //  è¨­å®šæª”å­˜è®€ï¼ˆJSONï¼‰
     // =========================================
 
     private static readonly string ConfigFilePath = Path.Combine(
@@ -271,14 +277,14 @@ public sealed class InspectionConfig
         DefaultIgnoreCondition = JsonIgnoreCondition.Never
     };
 
-    /// <summary>±N¥Ø«e³]©wÀx¦s¦Ü Config\InspectionConfig.json¡C</summary>
+    /// <summary>å°‡ç›®å‰è¨­å®šå„²å­˜è‡³ Config\InspectionConfig.jsonã€‚</summary>
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(ConfigFilePath)!);
         File.WriteAllText(ConfigFilePath, JsonSerializer.Serialize(this, JsonOpts));
     }
 
-    /// <summary>±q Config\InspectionConfig.json ¸ü¤J³]©w¡AÀÉ®×¤£¦s¦b®É¦^¶Ç¹w³]­È¡C</summary>
+    /// <summary>å¾ Config\InspectionConfig.json è¼‰å…¥è¨­å®šï¼Œæª”æ¡ˆä¸å­˜åœ¨æ™‚å›å‚³é è¨­å€¼ã€‚</summary>
     public static InspectionConfig Load()
     {
         if (!File.Exists(ConfigFilePath))

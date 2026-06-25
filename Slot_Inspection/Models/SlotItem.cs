@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Media;
 using Slot_Inspection.ViewModels;
 
@@ -8,6 +9,9 @@ public sealed class SlotItem : ObservableObject
     private string _name = string.Empty;
     private double _value;
     private bool _isNg;
+    private double _meanIntensity;
+    private double _distanceToRoiCenter;
+    private IReadOnlyList<Rect> _defectBoxes = [];
     private ImageSource? _imageSource;
 
     public string Name
@@ -26,6 +30,24 @@ public sealed class SlotItem : ObservableObject
     {
         get => _isNg;
         set => SetProperty(ref _isNg, value);
+    }
+
+    public double MeanIntensity
+    {
+        get => _meanIntensity;
+        set => SetProperty(ref _meanIntensity, value);
+    }
+
+    public double DistanceToRoiCenter
+    {
+        get => _distanceToRoiCenter;
+        set => SetProperty(ref _distanceToRoiCenter, value);
+    }
+
+    public IReadOnlyList<Rect> DefectBoxes
+    {
+        get => _defectBoxes;
+        set => SetProperty(ref _defectBoxes, value);
     }
 
     public ImageSource? ImageSource

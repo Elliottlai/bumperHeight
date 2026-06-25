@@ -47,6 +47,31 @@
                         </TransformGroup>
                     </Image.RenderTransform>
                 </Image>
+
+                <!-- 缺陷外框疊圖層：跟PreviewImage同一張原圖座標系，靠程式碼同步縮放/平移（見ApplyTransform） -->
+                <ItemsControl x:Name="DefectBoxesOverlay" IsHitTestVisible="False">
+                    <ItemsControl.RenderTransform>
+                        <TransformGroup>
+                            <ScaleTransform x:Name="BoxScaleT" ScaleX="1" ScaleY="1"/>
+                            <TranslateTransform x:Name="BoxTranslateT" X="0" Y="0"/>
+                        </TransformGroup>
+                    </ItemsControl.RenderTransform>
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemContainerStyle>
+                        <Style TargetType="ContentPresenter">
+                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                        </Style>
+                    </ItemsControl.ItemContainerStyle>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Rectangle Width="{Binding Width}" Height="{Binding Height}"
+                                       Stroke="Red" StrokeThickness="4" Fill="Transparent"/>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </Canvas>
         </Border>
     </Grid>

@@ -1,0 +1,78 @@
+<Window x:Class="Slot_Inspection.Views.UserManagementWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="帳號與安全設定"
+        Width="480" Height="560"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 帳號清單 -->
+        <ListView x:Name="LstUsers" Grid.Row="0" Margin="0,0,0,10">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="帳號" Width="180" DisplayMemberBinding="{Binding Username}"/>
+                    <GridViewColumn Header="角色" Width="180" DisplayMemberBinding="{Binding Role}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <!-- 刪除/改角色 -->
+        <Border Grid.Row="1" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Padding="8" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="選中帳號改角色為：" VerticalAlignment="Center" FontSize="12"/>
+                <ComboBox x:Name="CmbChangeRole" Width="110" Margin="6,0,0,0"/>
+                <Button Content="套用角色" Width="80" Margin="6,0,0,0" Click="BtnApplyRole_Click"/>
+                <Button Content="刪除選中" Width="80" Margin="12,0,0,0" Background="#C0392B" Foreground="White"
+                        Click="BtnDelete_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- 新增帳號 -->
+        <Border Grid.Row="2" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Padding="8" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="新增帳號" FontWeight="Bold" FontSize="12" Margin="0,0,0,6"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="帳號：" VerticalAlignment="Center" Width="50"/>
+                    <TextBox x:Name="TxtNewUsername" Width="150"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="密碼：" VerticalAlignment="Center" Width="50"/>
+                    <PasswordBox x:Name="PwdNewPassword" Width="150"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                    <TextBlock Text="角色：" VerticalAlignment="Center" Width="50"/>
+                    <ComboBox x:Name="CmbNewRole" Width="110"/>
+                </StackPanel>
+                <Button Content="新增" Width="80" HorizontalAlignment="Left" Background="#2E86C1" Foreground="White"
+                        Click="BtnAdd_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- 登入安全設定 -->
+        <Border Grid.Row="3" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Padding="8" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="登入安全設定" FontWeight="Bold" FontSize="12" Margin="0,0,0,6"/>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="閒置自動鎖定：" VerticalAlignment="Center"/>
+                    <TextBox x:Name="TxtIdleTimeout" Width="50" Margin="6,0,0,0" TextAlignment="Center"/>
+                    <TextBlock Text="分鐘（1~120）" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                    <Button Content="套用" Width="64" Margin="12,0,0,0" Background="#2E86C1" Foreground="White"
+                            Click="BtnApplyIdleTimeout_Click"/>
+                </StackPanel>
+                <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="#777" TextWrapping="Wrap"
+                           Text="閒置超過這個時間沒有滑鼠/鍵盤操作，畫面會自動鎖定（不是登出），需輸入目前使用者密碼才能解鎖繼續操作。"/>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="TxtError" Grid.Row="4" Foreground="#C0392B" FontSize="12" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

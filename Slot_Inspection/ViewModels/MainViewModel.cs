@@ -11,6 +11,9 @@ using Slot_Inspection.Views;
 
 namespace Slot_Inspection.ViewModels;
 
+/// <summary>主畫面標題列機台運行狀態指示燈用的整體狀態。</summary>
+public enum MachineRunState { Disconnected, Ready, Running, Paused, Alarm }
+
 public sealed class MainViewModel : ObservableObject
 {
     private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
@@ -40,6 +43,10 @@ public sealed class MainViewModel : ObservableObject
     private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
     private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
     private bool _isLightGateBypassActive; // 取料暫停光閘旗標
+    private bool _isAlarmActive; // 是否處於異常狀態（與 PLC Y01 紅燈同步）
+    private bool _isLocked; // 閒置逾時鎖定畫面
+    // Interval 在建構式裡會被覆寫為 InspectionConfig.IdleLockTimeoutMinutes（可由Admin在帳號管理視窗調整）
+    private readonly DispatcherTimer _idleTimer = new() { Interval = TimeSpan.FromMinutes(10) };
 
     // X7 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，觸發遮斷時一起寫 log
     private readonly Queue<(DateTime Time, bool X7Raw, bool Blocked, int Count)> _x7SignalHistory = new();
@@ -74,6 +81,150 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>供 XAML DataTrigger 比對用的字串（避免 enum 型別引用）。</summary>
     public string MesStatusKey => _mesStatus.ToString();
+
+    /// <summary>
+    /// 是否處於異常狀態，與 PLC Y01 紅燈同步（見 <see cref="MachineController.SetRedAlarm"/> 呼叫點）。
+    /// </summary>
+    public bool IsAlarmActive
+    {
+        get => _isAlarmActive;
+        private set
+        {
+            if (SetProperty(ref _isAlarmActive, value))
+                NotifyRunStateChanged();
+        }
+    }
+
+    /// <summary>主畫面標題列狀態指示燈的整體狀態，依優先順序判斷：異常 > 暫停 > 運行中 > 待命 > 未連線。</summary>
+    public MachineRunState RunState =>
+        IsAlarmActive ? MachineRunState.Alarm :
+        (IsLightGateBypassActive && IsLightGateBlocked) ? MachineRunState.Paused :
+        (IsRunning || IsDryRunning) ? MachineRunState.Running :
+        IsDeviceReady ? MachineRunState.Ready :
+        MachineRunState.Disconnected;
+
+    public string RunStateText => RunState switch
+    {
+        MachineRunState.Alarm   => "⚠ 異常",
+        MachineRunState.Paused  => "暫停中（光閘）",
+        MachineRunState.Running => "運行中",
+        MachineRunState.Ready   => "待命中",
+        _                       => "未連線"
+    };
+
+    /// <summary>供 XAML DataTrigger 比對用的字串（避免 enum 型別引用）。</summary>
+    public string RunStateKey => RunState.ToString();
+
+    /// <summary>RunState 的構成旗標有變動時，通知 RunState/RunStateText/RunStateKey 一起刷新。</summary>
+    private void NotifyRunStateChanged()
+    {
+        OnPropertyChanged(nameof(RunState));
+        OnPropertyChanged(nameof(RunStateText));
+        OnPropertyChanged(nameof(RunStateKey));
+        OnPropertyChanged(nameof(CanToggleSimulationMode));
+    }
+
+    // ═══════════════════════════════════════
+    //  使用者登入 / 權限
+    // ═══════════════════════════════════════
+
+    private UserAccount _currentUser = null!;
+
+    /// <summary>
+    /// 目前登入的帳號（開機登入後由 LoginWindow 傳入）。登出後重新登入會換成新使用者，
+    /// 不會是 null（登出流程在換成新使用者前都維持鎖定畫面，不會讓這個屬性處於未驗證狀態）。
+    /// </summary>
+    public UserAccount CurrentUser
+    {
+        get => _currentUser;
+        private set
+        {
+            if (SetProperty(ref _currentUser, value))
+            {
+                OnPropertyChanged(nameof(CurrentUserDisplay));
+                OnPropertyChanged(nameof(IsEngineerOrAbove));
+                OnPropertyChanged(nameof(IsAdmin));
+                OnPropertyChanged(nameof(CanToggleSimulationMode));
+                OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>給UI顯示用，例如「admin（Admin）」。</summary>
+    public string CurrentUserDisplay => $"{CurrentUser.Username}（{CurrentUser.Role}）";
+
+    /// <summary>Engineer 或 Admin。注意：座標/光源/裁切設定、模擬模式、安定延遲等進階設定的實際門檻
+    /// 已改由「角色權限設定」（<see cref="HasPermission"/>）決定，這個屬性只保留給沒有對應Permission項目的場合用。</summary>
+    public bool IsEngineerOrAbove => CurrentUser.Role is UserRole.Engineer or UserRole.Admin;
+
+    /// <summary>僅 Admin（帳號管理、WebAPI/MES設定、操作紀錄、角色權限設定——這些是安全核心邊界，不開放給Operator/Engineer設定）。</summary>
+    public bool IsAdmin => CurrentUser.Role == UserRole.Admin;
+
+    /// <summary>判斷目前登入使用者是否有某項可設定權限（Admin永遠true，Operator/Engineer依「角色權限設定」決定）。</summary>
+    private bool HasPermission(Permission permission) => RolePermissionManager.IsAllowed(CurrentUser.Role, permission);
+
+    /// <summary>
+    /// 角色權限設定視窗存檔後呼叫，讓所有依權限決定的按鈕/Checkbox立即反映新設定，
+    /// 不需要使用者登出重新登入才會生效。
+    /// </summary>
+    public void RefreshPermissions()
+    {
+        OnPropertyChanged(nameof(CanToggleSimulationMode));
+        OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>
+    /// 鎖定中：畫面內容保留，僅操作失效，必須重新輸入帳號密碼登入才能解鎖。
+    /// 觸發時機：閒置逾時自動登出、使用者手動登出、開機後尚未完成第一次登入。
+    /// 三種情況都會彈出 LoginWindow 要求完整登入，不提供「同一使用者僅輸入密碼」的快速解鎖，
+    /// 避免畫面停在前一個使用者的工作階段、卻沒人確認當下實際操作者是誰。
+    /// </summary>
+    public bool IsLocked
+    {
+        get => _isLocked;
+        private set
+        {
+            if (SetProperty(ref _isLocked, value))
+            {
+                OnPropertyChanged(nameof(IsUnlocked));
+                CommandManager.InvalidateRequerySuggested(); // 計時器觸發不是WPF input事件，不會自動requery
+            }
+        }
+    }
+
+    /// <summary>= !IsLocked，給XAML綁主要內容區的IsEnabled用，鎖定時連鍵盤Tab都不能跳進去操作。</summary>
+    public bool IsUnlocked => !IsLocked;
+
+    /// <summary>有使用者操作（滑鼠/鍵盤）時呼叫，重置閒置計時器。鎖定中不重置，要等重新登入。</summary>
+    public void ResetIdleTimer()
+    {
+        if (IsLocked) return;
+        _idleTimer.Stop();
+        _idleTimer.Start();
+    }
+
+    /// <summary>
+    /// 閒置多久（分鐘）自動鎖定畫面，直接代理 InspectionConfig.IdleLockTimeoutMinutes。
+    /// 僅在帳號管理視窗（Admin限定）提供調整，變更會立即套用到計時器並寫入 AuditLog。
+    /// </summary>
+    public int IdleLockTimeoutMinutes
+    {
+        get => _machine.Config.IdleLockTimeoutMinutes;
+        set
+        {
+            int clamped = Math.Clamp(value, 1, 120);
+            if (_machine.Config.IdleLockTimeoutMinutes == clamped) return;
+            _machine.Config.IdleLockTimeoutMinutes = clamped;
+            _machine.Config.Save();
+            _idleTimer.Interval = TimeSpan.FromMinutes(clamped);
+            ResetIdleTimer();
+            OnPropertyChanged();
+            if (CurrentUser != null)
+                AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"修改閒置鎖定時間為 {clamped} 分鐘");
+        }
+    }
 
     public ObservableCollection<SlotItem> AreaA_Row1 { get; } = [];
     public ObservableCollection<SlotItem> AreaB_Row1 { get; } = [];
@@ -120,7 +271,11 @@ public sealed class MainViewModel : ObservableObject
     public bool IsRunning
     {
         get => _isRunning;
-        set => SetProperty(ref _isRunning, value);
+        set
+        {
+            if (SetProperty(ref _isRunning, value))
+                NotifyRunStateChanged();
+        }
     }
 
     public string StatusMessage
@@ -144,7 +299,10 @@ public sealed class MainViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _isLightGateBlocked, value))
+            {
                 CommandManager.InvalidateRequerySuggested();
+                NotifyRunStateChanged();
+            }
         }
     }
 
@@ -164,6 +322,13 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ToggleLightGateBypassCommand { get; }
     public ICommand SlcResetCommand { get; }
     public ICommand WebApiTestCommand { get; }
+    public ICommand ChangePasswordCommand { get; }
+    public ICommand OpenUserManagementCommand { get; }
+    public ICommand OpenAuditLogCommand { get; }
+    public ICommand OpenRolePermissionCommand { get; }
+    public ICommand LogoutCommand { get; }
+    /// <summary>鎖定畫面上的「重新登入」按鈕：LoginWindow被使用者直接關掉/取消時，用來再叫出一次登入視窗。</summary>
+    public ICommand RetryLoginCommand { get; }
 
     /// <summary>
     /// 暫停光閘：啟用時光閘觸發不中斷流程，但 RUN 與原點賦歸會同時鎖定。
@@ -177,6 +342,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(LightGateBypassButtonText));
                 CommandManager.InvalidateRequerySuggested();
+                NotifyRunStateChanged();
             }
         }
     }
@@ -189,7 +355,11 @@ public sealed class MainViewModel : ObservableObject
     public bool IsDryRunning
     {
         get => _isDryRunning;
-        set => SetProperty(ref _isDryRunning, value);
+        set
+        {
+            if (SetProperty(ref _isDryRunning, value))
+                NotifyRunStateChanged();
+        }
     }
 
     /// <summary>
@@ -229,23 +399,42 @@ public sealed class MainViewModel : ObservableObject
     public bool IsDeviceReady
     {
         get => _isDeviceReady;
-        set => SetProperty(ref _isDeviceReady, value);
+        set
+        {
+            if (SetProperty(ref _isDeviceReady, value))
+                NotifyRunStateChanged();
+        }
     }
 
     /// <summary>
     /// 模擬模式開關。Debug-Sim 組態預設 true，其他組態預設 false。
-    /// 可在 UI 動態切換。
+    /// 可在 UI 動態切換，但執行中（RUN/DryRun）不允許切換——切換時機台正在跑流程，
+    /// 中途改變「要不要碰真實硬體」會讓正在進行中的動作跟接下來的動作用不同模式，狀態會兵荒馬亂。
     /// </summary>
     public bool IsSimulationMode
     {
         get => MachineController.SimulationMode;
         set
         {
+            if (!CanToggleSimulationMode)
+            {
+                OnPropertyChanged(); // 還原 CheckBox 顯示成目前實際值，不接受這次變更
+                return;
+            }
+            if (MachineController.SimulationMode == value) return;
             MachineController.SimulationMode = value;
             OnPropertyChanged();
             CommandManager.InvalidateRequerySuggested();
+            if (CurrentUser != null)
+                AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"模擬模式切換為{(value ? "開啟" : "關閉")}");
         }
     }
+
+    /// <summary>模擬模式開關是否可操作：需Engineer以上權限，且機台不在RUN/DryRun執行中。</summary>
+    public bool CanToggleSimulationMode => HasPermission(Permission.SimulationMode) && !IsRunning && !IsDryRunning;
+
+    /// <summary>ZL/ZR安定延遲checkbox是否可操作，依「角色權限設定」決定。</summary>
+    public bool CanToggleAxisSettleDelay => HasPermission(Permission.AxisSettleDelay);
 
     /// <summary>
     /// ZL/ZR 到位後是否啟用安定延遲（防止振動拍照模糊）。
@@ -309,50 +498,81 @@ public sealed class MainViewModel : ObservableObject
         AreaB_Stats.Calculate(AreaB_Row1);
     }
 
-    public MainViewModel()
+    private static readonly UserAccount NotLoggedInPlaceholder = new()
     {
+        Username = "（尚未登入）",
+        Role = UserRole.Operator
+    };
+
+    /// <summary>
+    /// user 為 null 表示開機後尚未完成第一次登入：畫面建立後立刻是鎖定狀態，
+    /// 主視窗（含機台狀態監控）正常顯示，但要等 App.xaml.cs 呼叫 CompleteLogin 才能操作。
+    /// </summary>
+    public MainViewModel(UserAccount? user = null)
+    {
+        CurrentUser = user ?? NotLoggedInPlaceholder;
+        if (user == null)
+            IsLocked = true;
+
         _mesClient.Load();
         // START
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
-        StopCommand = new RelayCommand(OnStop);
+        StopCommand = new RelayCommand(OnStop, () => HasPermission(Permission.Stop));
         // 主流程：逐 Slot 移動、取像、存圖
-        // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷。
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked);
+        // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷，且該角色有RUN權限。
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && HasPermission(Permission.Run));
         // 初始化：Config + Servo + PLC（不含原點賦歸）
-        InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady);
+        InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady && HasPermission(Permission.InitDevices));
         // 原點賦歸：光閘必須未遮斷才可按（不因暫停光閘而全域禁用）
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked);
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && HasPermission(Permission.Home));
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
-        ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.ReadBarcode));
         // 移至取料位：Y 軸移動到取料位座標
-        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning);
-        // 座標設定：任何時候都可開啟
-        PositionSettingsCommand = new RelayCommand(OnPositionSettings);
+        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.MoveToPickPosition));
+        // 座標設定：依「角色權限設定」決定 Operator/Engineer 是否可開啟，Admin永遠可以
+        PositionSettingsCommand = new RelayCommand(OnPositionSettings, () => !IsRunning && !IsDryRunning && HasPermission(Permission.PositionSettings));
 
+        // 裁切設定：依「角色權限設定」決定
+        CropSettingsCommand = new RelayCommand(OnCropSettings, () => HasPermission(Permission.CropSettings));
 
-        // 裁切設定：任何時候都可開啟
-        CropSettingsCommand = new RelayCommand(OnCropSettings);
-
-        // 亮度設定：任何時候都可開啟
-        LightSettingsCommand = new RelayCommand(OnLightSettings);
+        // 亮度設定：依「角色權限設定」決定
+        LightSettingsCommand = new RelayCommand(OnLightSettings, () => HasPermission(Permission.LightSettings));
 
         // 點擊圖像放大預覽
         OpenImageViewerCommand = new RelayCommand<SlotItem>(OnOpenImageViewer);
 
         // 開啟 CSV 報表資料夾
-        OpenResultFolderCommand = new RelayCommand(OnOpenResultFolder);
+        OpenResultFolderCommand = new RelayCommand(OnOpenResultFolder, () => HasPermission(Permission.OpenResultFolder));
 
         // 條碼 TextBox Enter 確認
         ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
 
         // 暫停光閘 toggle
-        ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass);
+        ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => HasPermission(Permission.ToggleLightGateBypass));
 
         // SLC Reset
-        SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning);
+        SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.SlcReset));
 
-        // WebAPI 模擬測試
-        WebApiTestCommand = new RelayCommand(OnWebApiTest);
+        // WebAPI 模擬測試：僅Admin
+        WebApiTestCommand = new RelayCommand(OnWebApiTest, () => IsAdmin);
+
+        // 修改自己密碼：任何角色都可以
+        ChangePasswordCommand = new RelayCommand(OnChangePassword);
+
+        // 帳號管理：僅Admin
+        OpenUserManagementCommand = new RelayCommand(OnOpenUserManagement, () => IsAdmin);
+
+        // 操作紀錄檢視：僅Admin
+        OpenAuditLogCommand = new RelayCommand(OnOpenAuditLog, () => IsAdmin);
+
+        // 角色權限設定：僅Admin
+        OpenRolePermissionCommand = new RelayCommand(OnOpenRolePermission, () => IsAdmin);
+
+        // 登出：鎖定畫面＋彈出LoginWindow要求重新登入，不結束程式
+        LogoutCommand = new RelayCommand(OnLogout);
+
+        // 鎖定畫面「重新登入」：LoginWindow被直接關掉/取消後，靠這顆按鈕再叫出一次
+        RetryLoginCommand = new RelayCommand(ShowLoginWindow);
 
         // 先填入空白 Slot 佔位（UI 不會是空的）
         FillSlots(AreaA_Row1, 25, 25);
@@ -363,15 +583,40 @@ public sealed class MainViewModel : ObservableObject
             CurrentDate = DateTime.Now.ToString("yyyy/MM/dd");
             CurrentTime = DateTime.Now.ToString("HH:mm:ss");
         };
-        _timer.Start();
 
         _plcTimer.Tick += OnPlcTick;
-        _plcTimer.Start();
 
         // MES 重試計時器訂閱
         _mesRetryTimer.Tick += OnMesRetryTick;
 
-        // ★ 程式啟動後非同步連線 MES（不阻塞 UI）
+        // 閒置逾時：視同自動登出，要求重新完整登入（不是輸入同一使用者密碼的快速解鎖）
+        _idleTimer.Interval = TimeSpan.FromMinutes(_machine.Config.IdleLockTimeoutMinutes);
+        _idleTimer.Tick += (_, _) =>
+        {
+            _idleTimer.Stop();
+            LockAndRequireLogin("閒置逾時，自動登出");
+        };
+        ResetIdleTimer();
+
+        // 計時器（時鐘/PLC輪詢）跟MES連線都不在建構式裡馬上啟動：開機第一次登入前，LoginWindow用的
+        // 是跟MainWindow同一個UI執行緒（ShowDialog是nested message loop），這些背景工作若提早啟動，
+        // 會在使用者於登入視窗輸入帳密的同時持續佔用UI執行緒，造成輸入卡頓。改成登入成功後才啟動。
+        if (user != null)
+            StartBackgroundWork();
+    }
+
+    private bool _backgroundWorkStarted;
+
+    /// <summary>啟動時鐘/PLC輪詢計時器與MES連線，僅在第一次登入成功時執行一次（登出後重新登入不重複啟動）。</summary>
+    private void StartBackgroundWork()
+    {
+        if (_backgroundWorkStarted) return;
+        _backgroundWorkStarted = true;
+
+        _timer.Start();
+        _plcTimer.Start();
+
+        // ★ 登入成功後非同步連線 MES（不阻塞 UI）
         _ = InitMesAsync();
     }
 
@@ -464,6 +709,8 @@ public sealed class MainViewModel : ObservableObject
                 _cts?.Cancel();
                 IsInitialized = false;
                 StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
+                _machine.SetRedAlarm(true);
+                IsAlarmActive = true;
 
                 // ── MES 上報 Alarm（光閘觸發事件）──
                 _ = _mesClient.ReportAlarmAsync()
@@ -533,6 +780,8 @@ public sealed class MainViewModel : ObservableObject
 
         StatusMessage = "正在初始化設備（設定檔 / 伺服軸 / PLC），請稍候...";
         _cts = new CancellationTokenSource();
+        _machine.SetRedAlarm(false);
+        IsAlarmActive = false;
 
         // Progress 回報會自動回到 UI 執行緒
         var progress = new Progress<string>(msg => StatusMessage = msg);
@@ -580,6 +829,8 @@ public sealed class MainViewModel : ObservableObject
     {
         IsRunning = true;
         _cts = new CancellationTokenSource();
+        _machine.SetRedAlarm(false);
+        IsAlarmActive = false;
 
         ResetAllSlots();
         Barcode = "";
@@ -659,6 +910,10 @@ public sealed class MainViewModel : ObservableObject
                 {
                     collection[report.SlotIndex].Value       = report.Value;
                     collection[report.SlotIndex].IsNg        = !(LowerLimit <= report.Value && report.Value <= UpperLimit);
+                    collection[report.SlotIndex].MeanIntensity       = report.MeanIntensity;
+                    collection[report.SlotIndex].DistanceToRoiCenter = report.DistanceToRoiCenter;
+                    collection[report.SlotIndex].DefectBoxes =
+                        report.DefectBoundingBoxes.Select(r => new Rect(r.X, r.Y, r.Width, r.Height)).ToList();
                     collection[report.SlotIndex].ImageSource = report.Image;
                 }
 
@@ -705,6 +960,8 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"✘ 量測發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnStart", $"流程例外：{ex.Message}", ex);
+            _machine.SetRedAlarm(true);
+            IsAlarmActive = true;
             // ── MES 上報 Alarm（非阻塞）──
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
@@ -723,8 +980,13 @@ public sealed class MainViewModel : ObservableObject
 
     private async void OnRunInspection()
     {
+        // 注意：這個方法除了RUN按鈕，也會被 OnPlcTick 的 X1/X2 感應器持續觸發邏輯自動呼叫，
+        // 所以記錄成中性的「開始量測」，不寫成「使用者按下RUN」，避免錯誤宣稱是手動操作。
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "開始量測 (RUN)");
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
+        _machine.SetRedAlarm(false);
+        IsAlarmActive = false;
         _runStartTime = DateTime.Now;
 
         // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
@@ -861,6 +1123,10 @@ public sealed class MainViewModel : ObservableObject
                     {
                         collection[report.SlotIndex].Value = report.Value;
                         collection[report.SlotIndex].IsNg  = !(LowerLimit <= report.Value && report.Value <= UpperLimit);
+                        collection[report.SlotIndex].MeanIntensity       = report.MeanIntensity;
+                        collection[report.SlotIndex].DistanceToRoiCenter = report.DistanceToRoiCenter;
+                        collection[report.SlotIndex].DefectBoxes =
+                            report.DefectBoundingBoxes.Select(r => new Rect(r.X, r.Y, r.Width, r.Height)).ToList();
                     }
                 }
 
@@ -908,6 +1174,8 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"✘ 主流程發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnRunInspection", $"主流程例外：{ex.Message}", ex);
+            _machine.SetRedAlarm(true);
+            IsAlarmActive = true;
             // ── MES 上報 Alarm（非阻塞）──
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
@@ -924,6 +1192,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async void OnReadBarcode()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "讀取條碼");
         IsRunning = true;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -1043,6 +1312,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnStop()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "按下 STOP");
         IsRunning = false;
         IsDryRunning = false;
         _cts?.Cancel();
@@ -1054,6 +1324,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async void OnMoveToPickPosition()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "移至取料位");
         IsRunning = true;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -1095,7 +1366,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnPositionSettings()
     {
-        var vm = new PositionSettingsViewModel();
+        var vm = new PositionSettingsViewModel { CurrentUser = CurrentUser };
         vm.LoadFrom(_machine.Config);
 
         var win = new PositionSettingsWindow
@@ -1110,6 +1381,7 @@ public sealed class MainViewModel : ObservableObject
             SlotPositionTable.Save();
             _machine.Config.Save();
             StatusMessage = "✔ 位置設定已儲存";
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用座標設定");
         }
     }
 
@@ -1123,6 +1395,7 @@ public sealed class MainViewModel : ObservableObject
 
     private void OnOpenResultFolder()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "開啟結果資料夾");
         string folder = Slot_Inspection.Services.InspectionResultWriter.ResultsRootDirectory;
         if (!System.IO.Directory.Exists(folder))
             System.IO.Directory.CreateDirectory(folder);
@@ -1158,6 +1431,7 @@ public sealed class MainViewModel : ObservableObject
         {
             vm.ApplyTo(_machine.Config);
             StatusMessage = $"✔ 光源設定已儲存（左={vm.LightIntensityLeft}，右={vm.LightIntensityRight}）";
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用光源設定");
         }
     }
 
@@ -1179,6 +1453,7 @@ public sealed class MainViewModel : ObservableObject
             vm.ApplyTo(_machine.Config);
             _machine.Config.Save();
             StatusMessage = "✔ 裁切範圍設定已儲存";
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用裁切設定");
         }
     }
 
@@ -1187,6 +1462,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private async void OnInitDevices()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "初始化設備");
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
         var progress = new Progress<string>(msg => StatusMessage = msg);
@@ -1239,8 +1515,11 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private async void OnHome()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行原點賦歸");
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
+        _machine.SetRedAlarm(false);
+        IsAlarmActive = false;
         var progress = new Progress<string>(msg => StatusMessage = msg);
 
         try
@@ -1328,6 +1607,8 @@ public sealed class MainViewModel : ObservableObject
     private void OnToggleLightGateBypass()
     {
         IsLightGateBypassActive = !IsLightGateBypassActive;
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
+            $"暫停光閘切換為{(IsLightGateBypassActive ? "啟用" : "停用")}");
 
         if (!IsLightGateBypassActive)
         {
@@ -1344,6 +1625,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async void OnSlcReset()
     {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行 SLC Reset");
         StatusMessage = "⏳ SLC Reset 執行中...";
         try
         {
@@ -1396,6 +1678,93 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = $"WebAPI 設定視窗開啟失敗：{ex.Message}";
         }
+    }
+
+    /// <summary>修改自己的密碼（任何角色都可以）。</summary>
+    private void OnChangePassword()
+    {
+        var win = new Views.ChangePasswordWindow(CurrentUser.Username)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        if (win.ShowDialog() == true)
+        {
+            StatusMessage = "✔ 密碼已更新";
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "修改密碼");
+        }
+    }
+
+    /// <summary>開啟帳號管理視窗（僅Admin可執行，由CanExecute保證）。</summary>
+    private void OnOpenUserManagement()
+    {
+        var win = new Views.UserManagementWindow(CurrentUser, this)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        win.ShowDialog();
+    }
+
+    /// <summary>開啟操作紀錄(Audit Log)檢視視窗（僅Admin可執行，由CanExecute保證）。</summary>
+    private void OnOpenAuditLog()
+    {
+        var win = new Views.AuditLogViewerWindow
+        {
+            Owner = Application.Current.MainWindow
+        };
+        win.ShowDialog();
+    }
+
+    /// <summary>開啟角色權限設定視窗（僅Admin可執行，由CanExecute保證）。</summary>
+    private void OnOpenRolePermission()
+    {
+        var win = new Views.RolePermissionWindow(CurrentUser, this)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        win.ShowDialog();
+    }
+
+    /// <summary>
+    /// 登出：要求重新輸入帳號密碼才能繼續操作，不會結束程式、不影響機台連線/運行狀態。
+    /// 實際邏輯與閒置逾時自動登出共用 <see cref="LockAndRequireLogin"/>，只是觸發原因不同。
+    /// </summary>
+    private void OnLogout() => LockAndRequireLogin("登出");
+
+    /// <summary>
+    /// 鎖定畫面並彈出 LoginWindow 要求重新完整登入（不是輸入同一使用者密碼的快速解鎖）。
+    /// 給「使用者手動登出」跟「閒置逾時自動登出」共用，避免兩條路徑各自維護一份登出邏輯。
+    /// </summary>
+    private void LockAndRequireLogin(string auditReason)
+    {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, auditReason);
+        IsLocked = true;
+        ShowLoginWindow();
+    }
+
+    /// <summary>
+    /// 彈出 LoginWindow；取消或登入失敗都會停在鎖定畫面，不會裸機無人值守。
+    /// 拆成獨立方法是因為：使用者若直接把 LoginWindow 關掉（按X或取消），這個視窗就消失了，
+    /// 鎖定畫面上必須要有辦法再叫出一次，否則就會卡在「鎖定中卻沒有任何輸入介面」的死局
+    /// ——這個方法同時也是鎖定畫面「重新登入」按鈕（RetryLoginCommand）呼叫的對象。
+    /// </summary>
+    private void ShowLoginWindow()
+    {
+        var login = new Views.LoginWindow { Owner = Application.Current.MainWindow };
+        if (login.ShowDialog() == true && login.AuthenticatedUser != null)
+            CompleteLogin(login.AuthenticatedUser);
+    }
+
+    /// <summary>
+    /// 登入成功後呼叫：設定目前使用者並解除鎖定。開機首次登入（由 App.xaml.cs 呼叫）、
+    /// 登出/閒置逾時後重新登入（LockAndRequireLogin）共用同一套邏輯。
+    /// </summary>
+    public void CompleteLogin(UserAccount user)
+    {
+        CurrentUser = user;
+        IsLocked = false;
+        ResetIdleTimer();
+        StatusMessage = $"✔ 已登入：{user.Username}（{user.Role}）";
+        StartBackgroundWork();
     }
 
     /// <summary>

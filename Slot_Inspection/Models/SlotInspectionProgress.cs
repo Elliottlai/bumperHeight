@@ -13,6 +13,9 @@ public sealed class SlotInspectionProgress
     public int SlotIndex { get; init; }
     public double Value { get; init; }
     public bool IsNg { get; init; }
+    public double MeanIntensity { get; init; }
+    public double DistanceToRoiCenter { get; init; }
+    public IReadOnlyList<System.Drawing.Rectangle> DefectBoundingBoxes { get; init; } = [];
     public string StatusText { get; init; } = "";
 
     /// <summary>Captured image for UI display (nullable)</summary>

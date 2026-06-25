@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Slot_Inspection"
         xmlns:vm="clr-namespace:Slot_Inspection.ViewModels"
+        xmlns:helper="clr-namespace:Slot_Inspection.Helper"
         mc:Ignorable="d"
         Title="Slot Inspection"
         Width="1366"
@@ -12,9 +13,12 @@
         WindowStartupLocation="CenterScreen"
         Background="#D9D9D9"
         UseLayoutRounding="True"
-        SnapsToDevicePixels="True">
+        SnapsToDevicePixels="True"
+        PreviewMouseDown="Window_PreviewMouseDown"
+        PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
+        <helper:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
         <Style x:Key="SlotNameCellStyle" TargetType="Border">
             <Setter Property="Background" Value="#00B050"/>
             <Setter Property="BorderBrush" Value="#333"/>
@@ -77,7 +81,30 @@
                                 RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"/>
                         </Border.InputBindings>
                         <Grid>
-                            <Image Source="{Binding ImageSource}" Stretch="Uniform"/>
+                            <!-- 圖片+缺陷外框一起包進與原圖同尺寸的Grid，再用Viewbox整體等比例縮小成縮圖，框線位置才會跟圖片內容對齊 -->
+                            <Viewbox Stretch="Uniform">
+                                <Grid Width="{Binding ImageSource.PixelWidth}" Height="{Binding ImageSource.PixelHeight}">
+                                    <Image Source="{Binding ImageSource}" Stretch="Fill"/>
+                                    <ItemsControl ItemsSource="{Binding DefectBoxes}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><Canvas/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemContainerStyle>
+                                            <Style TargetType="ContentPresenter">
+                                                <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                                <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                            </Style>
+                                        </ItemsControl.ItemContainerStyle>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <!-- StrokeThickness=25 是原圖座標系下的粗細，縮圖會把整張圖縮小數十倍，線要先天加粗才看得到 -->
+                                                <Rectangle Width="{Binding Width}" Height="{Binding Height}"
+                                                           Stroke="Red" StrokeThickness="25" Fill="Transparent"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Grid>
+                            </Viewbox>
                             <TextBlock x:Name="ImgPlaceholder" Text="IMG" Foreground="#88FFFFFF" FontSize="11"
                                        HorizontalAlignment="Center" VerticalAlignment="Center"
                                        Visibility="Collapsed"/>
@@ -88,9 +115,42 @@
                         </Grid>
                     </Border>
 
-                    <!-- Value -->
+                    <!-- Value 三等分：Value / MeanIntensity / DistanceToRoiCenter，滑鼠移上去顯示說明 -->
                     <Border Grid.Row="2" Background="White">
-                        <TextBlock Text="{Binding Value, StringFormat=F2}" FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" BorderBrush="#DDD" BorderThickness="0,0,1,0">
+                                <TextBlock Text="{Binding Value, StringFormat=F2}" FontSize="9"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock.ToolTip>
+                                        <ToolTip Content="Value：偵測面積 (mm²)，用於判斷 NG 上下限"/>
+                                    </TextBlock.ToolTip>
+                                </TextBlock>
+                            </Border>
+
+                            <Border Grid.Column="1" BorderBrush="#DDD" BorderThickness="0,0,1,0">
+                                <TextBlock Text="{Binding MeanIntensity, StringFormat=F0}" FontSize="9"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock.ToolTip>
+                                        <ToolTip Content="MeanIntensity：偵測區域平均灰階強度 (0~255)"/>
+                                    </TextBlock.ToolTip>
+                                </TextBlock>
+                            </Border>
+
+                            <Border Grid.Column="2">
+                                <TextBlock Text="{Binding DistanceToRoiCenter, StringFormat=F1}" FontSize="9"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock.ToolTip>
+                                        <ToolTip Content="DistanceToRoiCenter：物件中心到 ROI 中心的偏移距離 (px)"/>
+                                    </TextBlock.ToolTip>
+                                </TextBlock>
+                            </Border>
+                        </Grid>
                     </Border>
                 </Grid>
             </Border>
@@ -135,15 +195,74 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Border Grid.Row="0" Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" Margin="12,12,12,8" Padding="18,10">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Left" Text="聯策科技" FontSize="34" FontStyle="Italic" FontFamily="Times New Roman" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                    <TextBlock DockPanel.Dock="Right" Text="Slot Inspection" Foreground="#2E75B6" FontSize="36" FontWeight="Bold" VerticalAlignment="Center"/>
+            <Border Grid.Row="0" Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" Margin="12,12,12,8" Padding="18,10"
+                    IsEnabled="{Binding IsUnlocked}">
+                <DockPanel LastChildFill="False">
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="聯策科技" FontSize="34" FontStyle="Italic" FontFamily="Times New Roman" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock Text="Slot Inspection" Foreground="#2E75B6" FontSize="36" FontWeight="Bold" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <!-- 機台運行狀態指示燈：未連線(灰)/待命中(綠)/運行中(藍)/暫停中-光閘(黃)/異常(紅) -->
+                    <!-- 不設定固定Width，框線會依RunStateText實際文字長度自動縮放 -->
+                    <Border DockPanel.Dock="Right" HorizontalAlignment="Right" Background="#FFFFFF" BorderBrush="#999" BorderThickness="1"
+                            CornerRadius="6" Padding="16,6">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Ellipse Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,10,0">
+                                <Ellipse.Style>
+                                    <Style TargetType="Ellipse">
+                                        <Setter Property="Fill" Value="#999999"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Ready">
+                                                <Setter Property="Fill" Value="#00B050"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Running">
+                                                <Setter Property="Fill" Value="#2E86C1"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Paused">
+                                                <Setter Property="Fill" Value="#FFC000"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Alarm">
+                                                <Setter Property="Fill" Value="#E60000"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Ellipse.Style>
+                            </Ellipse>
+                            <TextBlock Text="{Binding RunStateText}" FontSize="26" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 模擬模式警示banner：開啟時顯著標示，避免操作者忘記目前顯示的是假資料而誤判為實際量測結果 -->
+                    <Border DockPanel.Dock="Right" HorizontalAlignment="Right" Background="#E67E22" BorderBrush="#A04000"
+                            BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,12,0"
+                            Visibility="{Binding IsSimulationMode, Converter={StaticResource BoolToVisConverter}}">
+                        <TextBlock Text="🧪 模擬模式（非實際量測結果）" Foreground="White" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
+                    </Border>
+
+                    <!-- 帳號相關按鈕：緊靠在狀態燈左側，不影響狀態燈本身的位置 -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="{Binding CurrentUserDisplay}" VerticalAlignment="Center" FontSize="14" Margin="0,0,12,0"/>
+                        <Button Content="🔑 修改密碼" Command="{Binding ChangePasswordCommand}"
+                                FontSize="13" Padding="10,5" Margin="0,0,6,0"/>
+                        <Button Content="👤 帳號管理" Command="{Binding OpenUserManagementCommand}"
+                                FontSize="13" Padding="10,5" Margin="0,0,6,0"
+                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"/>
+                        <Button Content="📋 操作紀錄" Command="{Binding OpenAuditLogCommand}"
+                                FontSize="13" Padding="10,5" Margin="0,0,6,0"
+                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"/>
+                        <Button Content="🔐 角色權限設定" Command="{Binding OpenRolePermissionCommand}"
+                                FontSize="13" Padding="10,5" Margin="0,0,6,0"
+                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"/>
+                        <Button Content="🚪 登出" Command="{Binding LogoutCommand}"
+                                FontSize="13" Padding="10,5"/>
+                    </StackPanel>
                 </DockPanel>
             </Border>
 
             <!-- Main content -->
-            <Border Grid.Row="1" Background="#F8F8F8" BorderBrush="#444" BorderThickness="1" Margin="12,0,12,0">
+            <Border Grid.Row="1" Background="#F8F8F8" BorderBrush="#444" BorderThickness="1" Margin="12,0,12,0"
+                    IsEnabled="{Binding IsUnlocked}">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="44"/>
@@ -432,9 +551,8 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="12" Margin="12,4,12,4">
+            <UniformGrid Grid.Row="2" Columns="11" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
 
-                <Button Content="Main" Background="#C6E0B4" FontSize="11" Padding="4,4"/>
                 <Button Content="⚙ Setting"
                         Command="{Binding LightSettingsCommand}"
                         FontSize="11" Padding="4,4"
@@ -455,14 +573,16 @@
                         ToolTip="送出 SLC Reset 訊號（Y0 pulse），完成後彈出提示"/>
                 <CheckBox Content="模擬模式"
                           IsChecked="{Binding IsSimulationMode}"
+                          IsEnabled="{Binding CanToggleSimulationMode}"
                           VerticalContentAlignment="Center"
                           HorizontalAlignment="Center"
                           VerticalAlignment="Center"
                           Visibility="Visible"
                           FontSize="11"
-                          ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)"/>
+                          ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
                 <CheckBox Content="⏱ ZL/ZR 安定延遲"
                           IsChecked="{Binding EnableAxisSettleDelay}"
+                          IsEnabled="{Binding CanToggleAxisSettleDelay}"
                           VerticalContentAlignment="Center"
                           HorizontalAlignment="Center"
                           VerticalAlignment="Center"
@@ -539,6 +659,27 @@
                     </StackPanel>
                 </Grid>
             </Border>
+
+            <!-- 鎖定遮罩：蓋住整個視窗，畫面內容仍在背景看得到。
+                 閒置逾時、登出、開機尚未登入都一律要求重新完整登入（LoginWindow 會另外彈出），
+                 這裡只負責擋互動＋顯示狀態說明，不提供密碼輸入框，避免跟LoginWindow疊出兩份輸入介面。
+                 「重新登入」按鈕是因為使用者若直接把跳出的LoginWindow關掉/取消，該視窗就消失了，
+                 鎖定畫面必須留一個入口能再叫出一次，否則會卡在「鎖定中卻沒有任何可操作介面」。 -->
+            <Grid Grid.RowSpan="4" Background="#CC000000"
+                  Visibility="{Binding IsLocked, Converter={StaticResource BoolToVisConverter}}">
+                <Border Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" CornerRadius="8"
+                        Width="320" Height="150" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel Margin="20" VerticalAlignment="Center">
+                        <TextBlock Text="🔒 畫面已鎖定" FontSize="20" FontWeight="Bold"
+                                   HorizontalAlignment="Center" Margin="0,0,0,6"/>
+                        <TextBlock Text="請於彈出的登入視窗重新輸入帳號密碼" FontSize="13"
+                                   HorizontalAlignment="Center" Foreground="#555" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                        <Button Content="重新登入" Height="32" Background="#2E86C1" Foreground="White"
+                                FontWeight="Bold" Command="{Binding RetryLoginCommand}"
+                                ToolTip="如果登入視窗被關掉或取消了，按這裡再叫出一次"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Viewbox>
 </Window>

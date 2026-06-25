@@ -13,8 +13,8 @@ using System.Windows.Media.Imaging;
 namespace Slot_Inspection.Services;
 
 /// <summary>
-/// ¾ô±µ BumperFlat.ImageProcessing.dll »P Slot_Inspection¡C
-/// ¬yµ{¡GÅª¨ú¤w¦sÀÉ¼v¹³ ¡÷ ©I¥s DLL ¤ÀªR ¡÷ µe½ü¹ø½u/·å²«Å|¥[ ¡÷ ¦^¶Ç BitmapSource¡C
+/// æ©‹æ¥ BumperFlat.ImageProcessing.dll èˆ‡ Slot_Inspectionã€‚
+/// æµç¨‹ï¼šè®€å–å·²å­˜æª”å½±åƒ â†’ å‘¼å« DLL åˆ†æ â†’ ç•«è¼ªå»“ç·š/ç‘•ç–µç–ŠåŠ  â†’ å›å‚³ BitmapSourceã€‚
 /// </summary>
 public sealed class BumperAlgService
 {
@@ -29,11 +29,11 @@ public sealed class BumperAlgService
     }
 
     /// <summary>
-    /// ¹ï¤w¦sÀÉªº¼v¹³°õ¦æºtºâªk¤ÀªR¡A¨Ã¦^¶ÇÅ|¥[µ²ªGªº BitmapSource¡C
+    /// å°å·²å­˜æª”çš„å½±åƒåŸ·è¡Œæ¼”ç®—æ³•åˆ†æï¼Œä¸¦å›å‚³ç–ŠåŠ çµæœçš„ BitmapSourceã€‚
     /// </summary>
-    /// <param name="imagePath">¤w¦sÀÉªº¼v¹³¸ô®|¡].tif¡^</param>
-    /// <param name="jsonKey">Config ¸ê®Æ§¨¤Uªº JSON ÀÉ¦W¡]¤£§t .json¡^¡A¨Ò¦p "Parameter"</param>
-    /// <param name="slotName">¥Î©ó Log ªº Slot ¦WºÙ</param>
+    /// <param name="imagePath">å·²å­˜æª”çš„å½±åƒè·¯å¾‘ï¼ˆ.tifï¼‰</param>
+    /// <param name="jsonKey">Config è³‡æ–™å¤¾ä¸‹çš„ JSON æª”åï¼ˆä¸å« .jsonï¼‰ï¼Œä¾‹å¦‚ "Parameter"</param>
+    /// <param name="slotName">ç”¨æ–¼ Log çš„ Slot åç¨±</param>
     public BumperAlgResult Analyze(string imagePath, string jsonKey, string slotName)
     {
         try
@@ -44,18 +44,18 @@ public sealed class BumperAlgService
 
             if (!File.Exists(jsonPath))
             {
-                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? JSON ¤£¦s¦b");
-                return BumperAlgResult.Fail($"JSON ¤£¦s¦b: {jsonKey}.json");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? JSON ä¸å­˜åœ¨");
+                return BumperAlgResult.Fail($"JSON ä¸å­˜åœ¨: {jsonKey}.json");
             }
 
             if (!File.Exists(imagePath))
             {
-                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ¼v¹³¤£¦s¦b");
-                return BumperAlgResult.Fail($"¼v¹³¤£¦s¦b: {imagePath}");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? å½±åƒä¸å­˜åœ¨");
+                return BumperAlgResult.Fail($"å½±åƒä¸å­˜åœ¨: {imagePath}");
             }
 
             var processor = new ImageProcessor();
-            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ©I¥s ProcessImage...");
+            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: å‘¼å« ProcessImage...");
             ProcessingResult result = processor.ProcessImage(imagePath, jsonPath, false);
 
             System.Diagnostics.Debug.WriteLine(
@@ -63,24 +63,24 @@ public sealed class BumperAlgService
 
             if (!result.Success)
             {
-                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ProcessImage ¥¢±Ñ");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ProcessImage å¤±æ•—");
                 return BumperAlgResult.Fail(result.ErrorMessage ?? "ProcessImage failed");
             }
 
             using Mat baseMat = CvInvoke.Imread(imagePath, Emgu.CV.CvEnum.ImreadModes.AnyColor);
             if (baseMat == null || baseMat.IsEmpty)
             {
-                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? Imread ¥¢±Ñ");
-                return BumperAlgResult.Fail("µLªkÅª¨ú­ì¹Ï");
+                System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? Imread å¤±æ•—");
+                return BumperAlgResult.Fail("ç„¡æ³•è®€å–åŸåœ–");
             }
 
-            // ¢w¢w ¦b­ì¹Ï¤Wµeºñ¦â½ü¹ø½u ¢w¢w
+            // â”€â”€ åœ¨åŸåœ–ä¸Šç•«ç¶ è‰²è¼ªå»“ç·š â”€â”€
             using Mat overlay = baseMat.Clone();
             var mainData = result.AdditionalData as Dictionary<string, object>;
             int drawn = DrawContourFromData(overlay, mainData);
 
             System.Diagnostics.Debug.WriteLine(
-                $"[BumperAlg] {slotName}: ? ¦¨¥\ size={baseMat.Width}x{baseMat.Height}, " +
+                $"[BumperAlg] {slotName}: ? æˆåŠŸ size={baseMat.Width}x{baseMat.Height}, " +
                 $"additionalKeys={mainData?.Count ?? 0}, contourDrawn={drawn}");
 
             bool isNg = DetermineNg(result);
@@ -89,28 +89,52 @@ public sealed class BumperAlgService
             {
                 try
                 {
-                    // ­ì©l­È¬°¹³¯À­±¿n¡A´«ºâ¬° mm?¡]¹³¯À¤Ø¤o 0.0069 mm/px¡^
+                    // åŸå§‹å€¼ç‚ºåƒç´ é¢ç©ï¼Œæ›ç®—ç‚º mm?ï¼ˆåƒç´ å°ºå¯¸ 0.0069 mm/pxï¼‰
                     double pixelArea = Convert.ToDouble(areaVal);
                     detectedArea = pixelArea * 0.0069 * 0.0069;
-                    // ¦^¼g´«ºâ«áªº­È¡AÅı DLL WriteResultToCsv ¼g¥X mm? ¦Ó«D¹³¯À¼Æ
+                    // å›å¯«æ›ç®—å¾Œçš„å€¼ï¼Œè®“ DLL WriteResultToCsv å¯«å‡º mm? è€Œéåƒç´ æ•¸
                     mainData["DetectedArea"] = detectedArea;
                 }
                 catch { }
             }
+
+            double meanIntensity = 0.0;
+            if (mainData != null && mainData.TryGetValue("MeanIntensity", out var meanVal))
+            {
+                try { meanIntensity = Convert.ToDouble(meanVal); }
+                catch { }
+            }
+
+            double distanceToRoiCenter = 0.0;
+            if (mainData != null && mainData.TryGetValue("DistanceToRoiCenter", out var distVal))
+            {
+                try { distanceToRoiCenter = Convert.ToDouble(distVal); }
+                catch { }
+            }
+
+            var defectBoxes = new List<System.Drawing.Rectangle>();
+            if (mainData != null && mainData.TryGetValue("DefectBoundingBoxes", out var boxesVal) && boxesVal is IList boxList)
+            {
+                foreach (var item in boxList)
+                    if (TryConvertRect(item, out var rect))
+                        defectBoxes.Add(rect);
+            }
+
             var bitmapSource = MatToBitmapSource(overlay);
             bitmapSource.Freeze();
-            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource, detectedArea, result);
+            return new BumperAlgResult(true, isNg, isNg ? "NG" : "OK", bitmapSource, detectedArea, result,
+                meanIntensity, distanceToRoiCenter, defectBoxes);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ¨Ò¥~: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? ä¾‹å¤–: {ex.Message}");
             return BumperAlgResult.Fail(ex.Message);
         }
     }
 
-    // ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     //  Private helpers
-    // ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static Mat? LoadMatFromResult(ProcessingResult result, string originalPath)
     {
@@ -164,11 +188,37 @@ public sealed class BumperAlgService
         return false;
     }
 
+    private static bool TryConvertRect(object? source, out System.Drawing.Rectangle rect)
+    {
+        if (source is System.Drawing.Rectangle r)
+        {
+            rect = r;
+            return true;
+        }
+
+        if (source is int[] ia && ia.Length >= 4)
+        {
+            rect = new System.Drawing.Rectangle(ia[0], ia[1], ia[2], ia[3]);
+            return true;
+        }
+
+        if (source is double[] da2 && da2.Length >= 4)
+        {
+            rect = new System.Drawing.Rectangle(
+                (int)Math.Round(da2[0]), (int)Math.Round(da2[1]),
+                (int)Math.Round(da2[2]), (int)Math.Round(da2[3]));
+            return true;
+        }
+
+        rect = default;
+        return false;
+    }
+
     private static int DrawContourFromData(Mat target, Dictionary<string, object>? data)
     {
         if (data == null) return 0;
 
-        // ­İ®e¤£¦P DLL Äæ¦ì¦WºÙ¡]Contour / DefectContour / xxxContour¡^
+        // å…¼å®¹ä¸åŒ DLL æ¬„ä½åç¨±ï¼ˆContour / DefectContour / xxxContourï¼‰
         var contourEntry = data.FirstOrDefault(kv =>
             kv.Value is IList && kv.Key.IndexOf("Contour", StringComparison.OrdinalIgnoreCase) >= 0);
 
@@ -196,7 +246,7 @@ public sealed class BumperAlgService
     }
 
     /// <summary>
-    /// ¦b¼v¹³¤Wµeºñ¦â½ü¹ø½u + ¶À¦â·å²«¸ê°T¤å¦r®Ø¡C
+    /// åœ¨å½±åƒä¸Šç•«ç¶ è‰²è¼ªå»“ç·š + é»ƒè‰²ç‘•ç–µè³‡è¨Šæ–‡å­—æ¡†ã€‚
     /// </summary>
     private static void DrawOverlay(
         Mat target,
@@ -207,14 +257,14 @@ public sealed class BumperAlgService
         var mainData = mainResult.AdditionalData as Dictionary<string, object>;
         var defectData = defectResult?.AdditionalData as Dictionary<string, object>;
 
-        // ¥ıµe¥D¬yµ{½ü¹ø¡Aµe¤£¨ì¦A¹Á¸Õ defect µ²ªG½ü¹ø
+        // å…ˆç•«ä¸»æµç¨‹è¼ªå»“ï¼Œç•«ä¸åˆ°å†å˜—è©¦ defect çµæœè¼ªå»“
         int drawn = DrawContourFromData(target, mainData);
         if (drawn == 0)
             drawn = DrawContourFromData(target, defectData);
 
         _logger.Debug($"[BumperAlg] {slotName}: contour points drawn = {drawn}");
 
-        // ¢w¢w µe·å²«¶q´ú¤å¦r®Ø¡]¶À¦â¡^ ¢w¢w
+        // â”€â”€ ç•«ç‘•ç–µé‡æ¸¬æ–‡å­—æ¡†ï¼ˆé»ƒè‰²ï¼‰ â”€â”€
         var resultToShow = defectResult ?? mainResult;
         var lines = new List<string> { slotName };
 
@@ -263,7 +313,7 @@ public sealed class BumperAlgService
     }
 
     /// <summary>
-    /// ±q JSON Åª¨ú defectSettings °Ï¶ô¡]»P TestALG ¬Û¦PÅŞ¿è¡^¡C
+    /// å¾ JSON è®€å– defectSettings å€å¡Šï¼ˆèˆ‡ TestALG ç›¸åŒé‚è¼¯ï¼‰ã€‚
     /// </summary>
     private static DefectDetectionSettings LoadDefectSettingsFromJson(string jsonPath)
     {
@@ -314,7 +364,7 @@ public sealed class BumperAlgService
         }
         catch (Exception ex)
         {
-            _logger.Warn($"Åª¨ú defectSettings ¥¢±Ñ: {ex.Message}");
+            _logger.Warn($"è®€å– defectSettings å¤±æ•—: {ex.Message}");
         }
         return settings;
     }
@@ -322,7 +372,7 @@ public sealed class BumperAlgService
     /// <summary>
     /// Convert EmguCV Mat to WPF BitmapSource.
     /// Uses mat.Step (actual bytes per row including alignment padding) instead of
-    /// Width * Channels ¡X fixes all-white or colour-shifted output.
+    /// Width * Channels â€” fixes all-white or colour-shifted output.
     /// </summary>
     private static BitmapSource MatToBitmapSource(Mat mat)
     {
@@ -339,7 +389,7 @@ public sealed class BumperAlgService
 }
 
 /// <summary>
-/// ºtºâªk¤ÀªR¦^¶Çµ²ªG¡C
+/// æ¼”ç®—æ³•åˆ†æå›å‚³çµæœã€‚
 /// </summary>
 public readonly record struct BumperAlgResult(
     bool Success,
@@ -347,8 +397,14 @@ public readonly record struct BumperAlgResult(
     string Message,
     BitmapSource? Image,
     double DetectedArea = 0.0,
-    ProcessingResult? RawResult = null)
+    ProcessingResult? RawResult = null,
+    double MeanIntensity = 0.0,
+    double DistanceToRoiCenter = 0.0,
+    IReadOnlyList<System.Drawing.Rectangle>? DefectBoundingBoxes = null)
 {
+    public IReadOnlyList<System.Drawing.Rectangle> DefectBoundingBoxes { get; init; } =
+        DefectBoundingBoxes ?? Array.Empty<System.Drawing.Rectangle>();
+
     public static BumperAlgResult Fail(string message)
         => new(false, true, message, null, 0.0, null);
 }

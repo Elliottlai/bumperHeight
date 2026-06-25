@@ -16,29 +16,29 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     private CancellationTokenSource? _pollCts;
     private Task? _pollTask;
 
-    /// <summary>½ü¸ß¶¡¹j (ms)</summary>
+    /// <summary>è¼ªè©¢é–“éš” (ms)</summary>
     public int PollingIntervalMs { get; set; } = 100;
 
-    /// <summary>Modbus ³q°T¤¬¥¸Âê¡A½T«O polling »P«ü¥O¤£·|¦P®É¦s¨ú serial port</summary>
+    /// <summary>Modbus é€šè¨Šäº’æ–¥é–ï¼Œç¢ºä¿ polling èˆ‡æŒ‡ä»¤ä¸æœƒåŒæ™‚å­˜å– serial port</summary>
     private readonly object _modbusLock = new();
 
     public AxisConfig Config { get; }
     public string DisplayName => $"{Config.Name} ({Config.PortName})";
 
     // ============================
-    //  ³s½uª¬ºA
+    //  é€£ç·šç‹€æ…‹
     // ============================
     private bool _isConnected;
     public bool IsConnected { get => _isConnected; private set => SetField(ref _isConnected, value); }
 
     // ============================
-    //  ¹B°Ê¤¤ºX¼Ğ
+    //  é‹å‹•ä¸­æ——æ¨™
     // ============================
     private bool _isMoving;
     public bool IsMoving { get => _isMoving; private set => SetField(ref _isMoving, value); }
 
     // ============================
-    //  ¹B°Ê°Ñ¼Æ
+    //  é‹å‹•åƒæ•¸
     // ============================
     private int _targetSpeed;
     public int TargetSpeed { get => _targetSpeed; set => SetField(ref _targetSpeed, value); }
@@ -59,13 +59,13 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public int InPositionTimeout { get => _inPositionTimeout; set => SetField(ref _inPositionTimeout, value); }
 
     // ============================
-    //  ²¾°Ê¥Ø¼Ğ
+    //  ç§»å‹•ç›®æ¨™
     // ============================
     private double _targetPositionMm;
     public double TargetPositionMm { get => _targetPositionMm; set => SetField(ref _targetPositionMm, value); }
 
     // ============================
-    //  ª¬ºA
+    //  ç‹€æ…‹
     // ============================
     private bool _isServoOn;
     public bool IsServoOn { get => _isServoOn; private set => SetField(ref _isServoOn, value); }
@@ -85,11 +85,11 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     private int _singleTurnPosition;
     public int SingleTurnPosition { get => _singleTurnPosition; private set => SetField(ref _singleTurnPosition, value); }
 
-    private string _statusMessage = "¥¼³s½u";
+    private string _statusMessage = "æœªé€£ç·š";
     public string StatusMessage { get => _statusMessage; private set => SetField(ref _statusMessage, value); }
 
     // ============================
-    //  ·¥­­ / ­ìÂI / ·Ù¨® ª¬ºA
+    //  æ¥µé™ / åŸé» / ç…è»Š ç‹€æ…‹
     // ============================
     private bool _isPositiveLimitActive;
     public bool IsPositiveLimitActive { get => _isPositiveLimitActive; private set => SetField(ref _isPositiveLimitActive, value); }
@@ -101,7 +101,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public bool IsBrakeReleasedState { get => _isBrakeReleased; private set => SetField(ref _isBrakeReleased, value); }
 
     // ============================
-    //  ÅX°Ê¾¹ª¬ºA (P0.046)
+    //  é©…å‹•å™¨ç‹€æ…‹ (P0.046)
     // ============================
     private DriverStatusFlags _driverStatus;
     public DriverStatusFlags DriverStatus { get => _driverStatus; private set => SetField(ref _driverStatus, value); }
@@ -119,7 +119,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public bool IsWarning => DriverStatus.HasFlag(DriverStatusFlags.Warning);
 
     // ============================
-    //  µ´¹ï®y¼Ğª¬ºA (P0.050)
+    //  çµ•å°åº§æ¨™ç‹€æ…‹ (P0.050)
     // ============================
     private AbsoluteStatusFlags _absoluteStatus;
     public AbsoluteStatusFlags AbsoluteStatus { get => _absoluteStatus; private set => SetField(ref _absoluteStatus, value); }
@@ -131,7 +131,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public bool IsAbsoluteCoordinateOk => !AbsoluteStatus.HasFlag(AbsoluteStatusFlags.AbsoluteCoordinate);
 
     // ============================
-    // ºÊµøÅÜ¼Æ¬M®g (P0.009~P0.012)
+    // ç›£è¦–è®Šæ•¸æ˜ å°„ (P0.009~P0.012)
     // ============================
     private int _feedbackPositionPuu;
     public int FeedbackPositionPuu { get => _feedbackPositionPuu; private set => SetField(ref _feedbackPositionPuu, value); }
@@ -152,10 +152,17 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public string AlarmCodeHex => $"0x{AlarmCodeDecimal:X4}";
 
     // ============================
-    //  Y ¶b²¾°Ê«e¦w¥ş«e¸mÀË¬d
-    //  ¦^¶Ç (true, "") ªí¥Ü¤¹³\²¾°Ê¡F(false, reason) ªí¥Ü¸T¤î¨Ãªş¤W­ì¦]
+    //  Y è»¸ç§»å‹•å‰å®‰å…¨å‰ç½®æª¢æŸ¥
+    //  å›å‚³ (true, "") è¡¨ç¤ºå…è¨±ç§»å‹•ï¼›(false, reason) è¡¨ç¤ºç¦æ­¢ä¸¦é™„ä¸ŠåŸå› 
     // ============================
     public Func<(bool Ok, string Reason)>? PreMoveCheck { get; set; }
+
+    // ============================
+    //  ç›®æ¨™ä½ç½®é¡å¤–è­¦å‘Šæª¢æŸ¥ï¼ˆä¾‹å¦‚è·¨è»¸è®€å–Yè»¸ä½ç½®ã€æ¯”å°Slot_Inspectionè¨­å®šçš„ç›¸æ©Ÿé«˜åº¦ï¼‰
+    //  ç”± MainViewModel ä¾éœ€è¦è¨­å®šã€‚å›å‚³ (true, "") è¡¨ç¤ºç„¡é¢¨éšªï¼›(false, reason) è¡¨ç¤ºæœ‰é¢¨éšªï¼Œ
+    //  æœƒè·³å‡ºç¢ºèªè¦–çª—é¡¯ç¤º reasonï¼Œä½¿ç”¨è€…é¸æ“‡æ˜¯å¦ä»è¦ç¹¼çºŒï¼ˆä¸æ˜¯å¼·åˆ¶æ“‹ä¸‹ï¼‰ã€‚
+    // ============================
+    public Func<double, (bool Ok, string Reason)>? ExtraMoveWarning { get; set; }
 
     // ============================
     //  Commands
@@ -175,7 +182,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public ICommand StopCommand { get; }
 
     // ============================
-    //  Jog ¼W¶q²¾°Ê
+    //  Jog å¢é‡ç§»å‹•
     // ============================
     public ICommand JogPositive0003Command { get; }
     public ICommand JogNegative0003Command { get; }
@@ -187,6 +194,30 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     public ICommand JogNegative1Command { get; }
     public ICommand JogPositive10Command { get; }
     public ICommand JogNegative10Command { get; }
+
+    // ============================
+    //  Jog æŒ‰éˆ•æ–‡å­—ï¼šä¾è»¸çµ„æ…‹ï¼ˆConfig.PositiveDirectionLabel/NegativeDirectionLabelï¼‰
+    //  é¡¯ç¤ºå¯¦éš›ç‰©ç†æ–¹å‘æ„ç¾©ï¼ˆä¾‹å¦‚ã€Œ+10 ä¸‹é™ã€ï¼‰ï¼Œé¿å…FAEèª¤åˆ¤æ–¹å‘é€ æˆæ’æ©Ÿã€‚
+    //  æœªè¨­å®šæ–¹å‘èªªæ˜æ™‚ï¼Œç¶­æŒåŸæœ¬çš„ã€Œ+10ã€ã€Œ-10ã€ç´”æ•¸å­¸æ­£è² è™Ÿé¡¯ç¤ºã€‚
+    // ============================
+    private string JogLabel(double incrementMm)
+    {
+        string sign = incrementMm >= 0 ? "+" : "-";
+        string number = Math.Abs(incrementMm).ToString("0.###");
+        string dirWord = incrementMm >= 0 ? Config.PositiveDirectionLabel : Config.NegativeDirectionLabel;
+        return string.IsNullOrEmpty(dirWord) ? $"{sign}{number}" : $"{sign}{number} {dirWord}";
+    }
+
+    public string JogPositive0003Label => JogLabel(0.003);
+    public string JogNegative0003Label => JogLabel(-0.003);
+    public string JogPositive001Label => JogLabel(0.01);
+    public string JogNegative001Label => JogLabel(-0.01);
+    public string JogPositive01Label => JogLabel(0.1);
+    public string JogNegative01Label => JogLabel(-0.1);
+    public string JogPositive1Label => JogLabel(1.0);
+    public string JogNegative1Label => JogLabel(-1.0);
+    public string JogPositive10Label => JogLabel(10.0);
+    public string JogNegative10Label => JogLabel(-10.0);
 
     public AxisViewModel(AxisConfig config)
     {
@@ -212,7 +243,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         BrakeReleaseCommand = new RelayCommand(DoBrakeRelease, () => IsConnected && !IsMoving);
         BrakeLockCommand = new RelayCommand(DoBrakeLock, () => IsConnected && !IsMoving);
 
-        // Jog ¼W¶q²¾°Ê«ü¥O
+        // Jog å¢é‡ç§»å‹•æŒ‡ä»¤
         JogPositive0003Command = new RelayCommand(() => DoJog(0.003), () => IsConnected && IsServoOn && !IsMoving);
         JogNegative0003Command = new RelayCommand(() => DoJog(-0.003), () => IsConnected && IsServoOn && !IsMoving);
         JogPositive001Command = new RelayCommand(() => DoJog(0.01), () => IsConnected && IsServoOn && !IsMoving);
@@ -227,10 +258,10 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     }
 
     // ============================
-    //  §Y®É½ü¸ß
+    //  å³æ™‚è¼ªè©¢
     // ============================
 
-    /// <summary>±Ò°Ê­I´ºª¬ºA½ü¸ß</summary>
+    /// <summary>å•Ÿå‹•èƒŒæ™¯ç‹€æ…‹è¼ªè©¢</summary>
     private void StartPolling()
     {
         _pollCts = new CancellationTokenSource();
@@ -254,13 +285,13 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
                 catch (OperationCanceledException) { break; }
                 catch
                 {
-                    // ³q°T²§±`®ÉÀRÀq¸õ¹L
+                    // é€šè¨Šç•°å¸¸æ™‚éœé»˜è·³é
                 }
             }
         }, token);
     }
 
-    /// <summary>°±¤î­I´ºª¬ºA½ü¸ß</summary>
+    /// <summary>åœæ­¢èƒŒæ™¯ç‹€æ…‹è¼ªè©¢</summary>
     private void StopPolling()
     {
         _pollCts?.Cancel();
@@ -269,7 +300,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         _pollTask = null;
     }
 
-    /// <summary>±N§Ö·Ó®M¥Î¦Ü ViewModel Äİ©Ê</summary>
+    /// <summary>å°‡å¿«ç…§å¥—ç”¨è‡³ ViewModel å±¬æ€§</summary>
     private void ApplySnapshot(DriverSnapshot snapshot)
     {
         DriverStatus = snapshot.DriverStatus;
@@ -287,24 +318,24 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         IsPositiveLimitActive = (snapshot.DiStatus & AsdaB3RegisterMap.DI7_Bit) == 0;
         IsNegativeLimitActive = (snapshot.DiStatus & AsdaB3RegisterMap.DI8_Bit) == 0;
 
-        // ºÊµøÅÜ¼Æ¬M®g
+        // ç›£è¦–è®Šæ•¸æ˜ å°„
         FeedbackPositionPuu = snapshot.FeedbackPositionPuu;
         AlarmCodeDecimal = snapshot.AlarmCodeDecimal;
         DiStatusIntegrated = snapshot.DiStatusIntegrated;
         DoStatusHardware = snapshot.DoStatusHardware;
 
-        // ¹B°Ê¤¤°»´ú¡G·í¦ì¸m¨ì¹F¥B¹s³t«×®É¦Û°Ê²M°£ IsMoving
+        // é‹å‹•ä¸­åµæ¸¬ï¼šç•¶ä½ç½®åˆ°é”ä¸”é›¶é€Ÿåº¦æ™‚è‡ªå‹•æ¸…é™¤ IsMoving
         if (IsMoving && IsTargetPositionReached && IsZeroSpeed)
         {
             IsMoving = false;
-            StatusMessage = "¨ì¦ì§¹¦¨";
+            StatusMessage = "åˆ°ä½å®Œæˆ";
         }
 
-        // ¹B°Ê¤¤­Yµo¥ÍÄµ³ø¡A¤]¦Û°Ê²M°£ IsMoving
+        // é‹å‹•ä¸­è‹¥ç™¼ç”Ÿè­¦å ±ï¼Œä¹Ÿè‡ªå‹•æ¸…é™¤ IsMoving
         if (IsMoving && IsAlarm)
         {
             IsMoving = false;
-            StatusMessage = $"¹B°Ê¤¤Â_ - Äµ³ø 0x{AlarmCodeDecimal:X4}";
+            StatusMessage = $"é‹å‹•ä¸­æ–· - è­¦å ± 0x{AlarmCodeDecimal:X4}";
         }
 
         if (!IsMoving)
@@ -318,7 +349,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         CommandManager.InvalidateRequerySuggested();
     }
 
-    /// <summary>³qª¾©Ò¦³­l¥Íª¬ºAÄİ©ÊÅÜ§ó</summary>
+    /// <summary>é€šçŸ¥æ‰€æœ‰è¡ç”Ÿç‹€æ…‹å±¬æ€§è®Šæ›´</summary>
     private void NotifyStatusProperties()
     {
         OnPropertyChanged(nameof(IsSrdy));
@@ -353,7 +384,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     }
 
     // ============================
-    //  Command ¹ê§@
+    //  Command å¯¦ä½œ
     // ============================
 
     private void DoConnect()
@@ -381,14 +412,14 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
             _controller.Connect();
 
             IsConnected = true;
-            StatusMessage = $"{Config.PortName} ¤w³s½u";
+            StatusMessage = $"{Config.PortName} å·²é€£ç·š";
 
-            // ³s½u¦¨¥\«á±Ò°Ê§Y®É½ü¸ß
+            // é€£ç·šæˆåŠŸå¾Œå•Ÿå‹•å³æ™‚è¼ªè©¢
             StartPolling();
         }
         catch (Exception ex)
         {
-            StatusMessage = $"³s½u¥¢±Ñ: {ex.Message}";
+            StatusMessage = $"é€£ç·šå¤±æ•—: {ex.Message}";
         }
     }
 
@@ -402,11 +433,11 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
             _modbus = null;
             IsConnected = false;
             IsServoOn = false;
-            StatusMessage = "¤wÂ_½u";
+            StatusMessage = "å·²æ–·ç·š";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Â_½u¥¢±Ñ: {ex.Message}";
+            StatusMessage = $"æ–·ç·šå¤±æ•—: {ex.Message}";
         }
     }
 
@@ -414,19 +445,19 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     {
         _controller!.ClearAlarm();
         _controller!.ServoOn();
-        StatusMessage = "¤w¿EºÏ";
+        StatusMessage = "å·²æ¿€ç£";
     });
 
     private void DoServoOff() => RunSafe(() =>
     {
         _controller!.ServoOff();
-        StatusMessage = "¤w¸ÑºÏ";
+        StatusMessage = "å·²è§£ç£";
     });
 
     private void DoClearAlarm() => RunSafe(() =>
     {
         _controller!.ClearAlarm();
-        StatusMessage = "Äµ³ø¤w²M°£";
+        StatusMessage = "è­¦å ±å·²æ¸…é™¤";
     });
 
     private void DoApplySettings() => RunSafe(() =>
@@ -438,29 +469,30 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         _controller.InPositionTimeout = InPositionTimeout;
         _controller.PuuPerMm = PuuPerMm;
         _controller.ApplySettings();
-        StatusMessage = "°Ñ¼Æ¤w¼g¤J";
+        StatusMessage = "åƒæ•¸å·²å¯«å…¥";
     });
 
     /// <summary>
-    /// Ä²µo²¾°Ê¡]¤£ªı¶ëµ¥«İ¨ì¦ì¡^¡A¥Ñ polling °»´ú TPOS+ZSPD ¦Û°Ê²M°£ IsMoving
+    /// è§¸ç™¼ç§»å‹•ï¼ˆä¸é˜»å¡ç­‰å¾…åˆ°ä½ï¼‰ï¼Œç”± polling åµæ¸¬ TPOS+ZSPD è‡ªå‹•æ¸…é™¤ IsMoving
     /// </summary>
     private void DoMoveToPosition()
     {
         if (!RunPreMoveCheck()) return;
+        if (!ConfirmTargetSafety(TargetPositionMm)) return;
         RunSafe(() =>
         {
             int puu = _controller!.MmToPuu(TargetPositionMm);
             _controller.UpdatePr1TargetPosition(puu);
             _controller.TriggerPr1();
             IsMoving = true;
-            StatusMessage = $"²¾°Ê¤¤ ¡÷ {TargetPositionMm:F2} mm";
+            StatusMessage = $"ç§»å‹•ä¸­ â†’ {TargetPositionMm:F2} mm";
         });
     }
 
     private void DoRebuildAbsOrigin() => RunSafe(() =>
     {
         _controller!.RebuildAbsoluteOrigin();
-        StatusMessage = "Abs origin ¤w­««Ø";
+        StatusMessage = "Abs origin å·²é‡å»º";
     });
 
     private void DoHoming()
@@ -468,23 +500,23 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         if (!RunPreMoveCheck()) return;
         RunSafe(() =>
         {
-            // Ä²µo Homing PR#0¡A¤£ªı¶ëµ¥«İ
+            // è§¸ç™¼ Homing PR#0ï¼Œä¸é˜»å¡ç­‰å¾…
             _modbus!.WriteRegister(AsdaB3RegisterMap.P5_007_PrTrigger, 0);
             IsMoving = true;
-            StatusMessage = "­ìÂI½áÂk¤¤...";
+            StatusMessage = "åŸé»è³¦æ­¸ä¸­...";
         });
     }
 
     private void DoBrakeRelease() => RunSafe(() =>
     {
         _controller!.SetBrake(release: true);
-        StatusMessage = "¹qºÏ·Ù¨®¤wÄÀ©ñ";
+        StatusMessage = "é›»ç£ç…è»Šå·²é‡‹æ”¾";
     });
 
     private void DoBrakeLock() => RunSafe(() =>
     {
         _controller!.SetBrake(release: false);
-        StatusMessage = "¹qºÏ·Ù¨®¤wÂê¦í";
+        StatusMessage = "é›»ç£ç…è»Šå·²é–ä½";
     });
 
     private void DoRefreshStatus()
@@ -500,12 +532,12 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     {
         _controller!.Stop();
         IsMoving = false;
-        StatusMessage = "¤w°±¤î";
+        StatusMessage = "å·²åœæ­¢";
     });
 
     /// <summary>
-    /// ¦w¥ş°õ¦æ«ü¥O¡G¥Î lock ½T«O©M polling ¤¬¥¸¦s¨ú Modbus¡A
-    /// °õ¦æ§¹²¦«á¥ß§YÅª¨ú³Ì·sª¬ºA§ó·s UI¡C
+    /// å®‰å…¨åŸ·è¡ŒæŒ‡ä»¤ï¼šç”¨ lock ç¢ºä¿å’Œ polling äº’æ–¥å­˜å– Modbusï¼Œ
+    /// åŸ·è¡Œå®Œç•¢å¾Œç«‹å³è®€å–æœ€æ–°ç‹€æ…‹æ›´æ–° UIã€‚
     /// </summary>
     private void RunSafe(Action action)
     {
@@ -516,7 +548,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
                 action();
             }
 
-            // «ü¥O§¹¦¨«á¥ß§YÅª¨ú³Ì·sµwÅéª¬ºA
+            // æŒ‡ä»¤å®Œæˆå¾Œç«‹å³è®€å–æœ€æ–°ç¡¬é«”ç‹€æ…‹
             DriverSnapshot snapshot;
             lock (_modbusLock)
             {
@@ -526,7 +558,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception ex)
         {
-            StatusMessage = $"¿ù»~: {ex.Message}";
+            StatusMessage = $"éŒ¯èª¤: {ex.Message}";
             IsMoving = false;
         }
 
@@ -548,7 +580,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     }
 
     // ============================
-    //  DI ¾ã¦Xª¬ºA¦U bit (P0.011 MonitorCode 0x27)
+    //  DI æ•´åˆç‹€æ…‹å„ bit (P0.011 MonitorCode 0x27)
     // ============================
     public bool DI1_ServoOn => (DiStatusIntegrated & 0x0001) != 0;
     public bool DI2_PulseClear => (DiStatusIntegrated & 0x0002) != 0;
@@ -574,25 +606,26 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Jog ¼W¶q²¾°Ê¡G¥uÄ²µo PR¡A¤£ªı¶ëµ¥«İ¨ì¦ì
+    /// Jog å¢é‡ç§»å‹•ï¼šåªè§¸ç™¼ PRï¼Œä¸é˜»å¡ç­‰å¾…åˆ°ä½
     /// </summary>
     private void DoJog(double incrementMm)
     {
         if (!RunPreMoveCheck()) return;
+        double target = CurrentPositionMm + incrementMm;
+        if (!ConfirmTargetSafety(target)) return;
         RunSafe(() =>
         {
-            double target = CurrentPositionMm + incrementMm;
             int puu = _controller!.MmToPuu(target);
             _controller.UpdatePr1TargetPosition(puu);
             _controller.TriggerPr1();
             IsMoving = true;
-            StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm ¡÷ {target:F3} mm";
+            StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm â†’ {target:F3} mm";
         });
     }
 
     /// <summary>
-    /// °õ¦æ PreMoveCheck¡F­Y¨S¦³³]©w«hª½±µ³q¹L¡C
-    /// ¦^¶Ç true ªí¥Ü¥i¥H²¾°Ê¡Afalse ªí¥Ü¸T¤î²¾°Ê¡C
+    /// åŸ·è¡Œ PreMoveCheckï¼›è‹¥æ²’æœ‰è¨­å®šå‰‡ç›´æ¥é€šéã€‚
+    /// å›å‚³ true è¡¨ç¤ºå¯ä»¥ç§»å‹•ï¼Œfalse è¡¨ç¤ºç¦æ­¢ç§»å‹•ã€‚
     /// </summary>
     private bool RunPreMoveCheck()
     {
@@ -600,10 +633,56 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         var (ok, reason) = PreMoveCheck();
         if (!ok)
         {
-            StatusMessage = $"¦w¥şÀË¬d¥¼³q¹L: {reason}";
+            StatusMessage = $"å®‰å…¨æª¢æŸ¥æœªé€šé: {reason}";
         }
         return ok;
     }
 
+    /// <summary>
+    /// ç§»å‹•å‰çš„ã€Œè­¦å‘Šä½†ä»å¯ç¹¼çºŒã€æª¢æŸ¥ï¼š
+    /// 1) ç›®æ¨™ä½ç½®æ˜¯å¦æ¥è¿‘ Config.ReferencePositions è£¡è¨­å®šçš„å·²çŸ¥åƒè€ƒä½ç½®ï¼ˆä¾‹å¦‚å–æ–™é»ï¼‰
+    /// 2) ExtraMoveWarningï¼ˆç”±MainViewModelè¨­å®šï¼Œä¾‹å¦‚è·¨è»¸è®€å–Yè»¸ä½ç½®ã€æ¯”å°Slot_Inspectionçš„ç›¸æ©Ÿé«˜åº¦ï¼‰
+    /// ä»»ä¸€æª¢æŸ¥è§¸ç™¼éƒ½æœƒè·³å‡ºç¢ºèªè¦–çª—ï¼Œä½¿ç”¨è€…å¯é¸æ“‡ç¹¼çºŒæˆ–å–æ¶ˆï¼›ä¸æœƒå¼·åˆ¶æ“‹ä¸‹ç§»å‹•ã€‚
+    /// å›å‚³ true è¡¨ç¤ºå¯ä»¥ç¹¼çºŒç§»å‹•ï¼Œfalse è¡¨ç¤ºä½¿ç”¨è€…é¸æ“‡å–æ¶ˆã€‚
+    /// </summary>
+    private bool ConfirmTargetSafety(double targetMm)
+    {
+        foreach (var refPos in Config.ReferencePositions)
+        {
+            if (Math.Abs(targetMm - refPos.PositionMm) <= refPos.WarnToleranceMm)
+            {
+                var result = System.Windows.MessageBox.Show(
+                    $"ç›®æ¨™ä½ç½® {targetMm:F3} mm æ¥è¿‘åƒè€ƒé»ã€Œ{refPos.Name}ã€" +
+                    $"({refPos.PositionMm:F3} mm Â± {refPos.WarnToleranceMm:F1} mm)ã€‚\n\næ˜¯å¦ç¢ºå®šç¹¼çºŒç§»å‹•ï¼Ÿ",
+                    "æ¥è¿‘åƒè€ƒä½ç½®è­¦å‘Š",
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Warning);
+                if (result != System.Windows.MessageBoxResult.Yes)
+                {
+                    StatusMessage = $"å·²å–æ¶ˆï¼šç›®æ¨™ä½ç½®æ¥è¿‘ã€Œ{refPos.Name}ã€";
+                    return false;
+                }
+            }
+        }
 
+        if (ExtraMoveWarning != null)
+        {
+            var (ok, reason) = ExtraMoveWarning(targetMm);
+            if (!ok)
+            {
+                var result = System.Windows.MessageBox.Show(
+                    $"{reason}\n\næ˜¯å¦ç¢ºå®šç¹¼çºŒç§»å‹•ï¼Ÿ",
+                    "å®‰å…¨è­¦å‘Š",
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Warning);
+                if (result != System.Windows.MessageBoxResult.Yes)
+                {
+                    StatusMessage = $"å·²å–æ¶ˆï¼š{reason}";
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 }

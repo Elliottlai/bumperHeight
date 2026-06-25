@@ -299,6 +299,18 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// 紅燈警示（PLC Y1，八進位位址）：流程因設備/感測器異常中止時 ON，
+    /// 下次嘗試（初始化/原點賦歸/RUN）開始前 OFF。
+    /// 若需更改目標 Y 點，修改 RedAlarmYAddr 常數即可。
+    /// </summary>
+    private const int RedAlarmYAddr = 1; // PLC Y01（八進位位址）
+    public void SetRedAlarm(bool on)
+    {
+        SetPlcYOctal(RedAlarmYAddr, on);
+        _logger.Info($"[Alarm] Y01 紅燈 {(on ? "ON" : "OFF")}");
+    }
+
+    /// <summary>
     /// 將 PLC 八進制位址（面板標示數字）轉為 _xData 十進制索引。
     /// 例：10（X10） → 8、12（X12） → 10、13（X13） → 11
     /// </summary>
@@ -755,24 +767,33 @@ public sealed class MachineController : IDisposable
         };
 
 
-        Axes["AxisY"].SetMaxVel(3000);
-        Axes["AxisZL"].SetMaxVel(2000);
-        Axes["AxisZR"].SetMaxVel(2000);
-
-        // 全程開燈（Slot 迴圈開始前開一次，減少每格重複開關）
-        // 使用 HighBright 光源（與 S00 InitLightHB 初始化的控制器一致）
-        if (_lightHB == null || !_lightHB.IsOpen)
+        // 模擬模式：完全跳過軸/光源硬體初始化，下面 InspectOneSlotAsync 每格自己也會走模擬分支，
+        // 這裡只是避免在沒有實機連線時，提早因為「光源初始化失敗」例外把整個模擬流程中斷掉。
+        if (!SimulationMode)
         {
-            var lightInit = InitLightHB();
-            if (!lightInit.Success)
-                throw new InvalidOperationException($"光源初始化失敗: {lightInit.Message}");
+            Axes["AxisY"].SetMaxVel(3000);
+            Axes["AxisZL"].SetMaxVel(2000);
+            Axes["AxisZR"].SetMaxVel(2000);
+
+            // 全程開燈（Slot 迴圈開始前開一次，減少每格重複開關）
+            // 使用 HighBright 光源（與 S00 InitLightHB 初始化的控制器一致）
+            if (_lightHB == null || !_lightHB.IsOpen)
+            {
+                var lightInit = InitLightHB();
+                if (!lightInit.Success)
+                    throw new InvalidOperationException($"光源初始化失敗: {lightInit.Message}");
+            }
+            bool lightOnL = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "S03", "ON");
+            bool lightOnR = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "S03", "ON");
+            if (!lightOnL || !lightOnR)
+                _logger.Warn($"[S03] 光源開啟失敗  CH{_config.LightChannelLeft}={lightOnL} CH{_config.LightChannelRight}={lightOnR}，請確認光源控制器連線");
+            await Task.Delay(_config.LightStabilizeMs, ct);
+            _logger.Info("[S03] Lights ON (all-slots mode)");
         }
-        bool lightOnL = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "S03", "ON");
-        bool lightOnR = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "S03", "ON");
-        if (!lightOnL || !lightOnR)
-            _logger.Warn($"[S03] 光源開啟失敗  CH{_config.LightChannelLeft}={lightOnL} CH{_config.LightChannelRight}={lightOnR}，請確認光源控制器連線");
-        await Task.Delay(_config.LightStabilizeMs, ct);
-        _logger.Info("[S03] Lights ON (all-slots mode)");
+        else
+        {
+            _logger.Info("[S03] (Sim) 跳過軸速度設定與光源初始化");
+        }
 
         try
         {
@@ -787,13 +808,15 @@ public sealed class MachineController : IDisposable
                     var taskB = InspectOneSlotAsync(barcode, areaB, i, ct);
                     await Task.WhenAll(taskA, taskB);
 
-                    var (valueA, isNgA, imagePathA, imageA, startTimeA) = taskA.Result;
-                    var (valueB, isNgB, imagePathB, imageB, startTimeB) = taskB.Result;
+                    var (valueA, isNgA, imagePathA, imageA, startTimeA, meanIntensityA, distanceA, boxesA) = taskA.Result;
+                    var (valueB, isNgB, imagePathB, imageB, startTimeB, meanIntensityB, distanceB, boxesB) = taskB.Result;
 
                     // 依 X12/X13 判斷 Bumper Position（不透過 DLL）
                     // X12=true → 右側載台 → 右相機=C3 / 左相機=C4
                     // X13=true → 左側載台 → 右相機=C1 / 左相機=C2
-                    bool bpX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
+                    // 模擬模式下 PLC 可能未連線，GetPlcXOctal 會回傳 null→預設false，
+                    // 固定走 C1/C2 標籤即可（模擬資料本來就不代表實際板側）。
+                    bool bpX12 = !SimulationMode && (GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false);
                     string bumperPosRight = bpX12 ? "C3" : "C1";
                     string bumperPosLeft  = bpX12 ? "C4" : "C2";
 
@@ -815,6 +838,9 @@ public sealed class MachineController : IDisposable
                         SlotIndex = i,
                         Value = valueA,
                         IsNg = isNgA,
+                        MeanIntensity = meanIntensityA,
+                        DistanceToRoiCenter = distanceA,
+                        DefectBoundingBoxes = boxesA,
                         StatusText = $"[{areaA}] Slot {i + 1}/{count} - {(isNgA ? "NG" : "OK")}",
                         Image = imageA
                     });
@@ -825,6 +851,9 @@ public sealed class MachineController : IDisposable
                         SlotIndex = i,
                         Value = valueB,
                         IsNg = isNgB,
+                        MeanIntensity = meanIntensityB,
+                        DistanceToRoiCenter = distanceB,
+                        DefectBoundingBoxes = boxesB,
                         StatusText = $"[{areaB}] Slot {i + 1}/{count} - {(isNgB ? "NG" : "OK")}",
                         Image = imageB
                     });
@@ -836,10 +865,13 @@ public sealed class MachineController : IDisposable
         }
         finally
         {
-            // 全程關燈（正常結束、取消、例外都必須關燈）
-            LightSetWithRetry(_config.LightChannelLeft,  0, "S03", "OFF");
-            LightSetWithRetry(_config.LightChannelRight, 0, "S03", "OFF");
-            _logger.Info("[S03] Lights OFF");
+            // 全程關燈（正常結束、取消、例外都必須關燈）；模擬模式根本沒開燈，不需要關
+            if (!SimulationMode)
+            {
+                LightSetWithRetry(_config.LightChannelLeft,  0, "S03", "OFF");
+                LightSetWithRetry(_config.LightChannelRight, 0, "S03", "OFF");
+                _logger.Info("[S03] Lights OFF");
+            }
         }
 
         _logger.Info($"===== S03 Inspection Done | Barcode: {barcode} =====");
@@ -850,7 +882,8 @@ public sealed class MachineController : IDisposable
     ///   Move axis -> Light on -> Capture -> Save -> Light off -> Measure -> NG judge
     /// Simulation: bypass all hardware, generate fake data + test image.
     /// </summary>
-    private async Task<(double value, bool isNg, string imagePath, System.Windows.Media.ImageSource? image, DateTime startTime)>
+    private async Task<(double value, bool isNg, string imagePath, System.Windows.Media.ImageSource? image, DateTime startTime,
+        double meanIntensity, double distanceToRoiCenter, IReadOnlyList<System.Drawing.Rectangle> defectBoxes)>
         InspectOneSlotAsync(
             string barcode,
             SlotInspectionProgress.TargetCollection target,
@@ -887,7 +920,8 @@ public sealed class MachineController : IDisposable
                     double simValueOk = algResult.DetectedArea > 0 ? algResult.DetectedArea : 0.0;
                     bool simAlgNg = simValueOk < _config.ValueLimitLow || simValueOk > _config.ValueLimitHigh;
                     _logger.Debug($"[S03-Sim] {slotLabel} ALG OK, json={jsonKey}, value={simValueOk:F4}, isNg={simAlgNg}");
-                    return (simValueOk, simAlgNg, simPath, algResult.Image, slotStartTime);
+                    return (simValueOk, simAlgNg, simPath, algResult.Image, slotStartTime,
+                        algResult.MeanIntensity, algResult.DistanceToRoiCenter, algResult.DefectBoundingBoxes);
                 }
 
                 _logger.Warn($"[S03-Sim] {slotLabel} ALG failed, json={jsonKey}, msg={algResult.Message}");
@@ -901,7 +935,7 @@ public sealed class MachineController : IDisposable
                 {
                     System.Diagnostics.Debug.WriteLine(
                         $"[S03-Sim] {slotLabel} fallback: 顯示原圖 {Path.GetFileName(simPath)}");
-                    return (1.0, false, simPath, fallbackImage, slotStartTime);
+                    return (1.0, false, simPath, fallbackImage, slotStartTime, 0.0, 0.0, []);
                 }
             }
 
@@ -914,7 +948,7 @@ public sealed class MachineController : IDisposable
                       || simValue > _config.ValueLimitHigh;
 
             System.Windows.Media.ImageSource? simImage = SimImageGenerator.Generate(slotLabel, simValue, simNg);
-            return (simValue, simNg, "", simImage, slotStartTime);
+            return (simValue, simNg, "", simImage, slotStartTime, 0.0, 0.0, []);
         }
 
         // ==================================
@@ -1041,9 +1075,17 @@ public sealed class MachineController : IDisposable
         bool isNg = measuredValue < _config.ValueLimitLow || measuredValue > _config.ValueLimitHigh;
 
         // 優先顯示左側疊加結果影像
+        bool showLeft = algResultL.Image != null;
         System.Windows.Media.ImageSource? displayImage = algResultL.Image ?? algResultR.Image;
+        // 缺陷外框要跟著顯示的圖片來源走，否則框會疊在不同相機拍的圖上而錯位
+        IReadOnlyList<System.Drawing.Rectangle> defectBoxes =
+            showLeft ? algResultL.DefectBoundingBoxes : algResultR.DefectBoundingBoxes;
 
-        return (measuredValue, isNg, imagePath, displayImage, slotStartTime);
+        // MeanIntensity / DistanceToRoiCenter 為左右相機平均（DetectedArea 是面積故用加總，這兩者是強度/距離量測故取平均）
+        double meanIntensity = (algResultL.MeanIntensity + algResultR.MeanIntensity) / 2.0;
+        double distanceToRoiCenter = (algResultL.DistanceToRoiCenter + algResultR.DistanceToRoiCenter) / 2.0;
+
+        return (measuredValue, isNg, imagePath, displayImage, slotStartTime, meanIntensity, distanceToRoiCenter, defectBoxes);
     }
 
     // =========================================
@@ -1908,6 +1950,12 @@ public sealed class MachineController : IDisposable
         double detectedAreaL = 0.0;
         bool isNgR = false;
         bool isNgL = false;
+        double meanIntensityR = 0.0;
+        double meanIntensityL = 0.0;
+        double distanceToRoiCenterR = 0.0;
+        double distanceToRoiCenterL = 0.0;
+        IReadOnlyList<System.Drawing.Rectangle> defectBoxesR = [];
+        IReadOnlyList<System.Drawing.Rectangle> defectBoxesL = [];
 
         if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
         {
@@ -1923,6 +1971,9 @@ public sealed class MachineController : IDisposable
             // DetectedArea 已在 BumperAlgService 內換算為 mm²，直接使用
             detectedAreaR = algR.DetectedArea;
             isNgR = detectedAreaR < _config.ValueLimitLow || detectedAreaR > _config.ValueLimitHigh;
+            meanIntensityR = algR.MeanIntensity;
+            distanceToRoiCenterR = algR.DistanceToRoiCenter;
+            defectBoxesR = algR.DefectBoundingBoxes;
             // 寫入 CSV（FoupID=barcode，BumperPosition=camRight，Layer=純數字，Value 已換算）
             InspectionResultWriter.WriteSlotResult(
                 barcodeId,
@@ -1964,6 +2015,9 @@ public sealed class MachineController : IDisposable
             var algL = await Task.Run(() => _bumperAlg.Analyze(path, algKeyL, $"{slotLabel}_L"), ct);
             detectedAreaL = algL.DetectedArea;
             isNgL = detectedAreaL < _config.ValueLimitLow || detectedAreaL > _config.ValueLimitHigh;
+            meanIntensityL = algL.MeanIntensity;
+            distanceToRoiCenterL = algL.DistanceToRoiCenter;
+            defectBoxesL = algL.DefectBoundingBoxes;
             // 寫入 CSV（FoupID=barcode，BumperPosition=camLeft，Layer=純數字，Value 已換算）
             InspectionResultWriter.WriteSlotResult(
                 barcodeId,
@@ -2006,6 +2060,9 @@ public sealed class MachineController : IDisposable
                     SlotIndex = slotIndex,
                     Value = detectedAreaL,
                     IsNg = isNgL,
+                    MeanIntensity = meanIntensityL,
+                    DistanceToRoiCenter = distanceToRoiCenterL,
+                    DefectBoundingBoxes = defectBoxesL,
                     Image = uiImageLeft,
                     StatusText = statusText
                 });
@@ -2019,6 +2076,9 @@ public sealed class MachineController : IDisposable
                     SlotIndex = slotIndex,
                     Value = detectedAreaR,
                     IsNg = isNgR,
+                    MeanIntensity = meanIntensityR,
+                    DistanceToRoiCenter = distanceToRoiCenterR,
+                    DefectBoundingBoxes = defectBoxesR,
                     Image = uiImageRight,
                     StatusText = statusText
                 });
@@ -2188,10 +2248,23 @@ public sealed class MachineController : IDisposable
         CancellationToken ct,
         IProgress<SlotInspectionProgress>? slotProgress = null)
     {
-        const string SimImageRoot = @"D:\CameraTestImage";
-        // 圖檔 prefix：CameraTestImage 下只有 AreaA_Row1_Slot#N_L/R 命名
+        // 改用 InspectionConfig.SimImageFolderPath（可在UI設定），不再寫死路徑，
+        // 才能跟 InspectOneSlotAsync 的模擬分支（同樣讀 SimImageFolderPath）保持一致。
+        string simImageRoot = _config.SimImageFolderPath;
+        // 圖檔 prefix：模擬資料夾下需用 AreaA_Row1_Slot#N_L/R 命名
         const string ImgPrefix = "AreaA_Row1";
         const int SlotCount = 25;
+
+        if (!Directory.Exists(simImageRoot))
+        {
+            _logger.Warn($"[DryRun-Sim] 模擬影像資料夾不存在：{simImageRoot}（設定於 座標設定/InspectionConfig.SimImageFolderPath），將顯示空白影像");
+            progress?.Report($"⚠ 模擬影像資料夾不存在：{simImageRoot}，將顯示空白影像");
+        }
+        else if (Directory.GetFiles(simImageRoot, $"{ImgPrefix}_Slot#*_*_*.bmp").Length == 0)
+        {
+            _logger.Warn($"[DryRun-Sim] 模擬影像資料夾內找不到符合命名規則的圖檔：{simImageRoot}（預期格式：{ImgPrefix}_Slot#N_L或R_*.bmp），將顯示空白影像");
+            progress?.Report($"⚠ 模擬影像資料夾內找不到符合命名規則的圖檔，將顯示空白影像");
+        }
 
         progress?.Report($"[Sim] 開始模擬取像，共 {SlotCount} 個 Slot");
 
@@ -2203,8 +2276,8 @@ public sealed class MachineController : IDisposable
             progress?.Report($"[Sim] ({i + 1}/{SlotCount}) SLOT#{slotNum}: 模擬取像...");
 
             // _L → AreaA（左相機），_R → AreaB（右相機），同一個 slot 同時回報
-            System.Windows.Media.ImageSource? imgL = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "L");
-            System.Windows.Media.ImageSource? imgR = LoadSimImage(SimImageRoot, ImgPrefix, slotNum, "R");
+            System.Windows.Media.ImageSource? imgL = LoadSimImage(simImageRoot, ImgPrefix, slotNum, "L");
+            System.Windows.Media.ImageSource? imgR = LoadSimImage(simImageRoot, ImgPrefix, slotNum, "R");
 
             string statusText = $"[Sim] SLOT#{slotNum} 取像完成";
 
@@ -2262,8 +2335,9 @@ public sealed class MachineController : IDisposable
             bi.Freeze();
             return bi;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.Warn($"[DryRun-Sim] 讀取模擬圖檔失敗：{file}，{ex.Message}");
             return null;
         }
     }

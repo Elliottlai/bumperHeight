@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="座標設定"
         Width="680"
-        Height="560"
+        Height="610"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False">
@@ -34,12 +34,38 @@
 
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- ═══ Recipe（Y/ZL/ZR 參數組合）管理列 ═══ -->
+        <Border Grid.Row="0" Margin="10,10,10,0" Padding="8,6" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="參數組合 (Recipe)：" VerticalAlignment="Center" FontSize="13" FontWeight="Bold" Padding="0,0,6,0"/>
+                    <ComboBox x:Name="CmbRecipe" Width="200" IsEditable="True" FontSize="13"
+                              ItemsSource="{Binding RecipeNames}" Text="{Binding SelectedRecipeName, Mode=TwoWay}"
+                              ToolTip="輸入新名稱可建立新Recipe；選擇既有名稱可讀取或覆蓋備份。"/>
+                    <Button Content="讀取套用" Width="76" Margin="8,0,0,0" Background="#2E86C1" Foreground="White"
+                            Click="BtnLoadRecipe_Click"
+                            ToolTip="把所選Recipe的座標與演算法參數套用到目前生效中的設定（會覆蓋目前設定）。"/>
+                    <Button Content="備份／建立" Width="84" Margin="6,0,0,0" Background="#1E8449" Foreground="White"
+                            Click="BtnNewRecipe_Click"
+                            ToolTip="立即把『目前生效中』的座標與全部演算法參數JSON，存成一份新的Recipe備份（同名會覆蓋）。"/>
+                    <Button Content="刪除" Width="64" Margin="6,0,0,0" Background="#C0392B" Foreground="White"
+                            Click="BtnDeleteRecipe_Click"
+                            ToolTip="刪除所選的Recipe備份（不影響目前生效中的設定）。"/>
+                    <TextBlock Margin="12,4,0,0" VerticalAlignment="Center" FontSize="12" Foreground="#555"
+                               Text="{Binding CurrentRecipeName, StringFormat='目前生效中：{0}'}"/>
+                </WrapPanel>
+                <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="#777" TextWrapping="Wrap"
+                           Text="備份／建立：立即把「目前生效中」的座標設定＋全部演算法參數JSON一起存成一份Recipe（按下去的瞬間就會備份，不是之後才備份）。讀取套用：把所選Recipe的內容覆蓋回目前生效中的設定。若修改座標後忘記備份，按「確認套用」離開時會自動提醒。"/>
+            </StackPanel>
+        </Border>
+
         <!-- ═══ TabControl ═══ -->
-        <TabControl Grid.Row="0" Margin="10,10,10,0" FontSize="13">
+        <TabControl Grid.Row="1" Margin="10,10,10,0" FontSize="13">
 
             <!-- ══ Y 軸分頁：R組/L組 各 25 點 ══ -->
             <TabItem Header="Y 軸（25 點）">
@@ -362,7 +388,7 @@
         </TabControl>
 
         <!-- ══ 底部按鈕 ══ -->
-        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="10,8,10,10">
             <Button Content="取消" Width="88" Height="32" Margin="0,0,8,0" IsCancel="True"/>
             <Button Content="確認套用" Width="100" Height="32" IsDefault="True"
