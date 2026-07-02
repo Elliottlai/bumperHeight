@@ -19,6 +19,7 @@
 
     <Window.Resources>
         <helper:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
+        <helper:BoolToHiddenConverter x:Key="BoolToHiddenConverter"/>
         <Style x:Key="SlotNameCellStyle" TargetType="Border">
             <Setter Property="Background" Value="#00B050"/>
             <Setter Property="BorderBrush" Value="#333"/>
@@ -577,7 +578,7 @@
                           VerticalContentAlignment="Center"
                           HorizontalAlignment="Center"
                           VerticalAlignment="Center"
-                          Visibility="Visible"
+                          Visibility="{Binding IsAdmin, Converter={StaticResource BoolToHiddenConverter}}"
                           FontSize="11"
                           ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
                 <CheckBox Content="⏱ ZL/ZR 安定延遲"

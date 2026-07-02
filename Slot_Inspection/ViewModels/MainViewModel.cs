@@ -42,6 +42,14 @@ public sealed class MainViewModel : ObservableObject
     private int _lightGateClearCount = 0;  // 連續讀到 HIGH 的次數（釋放防抖用）
     private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
     private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
+    // X3/X11 板子放置雷射感測
+    private bool _isBoardMisplaced;
+    private int _boardMisplacedCount;
+    private int _boardPlacedCount;
+    private bool _boardMisplacedDialogShown;
+    private const int BoardMisplacedDebounceCount = 3; // 需連續 N 次（×500ms）才確認未放好
+    private const int BoardPlacedDebounceCount = 3;    // 需連續 N 次（×500ms）才確認放好
+
     private bool _isLightGateBypassActive; // 取料暫停光閘旗標
     private bool _isAlarmActive; // 是否處於異常狀態（與 PLC Y01 紅燈同步）
     private bool _isLocked; // 閒置逾時鎖定畫面
@@ -306,6 +314,19 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// X3/X11 雷射感測未到位（任一 false）→ 禁止按 RUN。
+    /// </summary>
+    public bool IsBoardMisplaced
+    {
+        get => _isBoardMisplaced;
+        private set
+        {
+            if (SetProperty(ref _isBoardMisplaced, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand RunCommand { get; }
@@ -430,8 +451,30 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>模擬模式開關是否可操作：需Engineer以上權限，且機台不在RUN/DryRun執行中。</summary>
-    public bool CanToggleSimulationMode => HasPermission(Permission.SimulationMode) && !IsRunning && !IsDryRunning;
+    /// <summary>模擬模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
+    public bool CanToggleSimulationMode => IsAdmin && !IsRunning && !IsDryRunning;
+
+    /// <summary>
+    /// 模擬模式專用：按 X 鍵循環切換的板子感測狀態（0-3）。
+    /// 0=正常, 1=X3異常, 2=X11異常, 3=X3+X11均異常。
+    /// 僅在 IsSimulationMode=true 時生效，OnPlcTick 讀此值直接跳過防抖。
+    /// </summary>
+    private int _simBoardState;
+
+    /// <summary>由 MainWindow 鍵盤事件呼叫，每次循環切換至下一個模擬狀態。非模擬模式下無效。</summary>
+    public void ToggleSimBoardMisplaced()
+    {
+        if (!IsSimulationMode) return;
+        _simBoardState = (_simBoardState + 1) % 4;
+        string stateDesc = _simBoardState switch
+        {
+            1 => "X3 異常",
+            2 => "X11 異常",
+            3 => "X3+X11 均異常",
+            _ => "正常"
+        };
+        _logger.Debug($"[SIM] SimBoardState 切換為 {_simBoardState}（{stateDesc}）");
+    }
 
     /// <summary>ZL/ZR安定延遲checkbox是否可操作，依「角色權限設定」決定。</summary>
     public bool CanToggleAxisSettleDelay => HasPermission(Permission.AxisSettleDelay);
@@ -519,8 +562,8 @@ public sealed class MainViewModel : ObservableObject
         StartCommand = new RelayCommand(OnStart, () => IsInitialized && !IsRunning && !IsDryRunning);
         StopCommand = new RelayCommand(OnStop, () => HasPermission(Permission.Stop));
         // 主流程：逐 Slot 移動、取像、存圖
-        // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷，且該角色有RUN權限。
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && HasPermission(Permission.Run));
+        // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷，且板子已放妥，且該角色有RUN權限。
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsBoardMisplaced && HasPermission(Permission.Run));
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady && HasPermission(Permission.InitDevices));
         // 原點賦歸：光閘必須未遮斷才可按（不因暫停光閘而全域禁用）
@@ -741,6 +784,87 @@ public sealed class MainViewModel : ObservableObject
         }
 
         IsLightGateBlocked = blocked;
+
+        // ─── X3/X11 板子放置雷射感測（任一 false = 未放好）───
+        bool x3 = true, x11 = true, rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
+
+        if (IsSimulationMode)
+        {
+            // 模擬模式：依 _simBoardState 決定 x3/x11，跳過防抖立即生效
+            // bit0=1 → X3 異常；bit1=1 → X11 異常（0=正常,1=X3,2=X11,3=兩者）
+            x3  = (_simBoardState & 1) == 0;
+            x11 = (_simBoardState & 2) == 0;
+            rawMisplaced            = !x3 || !x11;
+            boardMisplacedConfirmed = rawMisplaced;
+            boardOkConfirmed        = !rawMisplaced;
+            _boardMisplacedCount = 0;
+            _boardPlacedCount    = 0;
+        }
+        else
+        {
+            bool? rawX3  = _machine.GetPlcXOctal(3);
+            bool? rawX11 = _machine.GetPlcXOctal(11);
+
+            if (rawX3 == null || rawX11 == null)
+            {
+                // PLC 斷線：凍結現有狀態，不更新計數器、不觸發任何轉換
+                // 若板子本來就未放好，警報繼續保持；若本來正常，也不會誤觸發
+                _boardMisplacedCount = 0;
+                _boardPlacedCount    = 0;
+                // boardMisplacedConfirmed / boardOkConfirmed 維持 false（宣告時預設值）→ 兩個分支都不進入
+            }
+            else
+            {
+                x3  = rawX3.Value;
+                x11 = rawX11.Value;
+                rawMisplaced = !x3 || !x11;
+
+                if (rawMisplaced) { _boardMisplacedCount++; _boardPlacedCount = 0; }
+                else              { _boardPlacedCount++;    _boardMisplacedCount = 0; }
+
+                boardMisplacedConfirmed = _boardMisplacedCount >= BoardMisplacedDebounceCount;
+                boardOkConfirmed        = _boardPlacedCount    >= BoardPlacedDebounceCount;
+            }
+        }
+
+        // 正常 → 未放好（初次確認觸發）
+        if (boardMisplacedConfirmed && !_isBoardMisplaced)
+        {
+            IsBoardMisplaced = true;
+            StatusMessage = "⚠ 板子未放妥（雷射感測 X3/X11），請確認板子正確放置後再繼續";
+            _logger.Warn($"板子未放妥 (X3={x3} X11={x11})，Run 已禁用");
+
+            if (IsRunning || IsDryRunning)
+            {
+                _cts?.Cancel();
+                IsInitialized = false;
+                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})，流程已取消，等待板子放置");
+            }
+
+            if (!_boardMisplacedDialogShown)
+            {
+                _boardMisplacedDialogShown = true;
+                string triggeredSignals = (!x3 && !x11) ? "X3、X11" : (!x3 ? "X3" : "X11");
+                // BeginInvoke 讓對話框在 DispatcherTimer tick 結束後才彈出，
+                // 避免 MessageBox 建立巢狀訊息泵（re-entrancy）導致 tick 重複執行
+                Application.Current.Dispatcher.BeginInvoke(() =>
+                {
+                    MessageBox.Show(
+                        $"偵測到板子未放妥（{triggeredSignals} 訊號異常）。\n請確認板子正確放置後再繼續操作。",
+                        "板子未放好",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                });
+            }
+        }
+        // 未放好 → 正常（訊號穩定回到正常後解除）
+        else if (boardOkConfirmed && _isBoardMisplaced)
+        {
+            IsBoardMisplaced = false;
+            _boardMisplacedDialogShown = false;
+            _logger.Info($"板子放妥確認 (X3={x3} X11={x11})，Run 已恢復");
+            StatusMessage = "✔ 板子放妥確認，Run 已恢復";
+        }
 
         // PLC/位置狀態變動可能影響按鈕可用性（例如 Z 到位），通知 WPF 重新查詢 CanExecute
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();

@@ -41,6 +41,16 @@ public partial class MainWindow : Window
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         (DataContext as MainViewModel)?.ResetIdleTimer();
+
+        // 模擬模式下按 X 鍵切換「板子未放好」狀態（焦點在輸入框時不觸發，避免誤擋打字）
+        if (e.Key == Key.X
+            && DataContext is MainViewModel vm
+            && vm.IsSimulationMode
+            && e.OriginalSource is not System.Windows.Controls.TextBox)
+        {
+            vm.ToggleSimBoardMisplaced();
+            e.Handled = true;
+        }
     }
 
 }

@@ -42,8 +42,8 @@ public partial class RolePermissionWindow : Window
         (Permission.PositionSettings, "座標設定（含Recipe）"),
         (Permission.LightSettings, "光源設定"),
         (Permission.CropSettings, "裁切設定"),
-        (Permission.SimulationMode, "模擬模式切換"),
         (Permission.AxisSettleDelay, "ZL/ZR 安定延遲"),
+        // SimulationMode 固定為 Admin 專屬，不開放角色設定
     ];
 
     public RolePermissionWindow(UserAccount currentAdmin, MainViewModel mainViewModel)

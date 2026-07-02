@@ -199,6 +199,8 @@ public sealed class MachineController : IDisposable
 
         _logger.Info($"▶ 使用者確認：開始將 ZL/ZR 升至安全高度（ZL 目標={safeZL:F2} mm，ZR 目標={safeZR:F2} mm）");
         progress?.Report($"正在將 ZL→{safeZL:F2} mm、ZR→{safeZR:F2} mm 升至安全高度...");
+        // 對話框期間 OnPlcTick 可能已呼叫 _cts.Cancel()，發出移動指令前先確認仍有效
+        ct.ThrowIfCancellationRequested();
         Axes["AxisZL"].MotMoveAbs(safeZL);
         Axes["AxisZR"].MotMoveAbs(safeZR);
         // 等 150ms 讓驅動器清除上一次的 InPosition 旗標，避免 Wait() 提早回傳 true
