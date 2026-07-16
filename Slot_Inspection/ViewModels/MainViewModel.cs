@@ -49,9 +49,15 @@ public sealed class MainViewModel : ObservableObject
     private bool _boardMisplacedDialogShown;
     private const int BoardMisplacedDebounceCount = 3; // 需連續 N 次（×500ms）才確認未放好
     private const int BoardPlacedDebounceCount = 3;    // 需連續 N 次（×500ms）才確認放好
+    // X3/X11 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，確認觸發時一起寫 log（做法比照 X7）
+    private readonly Queue<(DateTime Time, bool X3Raw, bool X11Raw, bool RawMisplaced, int MisplacedCount, int PlacedCount)> _boardSignalHistory = new();
+    private const int BoardHistorySize = 10;
+    // X3/X11 原始訊號上一次記錄的值（用於偵測變化，寫入持續追蹤 log；null=尚未記錄過）
+    private bool? _prevX3RawLogged;
+    private bool? _prevX11RawLogged;
 
     private bool _isLightGateBypassActive; // 取料暫停光閘旗標
-    private bool _isAlarmActive; // 是否處於異常狀態（與 PLC Y01 紅燈同步）
+    private bool _isBoardSensorBypassActive; // Admin 專用：暫時取消 X3/X11 雷射感測判斷，不讓它卡住 Run
     private bool _isLocked; // 閒置逾時鎖定畫面
     // Interval 在建構式裡會被覆寫為 InspectionConfig.IdleLockTimeoutMinutes（可由Admin在帳號管理視窗調整）
     private readonly DispatcherTimer _idleTimer = new() { Interval = TimeSpan.FromMinutes(10) };
@@ -91,17 +97,14 @@ public sealed class MainViewModel : ObservableObject
     public string MesStatusKey => _mesStatus.ToString();
 
     /// <summary>
-    /// 是否處於異常狀態，與 PLC Y01 紅燈同步（見 <see cref="MachineController.SetRedAlarm"/> 呼叫點）。
+    /// 是否處於異常狀態。單一事實來源是 <see cref="Services.AlarmManager"/>（<c>_machine.Alarms</c>），
+    /// 這裡只是唯讀代理；實體 PLC Y01 紅燈由 <see cref="MachineController.SyncRedAlarmOutput"/>
+    /// 每個 PLC tick 依 Alarms.IsActive 持續斷言，不需要（也不應該）在這裡手動 set。
     /// </summary>
-    public bool IsAlarmActive
-    {
-        get => _isAlarmActive;
-        private set
-        {
-            if (SetProperty(ref _isAlarmActive, value))
-                NotifyRunStateChanged();
-        }
-    }
+    public bool IsAlarmActive => _machine.Alarms.IsActive;
+
+    /// <summary>目前所有生效中的異常原因，供 UI 顯示「為什麼在亮紅燈」用，避免只有一顆謎樣的紅點。</summary>
+    public IReadOnlyList<AlarmEntry> ActiveAlarms => _machine.Alarms.GetActive();
 
     /// <summary>主畫面標題列狀態指示燈的整體狀態，依優先順序判斷：異常 > 暫停 > 運行中 > 待命 > 未連線。</summary>
     public MachineRunState RunState =>
@@ -315,7 +318,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// X3/X11 雷射感測未到位（任一 false）→ 禁止按 RUN。
+    /// X3/X11 雷射感測未到位（任一 true）→ 禁止按 RUN。
     /// </summary>
     public bool IsBoardMisplaced
     {
@@ -341,6 +344,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand OpenResultFolderCommand { get; }
     public ICommand ConfirmBarcodeCommand { get; }
     public ICommand ToggleLightGateBypassCommand { get; }
+    public ICommand ToggleBoardSensorBypassCommand { get; }
     public ICommand SlcResetCommand { get; }
     public ICommand WebApiTestCommand { get; }
     public ICommand ChangePasswordCommand { get; }
@@ -371,6 +375,29 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消暫停光閘」，停用時顯示「暫停光閘」。</summary>
     public string LightGateBypassButtonText =>
         IsLightGateBypassActive ? "取消暫停光閘" : "暫停光閘";
+
+    /// <summary>
+    /// Admin 專用安全開關：啟用時完全忽略 X3/X11 雷射感測的板子放置判斷（視為永遠正常），
+    /// 讓 RUN 不會被卡住。僅供 Admin 排除感測器異常/暫時無法校正時應急使用，
+    /// 不透過角色權限表開放給 Operator/Engineer（跟 <see cref="IsLightGateBypassActive"/> 不同）。
+    /// 啟用中訊號歷史與持續追蹤 log 仍照常記錄，只是不會反映到 IsBoardMisplaced/RUN 判斷上。
+    /// </summary>
+    public bool IsBoardSensorBypassActive
+    {
+        get => _isBoardSensorBypassActive;
+        private set
+        {
+            if (SetProperty(ref _isBoardSensorBypassActive, value))
+            {
+                OnPropertyChanged(nameof(BoardSensorBypassButtonText));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消暫停板子感測」，停用時顯示「暫停板子感測」。</summary>
+    public string BoardSensorBypassButtonText =>
+        IsBoardSensorBypassActive ? "取消暫停板子感測" : "暫停板子感測";
 
     private bool _isDryRunning;
     public bool IsDryRunning
@@ -593,6 +620,9 @@ public sealed class MainViewModel : ObservableObject
         // 暫停光閘 toggle
         ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => HasPermission(Permission.ToggleLightGateBypass));
 
+        // 暫停板子感測 toggle：僅 Admin 可操作，不透過角色權限表開放
+        ToggleBoardSensorBypassCommand = new RelayCommand(OnToggleBoardSensorBypass, () => IsAdmin);
+
         // SLC Reset
         SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.SlcReset));
 
@@ -626,6 +656,18 @@ public sealed class MainViewModel : ObservableObject
             CurrentDate = DateTime.Now.ToString("yyyy/MM/dd");
             CurrentTime = DateTime.Now.ToString("HH:mm:ss");
         };
+
+        // 異常燈號的單一事實來源在 _machine.Alarms；這裡只負責在它變動時刷新 UI 綁定的唯讀屬性。
+        // StateChanged 可能從非 UI 執行緒觸發（例如背景 Task 裡的 Alarms.Raise），一律 BeginInvoke。
+        _machine.Alarms.StateChanged += () => Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            OnPropertyChanged(nameof(IsAlarmActive));
+            OnPropertyChanged(nameof(ActiveAlarms));
+            NotifyRunStateChanged();
+            // 立即嘗試同步一次 PLC 輸出，讓紅燈盡快反映；OnPlcTick 裡的週期性斷言則負責在
+            // 這次寫入因 PLC 未連線而失敗時，於下一個 tick 自動補回正確狀態。
+            _machine.SyncRedAlarmOutput();
+        });
 
         _plcTimer.Tick += OnPlcTick;
 
@@ -666,6 +708,17 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>程式啟動：建立 WebApidll 並上報 Idle 狀態。</summary>
     private async Task InitMesAsync()
     {
+        // 設定檔裡「啟用 MES WebAPI 功能」關閉時，CimApiClient.ConnectAsync() 內部會直接
+        // 回傳 Disabled、不發任何連線，這裡只要照實反映狀態，不能落入下面的重試分支，
+        // 否則會每 15 秒白白嘗試一次「已停用」的功能。
+        if (!_mesClient.IsEnabled)
+        {
+            MesStatus = MesConnectionStatus.Disabled;
+            StatusMessage = "MES WebAPI 功能已停用（設定檔），系統就緒。";
+            _mesRetryTimer.Stop();
+            return;
+        }
+
         StatusMessage = "正在連線 MES...";
         await _mesClient.ConnectAsync();
         MesStatus = _mesClient.LastStatus;
@@ -685,8 +738,8 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>MES 重試計時器 Tick：尚未連線時每 15 秒自動重試。</summary>
     private async void OnMesRetryTick(object? sender, EventArgs e)
     {
-        // 已連線則停止計時器，不重複發送
-        if (_mesClient.LastStatus == MesConnectionStatus.Connected)
+        // 已連線，或功能已被停用，都不該繼續重試
+        if (_mesClient.LastStatus == MesConnectionStatus.Connected || !_mesClient.IsEnabled)
         {
             _mesRetryTimer.Stop();
             return;
@@ -718,6 +771,13 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
     {
+        // 每個 tick 都重新斷言紅燈輸出（依 _machine.Alarms.IsActive）。
+        // 這一行是修掉「紅燈卡死關不掉」的關鍵：Y01 是實體 PLC 線圈，任何一次寫入都可能因為
+        // PLC 剛好未連線而被 SetPlcYOctal 悄悄丟棄（尤其是開機當下第一次嘗試熄燈——那時候
+        // PLC 通常都還沒連上）。靠這裡每 500ms 持續重新斷言，PLC 重新連線後最多一個 tick
+        // 就會自動補回正確狀態，不需要使用者手動按任何按鈕才能讓燈熄滅。
+        _machine.SyncRedAlarmOutput();
+
         // X7 光閘狀態：不論任何模式都追蹤，LOW = 遮斷（加入防抖：需連續 LightGateDebounceCount 次才觸發）
         bool x7 = _machine.GetPlcXOctal(7) ?? true;
         bool rawBlocked = !x7;
@@ -752,8 +812,7 @@ public sealed class MainViewModel : ObservableObject
                 _cts?.Cancel();
                 IsInitialized = false;
                 StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
-                _machine.SetRedAlarm(true);
-                IsAlarmActive = true;
+                _machine.Alarms.Raise("LightGateX7", "X7 光閘遮斷，流程已取消，等待原點賦歸");
 
                 // ── MES 上報 Alarm（光閘觸發事件）──
                 _ = _mesClient.ReportAlarmAsync()
@@ -785,20 +844,22 @@ public sealed class MainViewModel : ObservableObject
 
         IsLightGateBlocked = blocked;
 
-        // ─── X3/X11 板子放置雷射感測（任一 false = 未放好）───
-        bool x3 = true, x11 = true, rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
+        // ─── X3/X11 板子放置雷射感測（任一 true = 未放好）───
+        bool x3 = false, x11 = false, rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
+        bool boardReadingValid = false; // true 表示這次 x3/x11 是實際讀到的值，可信任、可寫入持續追蹤 log
 
         if (IsSimulationMode)
         {
             // 模擬模式：依 _simBoardState 決定 x3/x11，跳過防抖立即生效
             // bit0=1 → X3 異常；bit1=1 → X11 異常（0=正常,1=X3,2=X11,3=兩者）
-            x3  = (_simBoardState & 1) == 0;
-            x11 = (_simBoardState & 2) == 0;
-            rawMisplaced            = !x3 || !x11;
+            x3  = (_simBoardState & 1) != 0;
+            x11 = (_simBoardState & 2) != 0;
+            rawMisplaced            = x3 || x11;
             boardMisplacedConfirmed = rawMisplaced;
             boardOkConfirmed        = !rawMisplaced;
             _boardMisplacedCount = 0;
             _boardPlacedCount    = 0;
+            boardReadingValid = true;
         }
         else
         {
@@ -817,34 +878,74 @@ public sealed class MainViewModel : ObservableObject
             {
                 x3  = rawX3.Value;
                 x11 = rawX11.Value;
-                rawMisplaced = !x3 || !x11;
+                rawMisplaced = x3 || x11;
 
                 if (rawMisplaced) { _boardMisplacedCount++; _boardPlacedCount = 0; }
                 else              { _boardPlacedCount++;    _boardMisplacedCount = 0; }
 
                 boardMisplacedConfirmed = _boardMisplacedCount >= BoardMisplacedDebounceCount;
                 boardOkConfirmed        = _boardPlacedCount    >= BoardPlacedDebounceCount;
+                boardReadingValid = true;
             }
         }
 
+        // 每次 Tick 都將原始訊號與當下 count 存入歷史佇列（最多 BoardHistorySize 筆）
+        _boardSignalHistory.Enqueue((DateTime.Now, x3, x11, rawMisplaced, _boardMisplacedCount, _boardPlacedCount));
+        if (_boardSignalHistory.Count > BoardHistorySize)
+            _boardSignalHistory.Dequeue();
+
+        // 持續追蹤：只要 X3/X11 原始值跟上次「有效讀值」不同，立刻寫一行 log，
+        // 不受防抖/確認狀態、也不受 Run 狀態影響，藉此還原完整的 true/false 時間軸。
+        if (boardReadingValid && (x3 != _prevX3RawLogged || x11 != _prevX11RawLogged))
+        {
+            BoardSensorTraceLogger.Write(x3, x11);
+            _prevX3RawLogged = x3;
+            _prevX11RawLogged = x11;
+        }
+
+        // Admin 暫停板子感測中：完全略過確認/觸發判斷，強制視為正常，不卡 RUN。
+        // 訊號歷史與持續追蹤 log 在上面已經照常記錄，僅此段套用判斷結果的邏輯被跳過。
+        if (IsBoardSensorBypassActive)
+        {
+            if (_isBoardMisplaced)
+            {
+                IsBoardMisplaced = false;
+                _boardMisplacedDialogShown = false;
+            }
+        }
         // 正常 → 未放好（初次確認觸發）
-        if (boardMisplacedConfirmed && !_isBoardMisplaced)
+        else if (boardMisplacedConfirmed && !_isBoardMisplaced)
         {
             IsBoardMisplaced = true;
             StatusMessage = "⚠ 板子未放妥（雷射感測 X3/X11），請確認板子正確放置後再繼續";
             _logger.Warn($"板子未放妥 (X3={x3} X11={x11})，Run 已禁用");
 
+            // 組合前 N 筆 X3/X11 訊號歷史一併寫入 log，方便判斷是穩定 false 還是抖動
+            var boardHistorySb = new System.Text.StringBuilder();
+            boardHistorySb.AppendLine($"--- 觸發前 X3/X11 訊號歷史（最多 {BoardHistorySize} 筆，門檻={BoardMisplacedDebounceCount}）---");
+            int boardIdx = 1;
+            foreach (var entry in _boardSignalHistory)
+            {
+                string trigger = (entry.RawMisplaced && entry.MisplacedCount >= BoardMisplacedDebounceCount) ? " ✅ 本筆觸發" : "";
+                boardHistorySb.AppendLine(
+                    $"  [{boardIdx++:D2}] {entry.Time:HH:mm:ss.fff} | X3={entry.X3Raw,-5} | X11={entry.X11Raw,-5} | rawMisplaced={entry.RawMisplaced,-5} | misplacedCount={entry.MisplacedCount} placedCount={entry.PlacedCount}{trigger}");
+            }
+
             if (IsRunning || IsDryRunning)
             {
                 _cts?.Cancel();
                 IsInitialized = false;
-                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})，流程已取消，等待板子放置");
+                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})，流程已取消，等待板子放置\n" + boardHistorySb);
+            }
+            else
+            {
+                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})\n" + boardHistorySb);
             }
 
             if (!_boardMisplacedDialogShown)
             {
                 _boardMisplacedDialogShown = true;
-                string triggeredSignals = (!x3 && !x11) ? "X3、X11" : (!x3 ? "X3" : "X11");
+                string triggeredSignals = (x3 && x11) ? "X3、X11" : (x3 ? "X3" : "X11");
                 // BeginInvoke 讓對話框在 DispatcherTimer tick 結束後才彈出，
                 // 避免 MessageBox 建立巢狀訊息泵（re-entrancy）導致 tick 重複執行
                 Application.Current.Dispatcher.BeginInvoke(() =>
@@ -904,8 +1005,10 @@ public sealed class MainViewModel : ObservableObject
 
         StatusMessage = "正在初始化設備（設定檔 / 伺服軸 / PLC），請稍候...";
         _cts = new CancellationTokenSource();
-        _machine.SetRedAlarm(false);
-        IsAlarmActive = false;
+        // 使用者主動嘗試初始化，視為對「上一次可由使用者操作解除」的異常做確認：
+        // 只清可由重試解除的原因，軸警報等硬體原因由 MachineController 在檢查各軸狀態時自行 Raise/Clear。
+        _machine.Alarms.Clear("LightGateX7");
+        _machine.Alarms.Clear("RunException");
 
         // Progress 回報會自動回到 UI 執行緒
         var progress = new Progress<string>(msg => StatusMessage = msg);
@@ -953,8 +1056,8 @@ public sealed class MainViewModel : ObservableObject
     {
         IsRunning = true;
         _cts = new CancellationTokenSource();
-        _machine.SetRedAlarm(false);
-        IsAlarmActive = false;
+        _machine.Alarms.Clear("LightGateX7");
+        _machine.Alarms.Clear("RunException");
 
         ResetAllSlots();
         Barcode = "";
@@ -1084,8 +1187,7 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"✘ 量測發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnStart", $"流程例外：{ex.Message}", ex);
-            _machine.SetRedAlarm(true);
-            IsAlarmActive = true;
+            _machine.Alarms.Raise("RunException", ex.Message);
             // ── MES 上報 Alarm（非阻塞）──
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
@@ -1109,8 +1211,8 @@ public sealed class MainViewModel : ObservableObject
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "開始量測 (RUN)");
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
-        _machine.SetRedAlarm(false);
-        IsAlarmActive = false;
+        _machine.Alarms.Clear("LightGateX7");
+        _machine.Alarms.Clear("RunException");
         _runStartTime = DateTime.Now;
 
         // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
@@ -1298,8 +1400,7 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = $"✘ 主流程發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnRunInspection", $"主流程例外：{ex.Message}", ex);
-            _machine.SetRedAlarm(true);
-            IsAlarmActive = true;
+            _machine.Alarms.Raise("RunException", ex.Message);
             // ── MES 上報 Alarm（非阻塞）──
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
@@ -1545,7 +1646,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnLightSettings()
     {
-        var vm = new LightSettingsViewModel(_machine.Config);
+        var vm = new LightSettingsViewModel(_machine.Config, IsAdmin);
         var win = new Views.LightSettingsWindow
         {
             DataContext = vm,
@@ -1556,6 +1657,8 @@ public sealed class MainViewModel : ObservableObject
             vm.ApplyTo(_machine.Config);
             StatusMessage = $"✔ 光源設定已儲存（左={vm.LightIntensityLeft}，右={vm.LightIntensityRight}）";
             AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用光源設定");
+            if (IsAdmin)
+                AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"套用曝光時間設定（左={vm.ExposureTimeLeft:F0}µs，右={vm.ExposureTimeRight:F0}µs）");
         }
     }
 
@@ -1642,8 +1745,8 @@ public sealed class MainViewModel : ObservableObject
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行原點賦歸");
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
-        _machine.SetRedAlarm(false);
-        IsAlarmActive = false;
+        _machine.Alarms.Clear("LightGateX7");
+        _machine.Alarms.Clear("RunException");
         var progress = new Progress<string>(msg => StatusMessage = msg);
 
         try
@@ -1745,6 +1848,48 @@ public sealed class MainViewModel : ObservableObject
         StatusMessage = IsLightGateBypassActive
             ? "⚠ 暫停光閘已啟用：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
             : "✔ 暫停光閘已取消，恢復正常光閘防護";
+    }
+
+    /// <summary>
+    /// 切換「暫停板子感測」模式（Admin 專用）。
+    /// 啟用：完全忽略 X3/X11 雷射感測判斷，IsBoardMisplaced 強制為 false，RUN 不會被卡住。
+    /// 停用：恢復正常判斷，下一次 PLC tick 會依當下訊號重新評估。
+    /// 啟用/停用都會寫入操作紀錄（AuditLogger），啟用時額外要求二次確認，避免誤按。
+    /// </summary>
+    private void OnToggleBoardSensorBypass()
+    {
+        if (!IsBoardSensorBypassActive)
+        {
+            var confirm = MessageBox.Show(
+                "啟用後會完全忽略 X3/X11 雷射感測（板子放置檢查），即使板子未放妥 RUN 也不會被擋下。\n" +
+                "僅供排除感測器異常時應急使用，請確認板子實際狀態後再繼續。\n\n是否確定啟用？",
+                "暫停板子感測（Admin）",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes) return;
+        }
+
+        IsBoardSensorBypassActive = !IsBoardSensorBypassActive;
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
+            $"暫停板子感測（X3/X11）切換為{(IsBoardSensorBypassActive ? "啟用" : "停用")}");
+
+        if (IsBoardSensorBypassActive)
+        {
+            // 啟用當下立刻解除卡住的狀態，不用等下一次 tick
+            IsBoardMisplaced = false;
+            _boardMisplacedDialogShown = false;
+        }
+        else
+        {
+            // 停用時重置防抖計數，讓下一次 tick 依當下實際訊號重新判斷，不沿用舊的計數殘留
+            _boardMisplacedCount = 0;
+            _boardPlacedCount = 0;
+        }
+
+        StatusMessage = IsBoardSensorBypassActive
+            ? "⚠ 暫停板子感測已啟用：X3/X11 雷射感測判斷已忽略，RUN 不受板子放置狀態影響"
+            : "✔ 暫停板子感測已取消，恢復正常雷射感測判斷";
     }
 
     private async void OnSlcReset()

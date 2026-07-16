@@ -37,6 +37,12 @@ public sealed class InspectionConfig
     public bool SaveImages { get; set; } = true;
     public string ImageSavePath { get; set; } = @"D:\InspectionImages";
 
+    /// <summary>右相機曝光時間 (µs)。原本寫死在 MachineController.cs，現改由設定檔控制。</summary>
+    public double ExposureTimeRight { get; set; } = 36500.0;
+
+    /// <summary>左相機曝光時間 (µs)。原本寫死在 MachineController.cs，現改由設定檔控制。</summary>
+    public double ExposureTimeLeft { get; set; } = 36500.0;
+
     // -- Axis settle delay (防止 ZL/ZR 到位後振動拍照模糊) --
     /// <summary>
     /// 是否在 ZL/ZR 軸到位後，額外等待 <see cref="AxisSettleDelayMs"/> ms 才拍照，

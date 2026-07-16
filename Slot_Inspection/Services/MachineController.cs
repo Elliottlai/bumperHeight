@@ -301,15 +301,44 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
-    /// 紅燈警示（PLC Y1，八進位位址）：流程因設備/感測器異常中止時 ON，
-    /// 下次嘗試（初始化/原點賦歸/RUN）開始前 OFF。
+    /// 異常燈號的單一事實來源。所有觸發/解除異常都應透過 Alarms.Raise(code, message) /
+    /// Alarms.Clear(code)，不要再直接呼叫 SetRedAlarm。實際寫入 PLC 由 SyncRedAlarmOutput()
+    /// 統一負責，並且要用每個 tick 重新斷言的方式呼叫，理由見 <see cref="AlarmManager"/> 上的說明。
+    /// </summary>
+    public AlarmManager Alarms { get; } = new();
+
+    /// <summary>
+    /// 紅燈警示（PLC Y1，八進位位址）：底層原始寫入，只把 Y01 設成呼叫端指定的狀態，
+    /// 本身不記錄「為什麼」。外部呼叫請一律改用 Alarms.Raise/Clear，讓 AlarmManager 集中管理
+    /// 觸發原因；紅燈實際 ON/OFF 的判斷由 <see cref="SyncRedAlarmOutput"/> 依 Alarms.IsActive 決定。
     /// 若需更改目標 Y 點，修改 RedAlarmYAddr 常數即可。
     /// </summary>
     private const int RedAlarmYAddr = 1; // PLC Y01（八進位位址）
+    private bool? _lastSyncedRedAlarmState; // 只在狀態真的改變時寫 log，避免每個 tick 洗版
     public void SetRedAlarm(bool on)
     {
         SetPlcYOctal(RedAlarmYAddr, on);
         _logger.Info($"[Alarm] Y01 紅燈 {(on ? "ON" : "OFF")}");
+    }
+
+    /// <summary>
+    /// 依 Alarms.IsActive 目前的邏輯狀態，重新把 Y01 斷言為對應的 ON/OFF。
+    ///
+    /// 必須由呼叫端在固定週期（例如 MainViewModel 既有的 500ms PLC tick）持續呼叫，
+    /// 而不是只在異常觸發/解除的當下呼叫一次：Y01 是實體 PLC 線圈，若某次寫入剛好遇到
+    /// PLC 未連線（SetPlcYOctal 內部會直接放棄該次寫入），這次「熄燈」或「亮燈」指令就
+    /// 會悄悄遺失；靠 tick 持續重新斷言，PLC 重新連線後最多一個 tick（500ms）內就會自動
+    /// 補回正確狀態，不需要使用者手動按任何按鈕。
+    /// </summary>
+    public void SyncRedAlarmOutput()
+    {
+        bool desired = Alarms.IsActive;
+        SetPlcYOctal(RedAlarmYAddr, desired);
+        if (_lastSyncedRedAlarmState != desired)
+        {
+            _lastSyncedRedAlarmState = desired;
+            _logger.Info($"[Alarm] Y01 紅燈 {(desired ? "ON" : "OFF")}（同步自 Alarms.IsActive）");
+        }
     }
 
     /// <summary>
@@ -1161,8 +1190,13 @@ public sealed class MachineController : IDisposable
                     () => axis.GetRDY() && !axis.GetAlarm(),
                     _deviceConnectTimeout, ct);
                 if (!ready)
+                {
+                    if (axis.GetAlarm())
+                        Alarms.Raise($"AxisAlarm:{axisName}", $"{axisName} 有警報，初始化失敗");
                     return DeviceInitResult.Fail(name,
                         $"{axisName} not ready (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                }
+                Alarms.Clear($"AxisAlarm:{axisName}");
                 _logger.Debug($"{axisName} ServoOn OK");
             }
             _logger.Info($"{name}: OK");
@@ -1234,7 +1268,11 @@ public sealed class MachineController : IDisposable
                 if (!axis.GetOrg())
                     _logger.Warn($"{axisName} ORG not confirmed");
                 if (axis.GetAlarm())
+                {
+                    Alarms.Raise($"AxisAlarm:{axisName}", $"{axisName} 原點賦歸後仍有警報");
                     return DeviceInitResult.Fail(name, $"{axisName} alarm after home");
+                }
+                Alarms.Clear($"AxisAlarm:{axisName}");
             }
 
             _logger.Info($"{name}: OK");
@@ -1587,10 +1625,10 @@ public sealed class MachineController : IDisposable
 
             // STEP 0-0 ? 開啟光源（空跑期間持續開啟，結束後才關閉）
             progress?.Report("[STEP 0-0] 光源 CH1+CH2 開啟...");
-            bool on1 = LightSetWithRetry(1, 100, "STEP0-0", "ON");
-            bool on2 = LightSetWithRetry(2, 100, "STEP0-0", "ON");
+            bool on1 = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "STEP0-0", "ON");
+            bool on2 = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "STEP0-0", "ON");
             if (!on1 || !on2)
-                _logger.Warn($"[STEP 0-0] 光源開啟失敗  CH1={on1} CH2={on2}，請確認光源控制器連線");
+                _logger.Warn($"[STEP 0-0] 光源開啟失敗  CH{_config.LightChannelLeft}={on1} CH{_config.LightChannelRight}={on2}，請確認光源控制器連線");
             else
                 _logger.Info("[STEP 0-0] 光源 CH1+CH2 已開啟 ?");
             progress?.Report("[STEP 0-0] 光源已開啟 ?");
@@ -1610,7 +1648,11 @@ public sealed class MachineController : IDisposable
                     axis.ResetError();
                     await Task.Delay(500, ct);
                     if (axis.GetAlarm())
+                    {
+                        Alarms.Raise($"AxisAlarm:{axisName}", $"{axisName} 警報無法清除，請檢查驅動器");
                         throw new InvalidOperationException($"{axisName} 警報無法清除，請檢查驅動器");
+                    }
+                    Alarms.Clear($"AxisAlarm:{axisName}");
                 }
 
                 if (!axis.GetSVON())
@@ -1621,10 +1663,15 @@ public sealed class MachineController : IDisposable
                         () => axis.GetRDY() && !axis.GetAlarm(),
                         _deviceConnectTimeout, ct);
                     if (!ready)
+                    {
+                        if (axis.GetAlarm())
+                            Alarms.Raise($"AxisAlarm:{axisName}", $"{axisName} 激磁失敗，有警報");
                         throw new InvalidOperationException(
                             $"{axisName} 激磁失敗 (RDY={axis.GetRDY()}, Alarm={axis.GetAlarm()})");
+                    }
                 }
 
+                Alarms.Clear($"AxisAlarm:{axisName}");
                 progress?.Report($"[STEP 0-1] {axisName} 就緒 ?");
             }
 
@@ -1639,8 +1686,8 @@ public sealed class MachineController : IDisposable
             }
 
 
-            _cameraRight.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
-            _cameraLeft.SetFeatureValue(GMExpandParamter.ExposureTime, 36500.0);
+            _cameraRight.SetFeatureValue(GMExpandParamter.ExposureTime, _config.ExposureTimeRight);
+            _cameraLeft.SetFeatureValue(GMExpandParamter.ExposureTime, _config.ExposureTimeLeft);
 
             // ── 依 X12 / X13 訊號選擇 R組 或 L組 Z 軸高度 ──
             bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12 → R組
@@ -1830,8 +1877,8 @@ public sealed class MachineController : IDisposable
             {
                 try
                 {
-                    _lightHB.SetValue(1, 0);
-                    _lightHB.SetValue(2, 0);
+                    _lightHB.SetValue(_config.LightChannelLeft, 0);
+                    _lightHB.SetValue(_config.LightChannelRight, 0);
                     _logger.Info("[DryRun] finally: 光源全關 ?");
                 }
                 catch (Exception ex)
@@ -1876,9 +1923,10 @@ public sealed class MachineController : IDisposable
       
 
         // 影像路徑改由 ImagePathHelper.GetImagePath 統一管理
-        const int LightChLeft = 1;    // 左相機光源通道
-        const int LightChRight = 2;    // 右相機光源通道
-        const int LightPct = 100;  // 亮度 100%（可依需求調整）
+        int LightChLeft = _config.LightChannelLeft;
+        int LightChRight = _config.LightChannelRight;
+        int LightPctLeft = _config.LightIntensityLeft;
+        int LightPctRight = _config.LightIntensityRight;
         const int StabilizeMs = 100;  // 光源穩定等待（ms）
         // Right 相機 ExposureTime=100000μs(100ms)，需等曝光 + Sapera DMA 傳輸完成
         // 取最長曝光 100ms + 100ms 傳輸緩衝 = 200ms → 再加 100ms 安全餘量 = 300ms
@@ -1902,8 +1950,8 @@ public sealed class MachineController : IDisposable
         if (_lightHB != null && _lightHB.IsOpen)
         {
             // 嘗試讀取當前亮度（HighBright 控制器無讀取指令，直接重設確保亮度正確）
-            bool ch1On = LightSetWithRetry(LightChLeft, LightPct, slotLabel, "ENSURE_ON");
-            bool ch2On = LightSetWithRetry(LightChRight, LightPct, slotLabel, "ENSURE_ON");
+            bool ch1On = LightSetWithRetry(LightChLeft, LightPctLeft, slotLabel, "ENSURE_ON");
+            bool ch2On = LightSetWithRetry(LightChRight, LightPctRight, slotLabel, "ENSURE_ON");
             if (!ch1On || !ch2On)
                 _logger.Warn($"[DryRun] {slotLabel} 光源確認/重設失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
         }
@@ -2201,7 +2249,11 @@ public sealed class MachineController : IDisposable
     {
         var axis = Axes[axisName];
         if (axis.GetAlarm())
+        {
+            Alarms.Raise($"AxisAlarm:{axisName}", $"{axisName} 於 {context} 發生警報");
             throw new InvalidOperationException($"{axisName} 於 {context} 發生警報");
+        }
+        Alarms.Clear($"AxisAlarm:{axisName}");
         if (axis.GetPLimit())
             _logger.Warn($"[DryRun] {axisName} 正極限觸發 ({context})");
         if (axis.GetNLimit())

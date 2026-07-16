@@ -118,6 +118,12 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task ConnectAsync()
     {
+        if (!_isEnabled)
+        {
+            LastStatus = MesConnectionStatus.Disabled;
+            WriteLog("INFO", "ConnectAsync 略過（WebAPI 功能已停用）");
+            return;
+        }
         WriteLog("INFO", $"→ ConnectAsync | BaseUrl={_baseUrl}");
         try
         {
@@ -142,6 +148,7 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task<string?> QueryWorkOrderAsync(string equipmentId, string productId)
     {
+        if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return null; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 QueryWorkOrder"); return null; }
         WriteLog("INFO", $"→ QuerySerialNoData | ProductId={productId}");
         try
@@ -173,6 +180,7 @@ public class CimApiClient
         string processStartTime = "",
         string processEndTime   = "")
     {
+        if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 UploadResult"); return; }
         string judge    = pass ? "Pass" : "Fail";
         string startStr = string.IsNullOrEmpty(processStartTime)
@@ -210,6 +218,7 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task ReportRunAsync()
     {
+        if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 ReportRun"); return; }
         WriteLog("INFO", $"→ BumperSoftwareProcessRun | EquipmentId={_equipmentId}");
         try
@@ -226,6 +235,7 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task ReportAlarmAsync()
     {
+        if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 ReportAlarm"); return; }
         WriteLog("INFO", $"→ BumperSoftwareAlarmt | EquipmentId={_equipmentId}");
         try
@@ -242,6 +252,7 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task ReportIdleAsync()
     {
+        if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 ReportIdle"); return; }
         WriteLog("INFO", $"→ BumperSoftwareProcessIdle | EquipmentId={_equipmentId}");
         try
@@ -256,6 +267,7 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     public async Task DisconnectAsync()
     {
+        if (!_isEnabled) return;
         if (_api is null) return;
         WriteLog("INFO", "→ DisconnectAsync");
         try

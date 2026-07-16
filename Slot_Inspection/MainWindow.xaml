@@ -20,6 +20,7 @@
     <Window.Resources>
         <helper:BoolToVisibilityConverter x:Key="BoolToVisConverter"/>
         <helper:BoolToHiddenConverter x:Key="BoolToHiddenConverter"/>
+        <helper:AlarmListToTooltipConverter x:Key="AlarmListToTooltipConverter"/>
         <Style x:Key="SlotNameCellStyle" TargetType="Border">
             <Setter Property="Background" Value="#00B050"/>
             <Setter Property="BorderBrush" Value="#333"/>
@@ -206,8 +207,11 @@
 
                     <!-- 機台運行狀態指示燈：未連線(灰)/待命中(綠)/運行中(藍)/暫停中-光閘(黃)/異常(紅) -->
                     <!-- 不設定固定Width，框線會依RunStateText實際文字長度自動縮放 -->
+                    <!-- 異常時滑鼠移到燈號上可看到目前有哪些具名原因造成紅燈，不用回頭翻log -->
                     <Border DockPanel.Dock="Right" HorizontalAlignment="Right" Background="#FFFFFF" BorderBrush="#999" BorderThickness="1"
-                            CornerRadius="6" Padding="16,6">
+                            CornerRadius="6" Padding="16,6"
+                            ToolTip="{Binding ActiveAlarms, Converter={StaticResource AlarmListToTooltipConverter}}"
+                            ToolTipService.ShowOnDisabled="True">
                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Ellipse Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,10,0">
                                 <Ellipse.Style>
@@ -552,7 +556,7 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="11" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
+            <UniformGrid Grid.Row="2" Columns="12" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
 
                 <Button Content="⚙ Setting"
                         Command="{Binding LightSettingsCommand}"
@@ -564,6 +568,12 @@
                         FontSize="11" Padding="4,4"
                         Background="#FFE0B2" FontWeight="Bold"
                         ToolTip="按下：暫時暫停光閘保護（光閘觸發不中斷流程）；再按一次恢復正常"/>
+                <Button Content="{Binding BoardSensorBypassButtonText}"
+                        Command="{Binding ToggleBoardSensorBypassCommand}"
+                        FontSize="11" Padding="4,4"
+                        Background="#F8CECC" FontWeight="Bold"
+                        Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                        ToolTip="Admin專用：暫時忽略 X3/X11 雷射感測（板子放置檢查），讓 RUN 不被卡住；再按一次恢復正常判斷"/>
                 <Button Content="CSV Result" FontSize="11" Padding="4,4"
                         Command="{Binding OpenResultFolderCommand}"
                         ToolTip="開啟 CSV 報表資料夾"/>
