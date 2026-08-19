@@ -107,4 +107,28 @@ public static class AxisRecipeManager
         if (Directory.Exists(dir))
             Directory.Delete(dir, recursive: true);
     }
+
+    private static string QcBaselinePath(string name) => Path.Combine(AlgFolderPath(name), "QcBaseline.json");
+
+    /// <summary>是否已有這個 Recipe 的 QC 基準快照。</summary>
+    public static bool HasBaseline(string name) => File.Exists(QcBaselinePath(name));
+
+    /// <summary>儲存（或覆寫）一份 Recipe 的 QC 基準快照。</summary>
+    public static void SaveBaseline(string name, QcBaselineData data)
+    {
+        string dir = AlgFolderPath(name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(QcBaselinePath(name), JsonSerializer.Serialize(data, JsonOpts));
+    }
+
+    /// <summary>讀取一份 Recipe 的 QC 基準快照；找不到檔案或解析失敗時丟例外，由呼叫端顯示錯誤訊息。</summary>
+    public static QcBaselineData LoadBaseline(string name)
+    {
+        string path = QcBaselinePath(name);
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"找不到 QC 基準檔案：{path}");
+
+        var data = JsonSerializer.Deserialize<QcBaselineData>(File.ReadAllText(path), JsonOpts);
+        return data ?? throw new InvalidDataException($"QC 基準檔案內容無法解析：{path}");
+    }
 }

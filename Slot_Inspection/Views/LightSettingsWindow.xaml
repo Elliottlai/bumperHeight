@@ -102,6 +102,50 @@
                 </StackPanel>
             </TabItem>
 
+            <!-- Tab 4: board sensor pause (Admin only) -->
+            <TabItem Header="🛑 板子感測" Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}">
+                <StackPanel Margin="16,16,16,8" VerticalAlignment="Center">
+                    <CheckBox Content="停用 X3 板子感測" FontWeight="Bold" Margin="0,0,0,12"
+                              IsChecked="{Binding PauseX3BoardSensor}"/>
+                    <CheckBox Content="停用 X11 板子感測" FontWeight="Bold" Margin="0,0,0,12"
+                              IsChecked="{Binding PauseX11BoardSensor}"/>
+                    <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="#999" TextWrapping="Wrap"
+                               Text="停用後，即使該感測器偵測到板子未放妥，也不會擋下 RUN，僅供排除感測器異常時應急使用。按 OK 儲存至 config.json 後立即生效。"/>
+                </StackPanel>
+            </TabItem>
+
+            <!-- Tab 5: QC baseline tolerance -->
+            <TabItem Header="🎯 QC 容差">
+                <Grid Margin="16,16,16,8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="12"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="12"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="16"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
+                        <TextBlock Text="Value 容差 (mm²)" Style="{StaticResource RowLabel}"/>
+                        <TextBox Style="{StaticResource NumBox}"
+                                 Text="{Binding QcToleranceValue, UpdateSourceTrigger=LostFocus}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="2" Orientation="Horizontal">
+                        <TextBlock Text="亮度容差" Style="{StaticResource RowLabel}"/>
+                        <TextBox Style="{StaticResource NumBox}"
+                                 Text="{Binding QcToleranceMeanIntensity, UpdateSourceTrigger=LostFocus}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="4" Orientation="Horizontal">
+                        <TextBlock Text="位置偏移容差 (mm)" Style="{StaticResource RowLabel}"/>
+                        <TextBox Style="{StaticResource NumBox}"
+                                 Text="{Binding QcToleranceDistanceToRoiCenter, UpdateSourceTrigger=LostFocus}"/>
+                    </StackPanel>
+                    <TextBlock Grid.Row="6" FontSize="11" Foreground="#999" TextWrapping="Wrap"
+                               Text="QC 基準比對時，任一欄位與基準值差異超過此容差即標記為異常。按 OK 儲存至 config.json。"/>
+                </Grid>
+            </TabItem>
+
         </TabControl>
 
         <!-- footer buttons -->

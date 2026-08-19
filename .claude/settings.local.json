@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.anthropic.com)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "PowerShell(Get-CimInstance *)",
+      "PowerShell($r = Invoke-RestMethod -Uri \"https://api.github.com/repos/dliedke/ClaudeCodeExtension/releases/latest\"; $r.tag_name; $r.assets | Select-Object name, browser_download_url, size)",
+      "PowerShell($files = Invoke-RestMethod -Uri \"https://api.github.com/repos/dliedke/ClaudeCodeExtension/contents/\"; $files | Where-Object { $_.name -match 'vsix|zip' } | Select-Object name, size, download_url; $files.name)",
+      "PowerShell(\\(New-Object Net.WebClient\\).DownloadString\\(\"https://raw.githubusercontent.com/dliedke/ClaudeCodeExtension/master/source.extension.vsixmanifest\"\\))",
+      "PowerShell($body = '{\"filters\":[{\"criteria\":[{\"filterType\":7,\"value\":\"dliedke.ClaudeCodeExtension\"}]}],\"flags\":914}'; $r = Invoke-RestMethod -Method Post -Uri \"https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery\" -Body $body -ContentType \"application/json\" -Headers @{Accept=\"application/json;api-version=3.0-preview.1\"}; $ext = $r.results[0].extensions[0]; $ext.displayName; $ver = $ext.versions[0]; $ver.version; $ver.files | Select-Object assetType, source)",
+      "PowerShell($body = '{\"filters\":[{\"criteria\":[{\"filterType\":7,\"value\":\"dliedke.ClaudeCodeExtension\"}]}],\"flags\":914}'; $r = Invoke-RestMethod -Method Post -Uri \"https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery\" -Body $body -ContentType \"application/json\" -Headers @{Accept=\"application/json;api-version=3.0-preview.1\"}; $url = \\($r.results[0].extensions[0].versions[0].files | Where-Object assetType -eq 'ClaudeCodeExtension.vsix'\\).source; $url; $out = \"$env:TEMP\\\\ClaudeCodeExtension_11.0.vsix\"; Invoke-WebRequest -Uri $url -OutFile $out; \\(Get-Item $out\\).Length/1MB)",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Test-Path *)",
+      "Bash(git -C \"D:\\\\0611_Slot_Inspection\" log --oneline -5)",
+      "Bash(git -C \"D:\\\\0611_Slot_Inspection\" diff --stat HEAD~1)",
+      "Bash(xargs wc -l)",
+      "PowerShell(dotnet build *)",
+      "Bash(git -C \"D:\\\\0611_Slot_Inspection\" stash list)",
+      "Bash(git -C \"D:\\\\0611_Slot_Inspection\" status --short)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\18\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"D:\\\\0611_Slot_Inspection\\\\Slot_Inspection\\\\Slot_Inspection.csproj\" -t:Build -restore -v:q -nologo -p:Configuration=Debug | Select-String -Pattern \"error|錯誤\" | Select-Object -First 30; \"ExitCode=$LASTEXITCODE\")",
+      "Bash(git *)",
+      "Bash(xargs -I{} wc -l {})",
+      "Bash(grep -v \"Network\\\\\\\\\\\\\\\\TCPComm.cs\")",
+      "Bash(xargs grep -l -iE \"server|listener|HttpListener|Controller|\\\\[Route|\\\\[ApiController|Kestrel|WebHost\")"
+    ]
+  }
+}

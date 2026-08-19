@@ -112,6 +112,21 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// 立即停止所有軸（供 STOP 按鈕使用）。
+    /// 取消 CancellationToken 只能阻止「軟體之後再送出新的移動指令」，
+    /// 無法中斷已送出的 MotMoveAbs（TriggerPr1 是 fire-and-forget，驅動器會自己跑完該段行程），
+    /// 所以 STOP 必須直接對軸體下 MotStop(isImmediate:true) 才能讓軸真正停在原地。
+    /// </summary>
+    public void StopAllAxesImmediate(string reason)
+    {
+        foreach (var axisName in _axisNames)
+            if (Axes.TryGetValue(axisName, out var ax))
+                try { ax.MotStop(isImmediate: true); }
+                catch (Exception ex) { _logger.Warn(ex, $"[StopAllAxesImmediate] {axisName} MotStop 失敗"); }
+        _logger.Info($"[StopAllAxesImmediate] 所有軸已下達立即停止指令，原因：{reason}");
+    }
+
+    /// <summary>
     /// 若目前處於暫停狀態則以 polling 等待，直到 ResumeDryRun() 被呼叫或取消。
     /// 使用簡單的 volatile bool + Task.Delay polling，
     /// 避免每次 pause/resume 建立 TaskCompletionSource 導致效能退化。
@@ -817,7 +832,7 @@ public sealed class MachineController : IDisposable
             bool lightOnL = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "S03", "ON");
             bool lightOnR = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "S03", "ON");
             if (!lightOnL || !lightOnR)
-                _logger.Warn($"[S03] 光源開啟失敗  CH{_config.LightChannelLeft}={lightOnL} CH{_config.LightChannelRight}={lightOnR}，請確認光源控制器連線");
+                _logger.Warn($"[S03] 光源開啟失敗  CH{_config.LightChannelLeft}={lightOnL} CH{_config.LightChannelRight}={lightOnR}，{DescribeLightFailureReason(_lightHB?.LastUnexpectedResponse)}");
             await Task.Delay(_config.LightStabilizeMs, ct);
             _logger.Info("[S03] Lights ON (all-slots mode)");
         }
@@ -1245,9 +1260,12 @@ public sealed class MachineController : IDisposable
             }
 
             // ── 等 ZL/ZR/X 完成，逾時才安全讓 Y 動 ──
-            bool nonYDone = await WaitHomeWithSafetyAsync(nonYAxes, _axisHomeTimeout, ct);
+            // Delta 驅動器的 Home() 是把賦歸路徑整個交給驅動器內部搜尋（P5.007 觸發），
+            // 軟體無法控制它下降多少，因此在等待期間即時監控 ZL/ZR 實際位置，
+            // 逼近拍照高度（撞機風險區）就立即停軸，避免撞到載台上的板子。
+            bool nonYDone = await WaitHomeWithSafetyAsync(nonYAxes, _axisHomeTimeout, ct, BuildZHomeDangerThresholds());
             if (!nonYDone)
-                return DeviceInitResult.Fail(name, $"X/ZL/ZR Home timeout");
+                return DeviceInitResult.Fail(name, $"X/ZL/ZR Home timeout 或 Z 軸下降超出安全範圍");
 
             // ── Step 2：再 home Y ──
             progress?.Report("Y 軸歸原點...");
@@ -1292,10 +1310,34 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// ZL/ZR 原點賦歸期間允許下降的安全餘裕（mm）。
+    /// Delta 驅動器 Home() 內部搜尋路徑會下降多少不受軟體控制，
+    /// 只能監控實際位置，逼近拍照高度前先停軸。
+    /// </summary>
+    private const double HomeDescentSafetyMarginMm = 3.0;
+
+    /// <summary>
+    /// 計算 ZL/ZR 原點賦歸期間的下降安全上限：
+    /// 取 R組/L組 CameraHeight（拍照高度，即撞機風險區）中較保守（較小）的值，再扣安全餘裕。
+    /// 賦歸當下不一定知道是哪一組載台，所以用兩組中較危險的當基準。
+    /// </summary>
+    private Dictionary<string, double> BuildZHomeDangerThresholds()
+    {
+        return new Dictionary<string, double>
+        {
+            ["AxisZL"] = Math.Min(_config.CameraHeightZL_R, _config.CameraHeightZL_L) - HomeDescentSafetyMarginMm,
+            ["AxisZR"] = Math.Min(_config.CameraHeightZR_R, _config.CameraHeightZR_L) - HomeDescentSafetyMarginMm,
+        };
+    }
+
+    /// <summary>
     /// 等待所有軸完成原點賦歸，並同時監控 X7 光閘訊號。
     /// X7=0 → 立即停軸 → 等待 X10=1（上升邊緣）→ 重新發出 Home 指令 → 繼續等待。
+    /// 若提供 zDangerThresholds，會同時監控對應軸的實際位置，逼近危險高度立即停軸並回傳 false。
     /// </summary>
-    private async Task<bool> WaitHomeWithSafetyAsync(string[] nonYAxes, TimeSpan HomeTimeout, CancellationToken ct)
+    private async Task<bool> WaitHomeWithSafetyAsync(
+        string[] nonYAxes, TimeSpan HomeTimeout, CancellationToken ct,
+        Dictionary<string, double>? zDangerThresholds = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         const int DebounceCount = 3;
@@ -1304,6 +1346,28 @@ public sealed class MachineController : IDisposable
         while (sw.Elapsed < _axisHomeTimeout)
         {
             ct.ThrowIfCancellationRequested();
+
+            // ── Z 軸下降安全監控：逼近拍照高度（撞機風險區）立即停軸 ──
+            if (zDangerThresholds != null)
+            {
+                foreach (var axisName in nonYAxes)
+                {
+                    if (!zDangerThresholds.TryGetValue(axisName, out var dangerLimit)) continue;
+                    if (!Axes.TryGetValue(axisName, out var zAxis)) continue;
+
+                    double pos = zAxis.GetRealPosition();
+                    if (pos >= dangerLimit)
+                    {
+                        foreach (var n in nonYAxes)
+                            if (Axes.TryGetValue(n, out var ax)) try { ax.MotStop(isImmediate: true); } catch { }
+
+                        _logger.Error($"[Home] {axisName} 原點賦歸下降超出安全範圍（實際={pos:F2} mm，上限={dangerLimit:F2} mm），已緊急停止");
+                        Alarms.Raise($"AxisHomeDanger:{axisName}",
+                            $"{axisName} 原點賦歸下降超出安全範圍（實際={pos:F2} mm），已緊急停止，請人工確認後再重新賦歸");
+                        return false;
+                    }
+                }
+            }
 
             // X7 光閘偵測（暫時停用）
             //bool? x7 = GetPlcXOctal(7);
@@ -1628,10 +1692,16 @@ public sealed class MachineController : IDisposable
             bool on1 = LightSetWithRetry(_config.LightChannelLeft,  _config.LightIntensityLeft,  "STEP0-0", "ON");
             bool on2 = LightSetWithRetry(_config.LightChannelRight, _config.LightIntensityRight, "STEP0-0", "ON");
             if (!on1 || !on2)
-                _logger.Warn($"[STEP 0-0] 光源開啟失敗  CH{_config.LightChannelLeft}={on1} CH{_config.LightChannelRight}={on2}，請確認光源控制器連線");
+            {
+                string reason = DescribeLightFailureReason(_lightHB?.LastUnexpectedResponse);
+                _logger.Warn($"[STEP 0-0] 光源開啟失敗  CH{_config.LightChannelLeft}={on1} CH{_config.LightChannelRight}={on2}，{reason}");
+                progress?.Report($"⚠ [STEP 0-0] 光源開啟失敗：{reason}");
+            }
             else
+            {
                 _logger.Info("[STEP 0-0] 光源 CH1+CH2 已開啟 ?");
-            progress?.Report("[STEP 0-0] 光源已開啟 ?");
+                progress?.Report("[STEP 0-0] 光源已開啟 ?");
+            }
 
             // STEP 0-1：確認 Y / ZL / ZR 軸已激磁且無警報
             progress?.Report("[STEP 0-1] 確認軸狀態...");
@@ -1826,11 +1896,10 @@ public sealed class MachineController : IDisposable
             foreach (var axisName in dryRunHomeAxes)
                 if (Axes.TryGetValue(axisName, out var ax)) ax.Home();
 
-            bool homeDone = await WaitUntilAsync(
-                () => dryRunHomeAxes.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()),
-                _axisHomeTimeout, ct);
+            // 與 HomeAllAxesAsync 相同：Home() 下降幅度不受軟體控制，監控實際位置避免撞機
+            bool homeDone = await WaitHomeWithSafetyAsync(dryRunHomeAxes, _axisHomeTimeout, ct, BuildZHomeDangerThresholds());
             if (!homeDone)
-                _logger.Warn("[STEP 2] ZL/ZR 回原點逾時，請確認軸狀態");
+                _logger.Warn("[STEP 2] ZL/ZR 回原點逾時或下降超出安全範圍，請確認軸狀態");
             else
                 progress?.Report("[STEP 2] ZL+ZR 已回原點 ?");
 
@@ -1953,7 +2022,7 @@ public sealed class MachineController : IDisposable
             bool ch1On = LightSetWithRetry(LightChLeft, LightPctLeft, slotLabel, "ENSURE_ON");
             bool ch2On = LightSetWithRetry(LightChRight, LightPctRight, slotLabel, "ENSURE_ON");
             if (!ch1On || !ch2On)
-                _logger.Warn($"[DryRun] {slotLabel} 光源確認/重設失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}");
+                _logger.Warn($"[DryRun] {slotLabel} 光源確認/重設失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}，{DescribeLightFailureReason(_lightHB?.LastUnexpectedResponse)}");
         }
         await Task.Delay(StabilizeMs, ct);
 
@@ -2261,6 +2330,21 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// 依 HighBright 最近一次非預期回應，組出操作員看得懂的具體原因。
+    /// 目前已知：控制器面板被切到「VR Mode」（本機旋鈕手動控制）時，會拒絕所有 RS-232 遠端調光指令，
+    /// 此時軟體端不管送 0% 還是 100% 都不會生效，必須先在控制器面板切回遠端/RS232 控制模式。
+    /// </summary>
+    private static string DescribeLightFailureReason(string? lastUnexpectedResponse)
+    {
+        if (!string.IsNullOrEmpty(lastUnexpectedResponse) &&
+            lastUnexpectedResponse.Contains("VR Mode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "光源控制器目前為面板手動模式（VR Mode），已拒絕遠端調光指令，請至控制器面板切換為遠端/RS232 控制模式後再試";
+        }
+        return "請確認光源控制器連線";
+    }
+
+    /// <summary>
     /// 光源設值（含 retry 與詳細 Log）。
     /// HighBright 控制器有時因串口回應慢而 Timeout，最多重試 2 次。
     /// </summary>
@@ -2293,6 +2377,39 @@ public sealed class MachineController : IDisposable
                 Thread.Sleep(50); // 短暫等待後重試
         }
 
+        return false;
+    }
+
+    /// <summary>
+    /// 立即將亮度設定值送到已連線的 HighBright 光源控制器（亮度設定視窗按 OK 時呼叫），
+    /// 讓操作員能馬上肉眼確認實際變化，不必等到下一次 S03/DryRun 開燈才套用（避免「調了沒反應」）。
+    /// 模擬模式下沒有硬體可套用，視為成功但會在 message 註明。
+    /// </summary>
+    public bool TryApplyLightIntensityNow(int leftPercent, int rightPercent, out string message)
+    {
+        if (SimulationMode)
+        {
+            message = "模擬模式，未實際送出光源指令";
+            return true;
+        }
+
+        if (_lightHB == null || !_lightHB.IsOpen)
+        {
+            message = "光源控制器尚未連線，設定僅先存檔，將於下次開燈時套用";
+            return false;
+        }
+
+        bool okL = LightSetWithRetry(_config.LightChannelLeft, leftPercent, "LightSettings", "SET");
+        bool okR = LightSetWithRetry(_config.LightChannelRight, rightPercent, "LightSettings", "SET");
+
+        if (okL && okR)
+        {
+            message = "已即時套用至光源硬體";
+            return true;
+        }
+
+        string reason = DescribeLightFailureReason(_lightHB.LastUnexpectedResponse);
+        message = $"光源指令未成功送達（CH{_config.LightChannelLeft}={(okL ? "OK" : "失敗")}, CH{_config.LightChannelRight}={(okR ? "OK" : "失敗")}）：{reason}";
         return false;
     }
 

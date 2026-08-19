@@ -1,10 +1,11 @@
+using System.Windows;
 using Slot_Inspection.Models;
 
 namespace Slot_Inspection.ViewModels;
 
 /// <summary>
 /// 亮度設定視窗的 ViewModel。
-/// 持有左/右相機亮度、Value 上下極限、以及（Admin限定）曝光時間的可編輯副本，按 OK 後呼叫端再寫回 config。
+/// 持有左/右相機亮度、Value 上下極限、（Admin限定）曝光時間、以及（Admin限定）X3/X11 板子感測個別停用設定的可編輯副本，按 OK 後呼叫端再寫回 config。
 /// </summary>
 public sealed class LightSettingsViewModel : ObservableObject
 {
@@ -14,6 +15,11 @@ public sealed class LightSettingsViewModel : ObservableObject
     private double _valueLimitHigh;
     private double _exposureTimeLeft;
     private double _exposureTimeRight;
+    private bool _pauseX3BoardSensor;
+    private bool _pauseX11BoardSensor;
+    private double _qcToleranceValue;
+    private double _qcToleranceMeanIntensity;
+    private double _qcToleranceDistanceToRoiCenter;
 
     public int LightIntensityLeft
     {
@@ -53,17 +59,83 @@ public sealed class LightSettingsViewModel : ObservableObject
         set => SetProperty(ref _exposureTimeRight, Math.Max(1.0, value));
     }
 
-    /// <summary>目前登入者是否為 Admin；決定曝光時間 Tab 是否顯示（由呼叫端傳入，不在此判斷角色）。</summary>
+    /// <summary>目前登入者是否為 Admin；決定曝光時間 Tab、板子感測停用 Tab 是否顯示（由呼叫端傳入，不在此判斷角色）。</summary>
     public bool IsAdmin { get; }
+
+    public double QcToleranceValue
+    {
+        get => _qcToleranceValue;
+        set => SetProperty(ref _qcToleranceValue, value);
+    }
+
+    public double QcToleranceMeanIntensity
+    {
+        get => _qcToleranceMeanIntensity;
+        set => SetProperty(ref _qcToleranceMeanIntensity, value);
+    }
+
+    public double QcToleranceDistanceToRoiCenter
+    {
+        get => _qcToleranceDistanceToRoiCenter;
+        set => SetProperty(ref _qcToleranceDistanceToRoiCenter, value);
+    }
+
+    /// <summary>是否停用 X3 板子放置感測判斷。勾選（false→true）時會跳出安全確認對話框。</summary>
+    public bool PauseX3BoardSensor
+    {
+        get => _pauseX3BoardSensor;
+        set
+        {
+            if (_pauseX3BoardSensor == value) return;
+            if (value && !ConfirmPauseSensor("X3"))
+            {
+                OnPropertyChanged(); // 使用者取消：UI 需重新查詢 getter，讓 CheckBox 復原為未勾選
+                return;
+            }
+            SetProperty(ref _pauseX3BoardSensor, value);
+        }
+    }
+
+    /// <summary>是否停用 X11 板子放置感測判斷。勾選（false→true）時會跳出安全確認對話框。</summary>
+    public bool PauseX11BoardSensor
+    {
+        get => _pauseX11BoardSensor;
+        set
+        {
+            if (_pauseX11BoardSensor == value) return;
+            if (value && !ConfirmPauseSensor("X11"))
+            {
+                OnPropertyChanged();
+                return;
+            }
+            SetProperty(ref _pauseX11BoardSensor, value);
+        }
+    }
+
+    private static bool ConfirmPauseSensor(string signalName)
+    {
+        var confirm = MessageBox.Show(
+            $"停用後將完全忽略 {signalName} 板子放置感測，即使該感測器偵測到異常也不會擋下 RUN。\n" +
+            "僅供排除感測器異常時應急使用，請確認板子實際狀態後再繼續。\n\n是否確定停用？",
+            $"停用 {signalName} 板子感測（Admin）",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        return confirm == MessageBoxResult.Yes;
+    }
 
     public LightSettingsViewModel(InspectionConfig config, bool isAdmin)
     {
-        _lightIntensityLeft  = config.LightIntensityLeft;
-        _lightIntensityRight = config.LightIntensityRight;
-        _valueLimitLow       = config.ValueLimitLow;
-        _valueLimitHigh      = config.ValueLimitHigh;
-        _exposureTimeLeft    = config.ExposureTimeLeft;
-        _exposureTimeRight   = config.ExposureTimeRight;
+        _lightIntensityLeft   = config.LightIntensityLeft;
+        _lightIntensityRight  = config.LightIntensityRight;
+        _valueLimitLow        = config.ValueLimitLow;
+        _valueLimitHigh       = config.ValueLimitHigh;
+        _exposureTimeLeft     = config.ExposureTimeLeft;
+        _exposureTimeRight    = config.ExposureTimeRight;
+        _pauseX3BoardSensor   = config.PauseX3BoardSensor;
+        _pauseX11BoardSensor  = config.PauseX11BoardSensor;
+        _qcToleranceValue               = config.QcToleranceValue;
+        _qcToleranceMeanIntensity       = config.QcToleranceMeanIntensity;
+        _qcToleranceDistanceToRoiCenter = config.QcToleranceDistanceToRoiCenter;
         IsAdmin = isAdmin;
     }
 
@@ -76,6 +148,11 @@ public sealed class LightSettingsViewModel : ObservableObject
         config.ValueLimitHigh      = ValueLimitHigh;
         config.ExposureTimeLeft    = ExposureTimeLeft;
         config.ExposureTimeRight   = ExposureTimeRight;
+        config.PauseX3BoardSensor  = PauseX3BoardSensor;
+        config.PauseX11BoardSensor = PauseX11BoardSensor;
+        config.QcToleranceValue               = QcToleranceValue;
+        config.QcToleranceMeanIntensity       = QcToleranceMeanIntensity;
+        config.QcToleranceDistanceToRoiCenter = QcToleranceDistanceToRoiCenter;
         config.Save();
     }
 }

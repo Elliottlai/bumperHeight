@@ -51,6 +51,16 @@ public partial class MainWindow : Window
             vm.ToggleSimBoardMisplaced();
             e.Handled = true;
         }
+
+        // 模擬模式下按 E 鍵切換 EMO(X0) 觸發狀態，測試按下 EMO 後的畫面/流程行為
+        if (e.Key == Key.E
+            && DataContext is MainViewModel vm2
+            && vm2.IsSimulationMode
+            && e.OriginalSource is not System.Windows.Controls.TextBox)
+        {
+            vm2.ToggleSimEmo();
+            e.Handled = true;
+        }
     }
 
 }

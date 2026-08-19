@@ -1,4 +1,5 @@
 {
+  "AreaCorrectionFactor": 1.33,
   "OpeningKernelSize": 7,
   "TargetArea": 40000,
   "TriangleSpec": {

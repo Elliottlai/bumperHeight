@@ -191,13 +191,37 @@
         <Grid Width="1366" Height="780">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="36"/>
                 <RowDefinition Height="44"/>
             </Grid.RowDefinitions>
 
+            <!-- EMO 緊急停止 常駐警示橫幅：獨立佔一列（不用疊層），Visibility=Collapsed 時列高自動收成 0，
+                 不會佔位也不會蓋住 Header 的帳號/登出等按鈕。只要 IsEmoTriggered=true 就一直顯示，
+                 EMO 復歸（軟體偵測到 X0 恢復正常）後自動消失，不需要操作員按確認。 -->
+            <Border Grid.Row="0" HorizontalAlignment="Stretch"
+                    Background="#E60000" BorderBrush="#8B0000" BorderThickness="0,0,0,3"
+                    Padding="0,14"
+                    Visibility="{Binding IsEmoTriggered, Converter={StaticResource BoolToVisConverter}}">
+                <Border.Triggers>
+                    <EventTrigger RoutedEvent="Border.Loaded">
+                        <BeginStoryboard>
+                            <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                  From="1.0" To="0.55" Duration="0:0:0.6"/>
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </EventTrigger>
+                </Border.Triggers>
+                <TextBlock Text="⚠ 緊急停止（EMO）已觸發！機台動作已中斷，請確認安全並復歸 EMO 後，重新執行原點賦歸"
+                           Foreground="White" FontSize="22" FontWeight="Bold"
+                           HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+            </Border>
+
             <!-- Header -->
-            <Border Grid.Row="0" Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" Margin="12,12,12,8" Padding="18,10"
+            <Border Grid.Row="1" Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" Margin="12,12,12,8" Padding="18,10"
                     IsEnabled="{Binding IsUnlocked}">
                 <DockPanel LastChildFill="False">
                     <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
@@ -238,13 +262,6 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- 模擬模式警示banner：開啟時顯著標示，避免操作者忘記目前顯示的是假資料而誤判為實際量測結果 -->
-                    <Border DockPanel.Dock="Right" HorizontalAlignment="Right" Background="#E67E22" BorderBrush="#A04000"
-                            BorderThickness="1" CornerRadius="6" Padding="12,6" Margin="0,0,12,0"
-                            Visibility="{Binding IsSimulationMode, Converter={StaticResource BoolToVisConverter}}">
-                        <TextBlock Text="🧪 模擬模式（非實際量測結果）" Foreground="White" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
-                    </Border>
-
                     <!-- 帳號相關按鈕：緊靠在狀態燈左側，不影響狀態燈本身的位置 -->
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
                         <TextBlock Text="{Binding CurrentUserDisplay}" VerticalAlignment="Center" FontSize="14" Margin="0,0,12,0"/>
@@ -265,8 +282,17 @@
                 </DockPanel>
             </Border>
 
+            <!-- 模擬模式警示：獨立佔一列，避免跟 Header 帳號按鈕搶版面（曾經因為擠壓導致「角色權限設定」「登出」按鈕被蓋住/擠出畫面）。
+                 開啟時顯著標示，避免操作者忘記目前顯示的是假資料而誤判為實際量測結果；Visibility=Collapsed 時列高自動收成 0，不佔位。 -->
+            <Border Grid.Row="2" HorizontalAlignment="Stretch" Background="#E67E22" BorderBrush="#A04000" BorderThickness="0,0,0,2"
+                    Padding="0,6"
+                    Visibility="{Binding IsSimulationMode, Converter={StaticResource BoolToVisConverter}}">
+                <TextBlock Text="🧪 模擬模式（非實際量測結果）" Foreground="White" FontWeight="Bold" FontSize="16"
+                           HorizontalAlignment="Center"/>
+            </Border>
+
             <!-- Main content -->
-            <Border Grid.Row="1" Background="#F8F8F8" BorderBrush="#444" BorderThickness="1" Margin="12,0,12,0"
+            <Border Grid.Row="3" Background="#F8F8F8" BorderBrush="#444" BorderThickness="1" Margin="12,0,12,0"
                     IsEnabled="{Binding IsUnlocked}">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
@@ -556,7 +582,7 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="2" Columns="12" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
+            <UniformGrid Grid.Row="4" Columns="12" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
 
                 <Button Content="⚙ Setting"
                         Command="{Binding LightSettingsCommand}"
@@ -567,7 +593,7 @@
                         Command="{Binding ToggleLightGateBypassCommand}"
                         FontSize="11" Padding="4,4"
                         Background="#FFE0B2" FontWeight="Bold"
-                        ToolTip="按下：暫時暫停光閘保護（光閘觸發不中斷流程）；再按一次恢復正常"/>
+                        ToolTip="按下：進入上料/下料模式（光閘觸發不中斷流程，供人工上料/下料使用）；按下 RUN 或再按一次會自動恢復正常光閘防護"/>
                 <Button Content="{Binding BoardSensorBypassButtonText}"
                         Command="{Binding ToggleBoardSensorBypassCommand}"
                         FontSize="11" Padding="4,4"
@@ -591,7 +617,7 @@
                           Visibility="{Binding IsAdmin, Converter={StaticResource BoolToHiddenConverter}}"
                           FontSize="11"
                           ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
-                <CheckBox Content="⏱ ZL/ZR 安定延遲"
+                <CheckBox Content="⏱ 安定延遲"
                           IsChecked="{Binding EnableAxisSettleDelay}"
                           IsEnabled="{Binding CanToggleAxisSettleDelay}"
                           VerticalContentAlignment="Center"
@@ -611,12 +637,12 @@
                         Background="#FFF2CC" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
                         ToolTip="Y 軸移動到取料位置的座標"/>
-                <Button Content="📍 座標設定"
+                <Button Content="📦 料號切換"
                         Command="{Binding PositionSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
                         Background="#E2EFDA" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
-                        ToolTip="調整 Y / X / ZL / ZR / Z安全高度座標"/>
+                        ToolTip="切換／備份／刪除料號設定；也可在此微調 Y / X / ZL / ZR / Z安全高度座標"/>
                 <Button Content="✂ 裁切設定"
                         Command="{Binding CropSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
@@ -632,7 +658,7 @@
             </UniformGrid>
 
             <!-- Footer -->
-            <Border Grid.Row="3" Background="#2E86C1" Margin="12,0,12,12">
+            <Border Grid.Row="5" Background="#2E86C1" Margin="12,0,12,12">
                 <Grid Margin="16,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -647,9 +673,12 @@
                                FontSize="14"
                                TextTrimming="CharacterEllipsis"/>
 
-                    <!-- 右半：MES 連線狀態 -->
+                    <!-- 右半：目前料號 + MES 連線狀態 -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- 目前套用中的料號：唯讀顯示，實際切換仍走「料號切換」視窗 -->
+                        <TextBlock Text="{Binding CurrentRecipeDisplay, StringFormat='📦 目前料號：{0}'}"
+                                   FontSize="13" Foreground="White" VerticalAlignment="Center" Margin="0,0,20,0"/>
                         <Ellipse Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,6,0">
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">
@@ -676,7 +705,7 @@
                  這裡只負責擋互動＋顯示狀態說明，不提供密碼輸入框，避免跟LoginWindow疊出兩份輸入介面。
                  「重新登入」按鈕是因為使用者若直接把跳出的LoginWindow關掉/取消，該視窗就消失了，
                  鎖定畫面必須留一個入口能再叫出一次，否則會卡在「鎖定中卻沒有任何可操作介面」。 -->
-            <Grid Grid.RowSpan="4" Background="#CC000000"
+            <Grid Grid.RowSpan="6" Background="#CC000000"
                   Visibility="{Binding IsLocked, Converter={StaticResource BoolToVisConverter}}">
                 <Border Background="#EFEFEF" BorderBrush="#999" BorderThickness="1" CornerRadius="8"
                         Width="320" Height="150" HorizontalAlignment="Center" VerticalAlignment="Center">

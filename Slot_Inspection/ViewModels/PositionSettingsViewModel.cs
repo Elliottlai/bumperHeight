@@ -61,6 +61,21 @@ public sealed class PositionSettingsViewModel : ObservableObject
     /// <summary>目前登入的使用者，由 MainViewModel.OnPositionSettings 設定，供Recipe操作寫Audit Log用。</summary>
     public UserAccount? CurrentUser { get; set; }
 
+    /// <summary>是否有權限操作 QC 基準比對（由 MainViewModel.OnPositionSettings 依角色權限設定）。</summary>
+    public bool CanUseQcRecipe { get; init; }
+
+    /// <summary>開啟此視窗當下，AreaA 的最新量測結果快照，供「存為QC基準」/「QC比對」使用。</summary>
+    public IReadOnlyList<SlotItem> CurrentMeasurementsAreaA { get; init; } = [];
+
+    /// <summary>開啟此視窗當下，AreaB 的最新量測結果快照，供「存為QC基準」/「QC比對」使用。</summary>
+    public IReadOnlyList<SlotItem> CurrentMeasurementsAreaB { get; init; } = [];
+
+    /// <summary>供 QC 基準比對讀取容差設定；由 LoadFrom 一併帶入。</summary>
+    public InspectionConfig? Config => _config;
+
+    /// <summary>開啟此視窗當下的條碼快照，供「QC比對」寫入報表時記錄用。</summary>
+    public string CurrentBarcode { get; init; } = "";
+
     private string _selectedRecipeName = "";
     /// <summary>Recipe 選擇/輸入框目前的名稱（讀取/建立/刪除皆以此為對象）。</summary>
     public string SelectedRecipeName

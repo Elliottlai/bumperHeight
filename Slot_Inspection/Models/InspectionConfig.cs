@@ -56,6 +56,18 @@ public sealed class InspectionConfig
     /// </summary>
     public int AxisSettleDelayMs { get; set; } = 150;
 
+    // =========================================
+    //  板子感測（X3/X11）個別停用設定（Admin 限定）
+    //  與 MainViewModel 的「暫停板子感測」快捷按鈕（同時忽略 X3+X11、不持久化）並存，
+    //  這裡是可分開停用單一訊號、寫入設定檔持久化的細部設定。
+    // =========================================
+
+    /// <summary>是否停用 X3 板子放置感測判斷（停用後該訊號永遠視為正常）。</summary>
+    public bool PauseX3BoardSensor { get; set; } = false;
+
+    /// <summary>是否停用 X11 板子放置感測判斷（停用後該訊號永遠視為正常）。</summary>
+    public bool PauseX11BoardSensor { get; set; } = false;
+
     // -- NG threshold --
     public double NgThresholdLow { get; set; } = 0.40;
     public double NgThresholdHigh { get; set; } = 0.60;
@@ -63,6 +75,11 @@ public sealed class InspectionConfig
     // -- Value limit (mm^2) --
     public double ValueLimitLow  { get; set; } = 0.0;
     public double ValueLimitHigh { get; set; } = 999.0;
+
+    // -- QC 基準比對容差（與 QC Recipe 基準值比較時，超過即標記異常）--
+    public double QcToleranceValue { get; set; } = 0.05;
+    public double QcToleranceMeanIntensity { get; set; } = 5.0;
+    public double QcToleranceDistanceToRoiCenter { get; set; } = 0.1;
 
     // -- Axis move timeout --
     public TimeSpan MoveTimeout { get; set; } = TimeSpan.FromSeconds(30);

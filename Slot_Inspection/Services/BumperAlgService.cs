@@ -7,6 +7,7 @@ using NLog;
 using System.Collections;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -92,6 +93,8 @@ public sealed class BumperAlgService
                     // 原始值為像素面積，換算為 mm?（像素尺寸 0.0069 mm/px）
                     double pixelArea = Convert.ToDouble(areaVal);
                     detectedArea = pixelArea * 0.0069 * 0.0069;
+                    // 鏡子角度補償係數（Config\Parameter.json 的 AreaCorrectionFactor，乘一次）
+                    detectedArea *= GetAreaCorrectionFactor();
                     // 回寫換算後的值，讓 DLL WriteResultToCsv 寫出 mm? 而非像素數
                     mainData["DetectedArea"] = detectedArea;
                 }
@@ -130,6 +133,29 @@ public sealed class BumperAlgService
             System.Diagnostics.Debug.WriteLine($"[BumperAlg] {slotName}: ? 例外: {ex.Message}");
             return BumperAlgResult.Fail(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// 讀取 Config\Parameter.json 的 AreaCorrectionFactor（鏡子角度補償係數）。
+    /// 每次都重新讀檔，讓現場調整係數後不需重啟程式即可生效；讀取失敗或欄位不存在則回傳 1.33（沿用原本寫死的值）。
+    /// </summary>
+    private double GetAreaCorrectionFactor()
+    {
+        try
+        {
+            string path = Path.Combine(_configDir, "Parameter.json");
+            if (!File.Exists(path)) return 1.33;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            if (doc.RootElement.TryGetProperty("AreaCorrectionFactor", out var prop))
+                return prop.GetDouble();
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"讀取 AreaCorrectionFactor 失敗，改用預設值 1.33: {ex.Message}");
+        }
+
+        return 1.33;
     }
 
     // ─────────────────────────────────────────────

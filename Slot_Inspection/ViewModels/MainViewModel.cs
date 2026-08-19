@@ -28,6 +28,13 @@ public sealed class MainViewModel : ObservableObject
     private bool _isRunning;
     private string _statusMessage = "系統啟動中，請稍候...";
     private bool _isInitialized;
+    /// <summary>
+    /// 只要 IsInitialized 為 false（不論是 STOP、光閘觸發、板子誤放、流程例外，或任何原因），
+    /// 就必須重新原點賦歸（或重新 S00 初始化）才能再按 RUN／移至取料位，
+    /// 避免 IsZAtSafeHeight 的「Z 軸已在安全高度可略過賦歸」旁路蓋掉安全防呆（曾因此撞機）。
+    /// 由 IsInitialized 的 setter 統一維護，不需個別呼叫端手動設定。
+    /// </summary>
+    private bool _requireReinitAfterStop;
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
@@ -42,6 +49,10 @@ public sealed class MainViewModel : ObservableObject
     private int _lightGateClearCount = 0;  // 連續讀到 HIGH 的次數（釋放防抖用）
     private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
     private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
+    // X0 緊急停止(EMO)
+    private bool _isEmoTriggered; // X0=LOW：EMO 觸發中
+    private int _emoTriggeredCount = 0; // 連續讀到 LOW 的次數（觸發防抖用）
+    private const int EmoDebounceCount = 3; // 需連續 N 次（×500ms）才視為真正觸發，避免雜訊誤判
     // X3/X11 板子放置雷射感測
     private bool _isBoardMisplaced;
     private int _boardMisplacedCount;
@@ -96,6 +107,12 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>供 XAML DataTrigger 比對用的字串（避免 enum 型別引用）。</summary>
     public string MesStatusKey => _mesStatus.ToString();
 
+    /// <summary>目前套用中的料號（Recipe）名稱，供首頁唯讀顯示；實際切換由「料號切換」視窗負責並即時寫回 InspectionConfig。</summary>
+    public string CurrentRecipeDisplay =>
+        string.IsNullOrWhiteSpace(_machine.Config.CurrentRecipeName)
+            ? "未指定"
+            : _machine.Config.CurrentRecipeName;
+
     /// <summary>
     /// 是否處於異常狀態。單一事實來源是 <see cref="Services.AlarmManager"/>（<c>_machine.Alarms</c>），
     /// 這裡只是唯讀代理；實體 PLC Y01 紅燈由 <see cref="MachineController.SyncRedAlarmOutput"/>
@@ -117,7 +134,7 @@ public sealed class MainViewModel : ObservableObject
     public string RunStateText => RunState switch
     {
         MachineRunState.Alarm   => "⚠ 異常",
-        MachineRunState.Paused  => "暫停中（光閘）",
+        MachineRunState.Paused  => "上料/下料模式中",
         MachineRunState.Running => "運行中",
         MachineRunState.Ready   => "待命中",
         _                       => "未連線"
@@ -298,7 +315,13 @@ public sealed class MainViewModel : ObservableObject
     public bool IsInitialized
     {
         get => _isInitialized;
-        set => SetProperty(ref _isInitialized, value);
+        set
+        {
+            SetProperty(ref _isInitialized, value);
+            // 只要未完成初始化，一律要求重新原點賦歸才能按 RUN／移至取料位，
+            // 避免 IsZAtSafeHeight 的「Z 軸已在安全高度可略過賦歸」旁路蓋掉安全防呆（曾因此撞機）。
+            _requireReinitAfterStop = !value;
+        }
     }
 
     /// <summary>
@@ -310,6 +333,22 @@ public sealed class MainViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _isLightGateBlocked, value))
+            {
+                CommandManager.InvalidateRequerySuggested();
+                NotifyRunStateChanged();
+            }
+        }
+    }
+
+    /// <summary>
+    /// X0 緊急停止(EMO)觸發中（LOW）→ 禁止按 RUN／原點賦歸。
+    /// </summary>
+    public bool IsEmoTriggered
+    {
+        get => _isEmoTriggered;
+        private set
+        {
+            if (SetProperty(ref _isEmoTriggered, value))
             {
                 CommandManager.InvalidateRequerySuggested();
                 NotifyRunStateChanged();
@@ -372,9 +411,9 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消暫停光閘」，停用時顯示「暫停光閘」。</summary>
+    /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消上料/下料模式」，停用時顯示「上料/下料模式」。</summary>
     public string LightGateBypassButtonText =>
-        IsLightGateBypassActive ? "取消暫停光閘" : "暫停光閘";
+        IsLightGateBypassActive ? "取消上料/下料模式" : "上料/下料模式";
 
     /// <summary>
     /// Admin 專用安全開關：啟用時完全忽略 X3/X11 雷射感測的板子放置判斷（視為永遠正常），
@@ -503,6 +542,20 @@ public sealed class MainViewModel : ObservableObject
         _logger.Debug($"[SIM] SimBoardState 切換為 {_simBoardState}（{stateDesc}）");
     }
 
+    /// <summary>
+    /// 模擬模式專用：按 E 鍵切換的 EMO(X0) 觸發狀態，供測試「按下 EMO 後畫面/流程行為」用，
+    /// 不需要接真實 PLC。僅在 IsSimulationMode=true 時生效，OnPlcTick 讀此值直接跳過防抖。
+    /// </summary>
+    private bool _simEmoTriggered;
+
+    /// <summary>由 MainWindow 鍵盤事件呼叫，切換模擬 EMO 觸發/復歸。非模擬模式下無效。</summary>
+    public void ToggleSimEmo()
+    {
+        if (!IsSimulationMode) return;
+        _simEmoTriggered = !_simEmoTriggered;
+        _logger.Debug($"[SIM] SimEmoTriggered 切換為 {_simEmoTriggered}");
+    }
+
     /// <summary>ZL/ZR安定延遲checkbox是否可操作，依「角色權限設定」決定。</summary>
     public bool CanToggleAxisSettleDelay => HasPermission(Permission.AxisSettleDelay);
 
@@ -590,15 +643,15 @@ public sealed class MainViewModel : ObservableObject
         StopCommand = new RelayCommand(OnStop, () => HasPermission(Permission.Stop));
         // 主流程：逐 Slot 移動、取像、存圖
         // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷，且板子已放妥，且該角色有RUN權限。
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || IsZAtSafeHeight) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsBoardMisplaced && HasPermission(Permission.Run));
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && !IsBoardMisplaced && HasPermission(Permission.Run));
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady && HasPermission(Permission.InitDevices));
         // 原點賦歸：光閘必須未遮斷才可按（不因暫停光閘而全域禁用）
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && HasPermission(Permission.Home));
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && HasPermission(Permission.Home));
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.ReadBarcode));
-        // 移至取料位：Y 軸移動到取料位座標
-        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.MoveToPickPosition));
+        // 移至取料位：Y 軸移動到取料位座標（與 RUN 一致：需已復歸或 Z 已在安全高度且未被要求重新復歸）
+        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && HasPermission(Permission.MoveToPickPosition));
         // 座標設定：依「角色權限設定」決定 Operator/Engineer 是否可開啟，Admin永遠可以
         PositionSettingsCommand = new RelayCommand(OnPositionSettings, () => !IsRunning && !IsDryRunning && HasPermission(Permission.PositionSettings));
 
@@ -766,6 +819,41 @@ public sealed class MainViewModel : ObservableObject
         => await _mesClient.DisconnectAsync();
 
     /// <summary>
+    /// 若目前 EMO 正觸發中，把捕捉到的例外（通常是軸體 Modbus 通訊逾時等技術性錯誤）換成
+    /// 操作員看得懂的具體原因，避免顯示「已重試 N 次仍失敗」這類跟 EMO 無關的技術訊息。
+    /// 沒有 EMO 觸發時，原樣顯示 fallback（既有訊息不變）。
+    /// </summary>
+    private string DescribeOperatorFacingError(string fallback) =>
+        IsEmoTriggered ? "偵測到緊急停止(EMO)已觸發，機台動作已中斷" : fallback;
+
+    /// <summary>
+    /// 依當下 EMO 狀態（不論來自真實 X0 或模擬模式）套用邊緣觸發的副作用（取消流程、鎖定 RUN、告警），
+    /// 並更新 IsEmoTriggered。由 OnPlcTick 的真實/模擬兩個分支共用，避免邏輯寫兩份。
+    /// </summary>
+    private void ProcessEmoState(bool emoNow)
+    {
+        if (emoNow && !_isEmoTriggered)
+        {
+            _cts?.Cancel();
+            // MotStop 內部的 Modbus 重試在 EMO 觸發、軸體多半已斷線時可能要等好幾秒才會逾時，
+            // OnPlcTick 是 UI 執行緒的 500ms timer callback，丟到背景執行避免卡住整個畫面。
+            _ = Task.Run(() => _machine.StopAllAxesImmediate("EMO 緊急停止觸發"));
+            IsInitialized = false; // setter 會自動鎖上 _requireReinitAfterStop
+            StatusMessage = "⚠ 緊急停止(EMO)已觸發！機台動作已中斷，請確認機台安全後釋放並復歸 EMO、按下面板異常復歸按鈕，再重新執行原點賦歸";
+            _machine.Alarms.Raise("EMO", "X0 緊急停止觸發，流程已取消，等待操作員復歸與原點賦歸");
+            _ = _mesClient.ReportAlarmAsync()
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus, TaskScheduler.FromCurrentSynchronizationContext());
+            CancelEventLogger.Write("EMO_X0", "緊急停止(EMO)觸發，流程已取消，等待原點賦歸");
+        }
+        else if (!emoNow && _isEmoTriggered)
+        {
+            _machine.Alarms.Clear("EMO");
+            StatusMessage = "✔ EMO 已復歸，請重新執行原點賦歸後再繼續 RUN";
+        }
+        IsEmoTriggered = emoNow;
+    }
+
+    /// <summary>
     /// 每 100ms 輪詢一次 PLC X1+X2 訊號。
     /// 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
     /// </summary>
@@ -777,6 +865,27 @@ public sealed class MainViewModel : ObservableObject
         // PLC 通常都還沒連上）。靠這裡每 500ms 持續重新斷言，PLC 重新連線後最多一個 tick
         // 就會自動補回正確狀態，不需要使用者手動按任何按鈕才能讓燈熄滅。
         _machine.SyncRedAlarmOutput();
+
+        // X0 緊急停止(EMO)狀態：LOW = 觸發。PLC 斷線(null)時凍結現有狀態，不誤判為「未觸發」
+        // （跟 X7 目前的 ?? true 寫法不同——EMO 是最關鍵的安全訊號，斷線時絕不能悄悄當成正常）。
+        if (IsSimulationMode)
+        {
+            // 模擬模式：依 _simEmoTriggered（按 E 鍵切換）決定，跳過防抖立即生效，
+            // 且不讀真實 PLC（模擬模式下 PLC 多半未連線，GetPlcXOctal 只會回傳 null）。
+            _emoTriggeredCount = 0;
+            ProcessEmoState(_simEmoTriggered);
+        }
+        else
+        {
+            bool? rawX0 = _machine.GetPlcXOctal(0);
+            if (rawX0.HasValue)
+            {
+                bool rawEmo = !rawX0.Value;
+                _emoTriggeredCount = rawEmo ? _emoTriggeredCount + 1 : 0;
+                ProcessEmoState(_emoTriggeredCount >= EmoDebounceCount);
+            }
+            // else：PLC 斷線，凍結現有狀態，不呼叫 ProcessEmoState
+        }
 
         // X7 光閘狀態：不論任何模式都追蹤，LOW = 遮斷（加入防抖：需連續 LightGateDebounceCount 次才觸發）
         bool x7 = _machine.GetPlcXOctal(7) ?? true;
@@ -837,15 +946,18 @@ public sealed class MainViewModel : ObservableObject
             }
             else
             {
-                // 取料暫停光閘模式：僅顯示提示，不中斷流程
-                StatusMessage = "⚠ 光閘觸發（取料暫停模式，流程不中斷）";
+                // 上料/下料模式：僅顯示提示，不中斷流程
+                StatusMessage = "⚠ 光閘觸發（上料/下料模式，流程不中斷）";
             }
         }
 
         IsLightGateBlocked = blocked;
 
         // ─── X3/X11 板子放置雷射感測（任一 true = 未放好）───
-        bool x3 = false, x11 = false, rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
+        // x3/x11 一律保留「感測器實際原始值」供歷史/追蹤 log 還原真實時間軸；
+        // x3Effective/x11Effective 才是套用 Admin 個別停用設定後、真正用於誤放判斷的值。
+        bool x3 = false, x11 = false, x3Effective = false, x11Effective = false;
+        bool rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
         bool boardReadingValid = false; // true 表示這次 x3/x11 是實際讀到的值，可信任、可寫入持續追蹤 log
 
         if (IsSimulationMode)
@@ -854,7 +966,9 @@ public sealed class MainViewModel : ObservableObject
             // bit0=1 → X3 異常；bit1=1 → X11 異常（0=正常,1=X3,2=X11,3=兩者）
             x3  = (_simBoardState & 1) != 0;
             x11 = (_simBoardState & 2) != 0;
-            rawMisplaced            = x3 || x11;
+            x3Effective  = x3  && !_machine.Config.PauseX3BoardSensor;
+            x11Effective = x11 && !_machine.Config.PauseX11BoardSensor;
+            rawMisplaced            = x3Effective || x11Effective;
             boardMisplacedConfirmed = rawMisplaced;
             boardOkConfirmed        = !rawMisplaced;
             _boardMisplacedCount = 0;
@@ -878,7 +992,9 @@ public sealed class MainViewModel : ObservableObject
             {
                 x3  = rawX3.Value;
                 x11 = rawX11.Value;
-                rawMisplaced = x3 || x11;
+                x3Effective  = x3  && !_machine.Config.PauseX3BoardSensor;
+                x11Effective = x11 && !_machine.Config.PauseX11BoardSensor;
+                rawMisplaced = x3Effective || x11Effective;
 
                 if (rawMisplaced) { _boardMisplacedCount++; _boardPlacedCount = 0; }
                 else              { _boardPlacedCount++;    _boardMisplacedCount = 0; }
@@ -945,7 +1061,8 @@ public sealed class MainViewModel : ObservableObject
             if (!_boardMisplacedDialogShown)
             {
                 _boardMisplacedDialogShown = true;
-                string triggeredSignals = (x3 && x11) ? "X3、X11" : (x3 ? "X3" : "X11");
+                // 用 Effective 值判斷觸發原因（已停用的訊號即使原始值異常也不算數，避免誤導使用者）
+                string triggeredSignals = (x3Effective && x11Effective) ? "X3、X11" : (x3Effective ? "X3" : "X11");
                 // BeginInvoke 讓對話框在 DispatcherTimer tick 結束後才彈出，
                 // 避免 MessageBox 建立巢狀訊息泵（re-entrancy）導致 tick 重複執行
                 Application.Current.Dispatcher.BeginInvoke(() =>
@@ -1158,6 +1275,7 @@ public sealed class MainViewModel : ObservableObject
 
             // S04：寫彙總結果
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
+            RunQcAutoCheck();
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
             // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
@@ -1178,13 +1296,13 @@ public sealed class MainViewModel : ObservableObject
         catch (OperationCanceledException oce)
         {
             IsInitialized = false;
-            StatusMessage = "⏹ 作業已由使用者取消，請執行原點賦歸後再繼續 RUN";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("作業已由使用者取消")}，請執行原點賦歸後再繼續 RUN";
             CancelEventLogger.Write("OnStart", "流程被取消（OperationCanceledException）", oce);
         }
         catch (Exception ex)
         {
             IsInitialized = false;
-            StatusMessage = $"✘ 量測發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"量測發生錯誤：{ex.Message}")}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnStart", $"流程例外：{ex.Message}", ex);
             _machine.Alarms.Raise("RunException", ex.Message);
@@ -1209,6 +1327,13 @@ public sealed class MainViewModel : ObservableObject
         // 注意：這個方法除了RUN按鈕，也會被 OnPlcTick 的 X1/X2 感應器持續觸發邏輯自動呼叫，
         // 所以記錄成中性的「開始量測」，不寫成「使用者按下RUN」，避免錯誤宣稱是手動操作。
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "開始量測 (RUN)");
+
+        if (IsLightGateBypassActive)
+        {
+            IsLightGateBypassActive = false;
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "RUN 觸發自動恢復光閘保護（取消上料/下料模式）");
+        }
+
         IsDryRunning = true;
         _cts = new CancellationTokenSource();
         _machine.Alarms.Clear("LightGateX7");
@@ -1368,6 +1493,7 @@ public sealed class MainViewModel : ObservableObject
 
             bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
             InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
+            RunQcAutoCheck();
 
             // ── MES MeasureResultUpload（非阻塞，失敗不中止流程）──
             // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
@@ -1391,13 +1517,13 @@ public sealed class MainViewModel : ObservableObject
         catch (OperationCanceledException oce)
         {
             IsInitialized = false;
-            StatusMessage = "⏹ 主流程已由使用者取消，請執行原點賦歸後再繼續 RUN";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("主流程已由使用者取消")}，請執行原點賦歸後再繼續 RUN";
             CancelEventLogger.Write("OnRunInspection", "主流程被取消（OperationCanceledException）", oce);
         }
         catch (Exception ex)
         {
             IsInitialized = false;
-            StatusMessage = $"✘ 主流程發生錯誤：{ex.Message}，請執行原點賦歸後再繼續 RUN";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"主流程發生錯誤：{ex.Message}")}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnRunInspection", $"主流程例外：{ex.Message}", ex);
             _machine.Alarms.Raise("RunException", ex.Message);
@@ -1519,11 +1645,11 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "⏹ 讀碼作業已取消";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("讀碼作業已取消")}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"✘ 讀碼發生錯誤：{ex.Message}";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"讀碼發生錯誤：{ex.Message}")}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -1538,13 +1664,17 @@ public sealed class MainViewModel : ObservableObject
     private void OnStop()
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "按下 STOP");
+        _cts?.Cancel();
+        // 取消 CancellationToken 無法中斷已送出的軸移動指令，必須直接對軸體下 MotStop 才能真正停下來
+        _machine.StopAllAxesImmediate("使用者按下 STOP");
         IsRunning = false;
         IsDryRunning = false;
-        _cts?.Cancel();
-        // Stop 後必須重新原點賦歸才可再按 RUN
+        // Stop 後必須重新原點賦歸才可再按 RUN（IsInitialized setter 會同步鎖上 _requireReinitAfterStop，
+        // 擋掉 IsZAtSafeHeight 的旁路，直到 Home/S00 初始化成功才解除，避免曾發生過的撞機情形）
         IsInitialized = false;
-        StatusMessage = "⏹ 作業已由使用者取消，請執行原點賦歸後再繼續 RUN";
-        CancelEventLogger.Write("OnStop", "使用者按下 STOP 按鈕，流程已中止");
+        StatusMessage = "⏹ 作業已由使用者取消，機台已立即停止，請執行原點賦歸後再繼續 RUN";
+        CancelEventLogger.Write("OnStop", "使用者按下 STOP 按鈕，流程已中止，所有軸已立即停止");
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private async void OnMoveToPickPosition()
@@ -1557,8 +1687,16 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             double targetY = _machine.Config.BarcodePositionY;
-            StatusMessage = $"Y 軸移動至取料位置 {targetY} mm，請稍候...";
 
+            // 移動 Y 軸前先確認 ZL/ZR 在安全高度，避免碰撞
+            bool mpX12 = _machine.GetPlcXOctal(12) ?? false;
+            bool mpX13 = _machine.GetPlcXOctal(13) ?? false;
+            double mpSafeZL = _machine.Config.GetZLSafeHeight(mpX12, mpX13);
+            double mpSafeZR = _machine.Config.GetZRSafeHeight(mpX12, mpX13);
+            var mpProgress = new Progress<string>(msg => StatusMessage = msg);
+            await _machine.EnsureZSafeBeforeYMoveAsync(mpSafeZL, mpSafeZR, mpProgress, ct, "OnMoveToPickPosition");
+
+            StatusMessage = $"Y 軸移動至取料位置 {targetY} mm，請稍候...";
             _machine.Axes["AxisY"].MotMoveAbs(targetY);
             bool arrived = await MachineController.WaitUntilAsync(
                 () => _machine.Axes["AxisY"].Wait(),
@@ -1570,11 +1708,11 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "⏹ 移動至取料位置已取消";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("移動至取料位置已取消")}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"✘ 移動至取料位置發生錯誤：{ex.Message}";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"移動至取料位置發生錯誤：{ex.Message}")}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -1587,11 +1725,18 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 開啟座標設定對話視窗，確認後寫回 InspectionConfig。
+    /// 開啟「料號切換」對話視窗（料號切換／備份／刪除，也可微調座標），確認後寫回 InspectionConfig。
     /// </summary>
     private void OnPositionSettings()
     {
-        var vm = new PositionSettingsViewModel { CurrentUser = CurrentUser };
+        var vm = new PositionSettingsViewModel
+        {
+            CurrentUser = CurrentUser,
+            CanUseQcRecipe = HasPermission(Permission.QcRecipe),
+            CurrentMeasurementsAreaA = AreaA_Row1.ToList(),
+            CurrentMeasurementsAreaB = AreaB_Row1.ToList(),
+            CurrentBarcode = _confirmedBarcode,
+        };
         vm.LoadFrom(_machine.Config);
 
         var win = new PositionSettingsWindow
@@ -1608,6 +1753,10 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = "✔ 位置設定已儲存";
             AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用座標設定");
         }
+
+        // 視窗內「讀取套用／備份／刪除」料號會立即寫回 _machine.Config 並存檔，
+        // 即使使用者最後按取消，料號也可能已經變了，所以不論回傳值都要刷新首頁顯示。
+        OnPropertyChanged(nameof(CurrentRecipeDisplay));
     }
 
     private void OnConfirmBarcode()
@@ -1646,19 +1795,76 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnLightSettings()
     {
-        var vm = new LightSettingsViewModel(_machine.Config, IsAdmin);
+        var config = _machine.Config;
+        bool admin = IsAdmin;
+        var vm = new LightSettingsViewModel(config, admin);
         var win = new Views.LightSettingsWindow
         {
             DataContext = vm,
             Owner = Application.Current.MainWindow
         };
-        if (win.ShowDialog() == true)
+        if (win.ShowDialog() != true) return;
+
+        // 依「儲存前 vs 使用者編輯後」實際有變動的分頁組出狀態列訊息，避免永遠只顯示亮度設定
+        var changes = new List<string>();
+        bool lightIntensityChanged = config.LightIntensityLeft != vm.LightIntensityLeft || config.LightIntensityRight != vm.LightIntensityRight;
+        if (lightIntensityChanged)
+            changes.Add($"亮度（左={vm.LightIntensityLeft}，右={vm.LightIntensityRight}）");
+        if (config.ValueLimitLow != vm.ValueLimitLow || config.ValueLimitHigh != vm.ValueLimitHigh)
+            changes.Add($"Value極限（下限={vm.ValueLimitLow}，上限={vm.ValueLimitHigh}）");
+        if (admin && (config.ExposureTimeLeft != vm.ExposureTimeLeft || config.ExposureTimeRight != vm.ExposureTimeRight))
+            changes.Add($"曝光時間（左={vm.ExposureTimeLeft:F0}µs，右={vm.ExposureTimeRight:F0}µs）");
+        if (admin && (config.PauseX3BoardSensor != vm.PauseX3BoardSensor || config.PauseX11BoardSensor != vm.PauseX11BoardSensor))
+            changes.Add($"板子感測停用（X3={(vm.PauseX3BoardSensor ? "停用" : "啟用")}，X11={(vm.PauseX11BoardSensor ? "停用" : "啟用")}）");
+        if (config.QcToleranceValue != vm.QcToleranceValue
+            || config.QcToleranceMeanIntensity != vm.QcToleranceMeanIntensity
+            || config.QcToleranceDistanceToRoiCenter != vm.QcToleranceDistanceToRoiCenter)
+            changes.Add($"QC容差（Value={vm.QcToleranceValue}，亮度={vm.QcToleranceMeanIntensity}，位置={vm.QcToleranceDistanceToRoiCenter}）");
+
+        vm.ApplyTo(config);
+
+        // 亮度變更時立即送到硬體套用，讓操作員馬上肉眼確認，不必等下次開燈才生效；
+        // 失敗時明確回報在狀態列，避免像先前一樣調了沒反應卻不知道是指令沒送到
+        string? lightApplyMessage = null;
+        if (lightIntensityChanged)
         {
-            vm.ApplyTo(_machine.Config);
-            StatusMessage = $"✔ 光源設定已儲存（左={vm.LightIntensityLeft}，右={vm.LightIntensityRight}）";
-            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用光源設定");
-            if (IsAdmin)
-                AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"套用曝光時間設定（左={vm.ExposureTimeLeft:F0}µs，右={vm.ExposureTimeRight:F0}µs）");
+            bool applied = _machine.TryApplyLightIntensityNow(vm.LightIntensityLeft, vm.LightIntensityRight, out string applyMsg);
+            lightApplyMessage = applyMsg;
+            if (!applied)
+                _logger.Warn($"[LightSettings] 亮度即時套用失敗：{applyMsg}");
+        }
+
+        StatusMessage = changes.Count > 0
+            ? $"✔ 設定已儲存：{string.Join("；", changes)}" + (lightApplyMessage != null ? $"（{lightApplyMessage}）" : "")
+            : "✔ 設定已儲存（內容無變更）";
+
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用光源設定");
+        if (admin)
+        {
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"套用曝光時間設定（左={vm.ExposureTimeLeft:F0}µs，右={vm.ExposureTimeRight:F0}µs）");
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
+                $"套用板子感測停用設定（X3停用={vm.PauseX3BoardSensor}，X11停用={vm.PauseX11BoardSensor}）");
+        }
+    }
+
+    /// <summary>如果目前 Recipe 有 QC 基準，跑完一輪後自動比對並在狀態列提示（不強制彈窗，避免量產連續RUN被中斷）。</summary>
+    private void RunQcAutoCheck()
+    {
+        string recipeName = _machine.Config.CurrentRecipeName;
+        if (string.IsNullOrWhiteSpace(recipeName) || !AxisRecipeManager.HasBaseline(recipeName)) return;
+        try
+        {
+            var baseline = AxisRecipeManager.LoadBaseline(recipeName);
+            var rows = QcComparisonViewModel.BuildRows(baseline, AreaA_Row1, AreaB_Row1, _machine.Config);
+            QcComparisonResultWriter.Write(_confirmedBarcode, recipeName, rows);
+            int exceedCount = rows.Count(r => r.ExceedsTolerance);
+            StatusMessage += exceedCount > 0
+                ? $"　⚠ QC比對：{exceedCount} 個 Slot 超出容差（按「QC 比對」查看明細）"
+                : "　✔ QC比對：全部在容差內";
+        }
+        catch
+        {
+            // 基準檔損毀或報表寫入失敗等非致命錯誤，不影響主流程
         }
     }
 
@@ -1721,11 +1927,11 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "⏹ 設備初始化已取消";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("設備初始化已取消")}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"✘ 設備初始化發生錯誤：{ex.Message}";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"設備初始化發生錯誤：{ex.Message}")}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -1778,11 +1984,11 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "⏹ 原點賦歸已取消";
+            StatusMessage = $"⏹ {DescribeOperatorFacingError("原點賦歸已取消")}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"✘ 原點賦歸發生錯誤：{ex.Message}";
+            StatusMessage = $"✘ {DescribeOperatorFacingError($"原點賦歸發生錯誤：{ex.Message}")}";
             System.Diagnostics.Debug.WriteLine(ex);
         }
         finally
@@ -1827,7 +2033,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 切換「暫停光閘」模式。
+    /// 切換「上料/下料模式」。
     /// 啟用：光閘觸發不中斷流程，同時鎖定 RUN 與原點賦歸。
     /// 停用：恢復正常光閘防護。
     /// </summary>
@@ -1835,7 +2041,7 @@ public sealed class MainViewModel : ObservableObject
     {
         IsLightGateBypassActive = !IsLightGateBypassActive;
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
-            $"暫停光閘切換為{(IsLightGateBypassActive ? "啟用" : "停用")}");
+            $"上料/下料模式切換為{(IsLightGateBypassActive ? "啟用" : "停用")}");
 
         if (!IsLightGateBypassActive)
         {
@@ -1846,8 +2052,8 @@ public sealed class MainViewModel : ObservableObject
         }
 
         StatusMessage = IsLightGateBypassActive
-            ? "⚠ 暫停光閘已啟用：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
-            : "✔ 暫停光閘已取消，恢復正常光閘防護";
+            ? "⚠ 上料/下料模式已啟用：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
+            : "✔ 上料/下料模式已取消，恢復正常光閘防護";
     }
 
     /// <summary>
@@ -2096,6 +2302,7 @@ public sealed class MainViewModel : ObservableObject
 
         bool pass = AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK";
         InspectionResultWriter.WriteSummary(_confirmedBarcode, pass);
+        RunQcAutoCheck();
 
         // ── STEP 3：WebAPI UploadResult（非阻塞）─────────────────────────
         StatusMessage = "[SIM] 正在呼叫 WebAPI UploadResult...";

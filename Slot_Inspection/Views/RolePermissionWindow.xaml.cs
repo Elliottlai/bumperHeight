@@ -34,15 +34,16 @@ public partial class RolePermissionWindow : Window
         (Permission.MoveToPickPosition, "移至取料位"),
         (Permission.OpenResultFolder, "開啟結果資料夾"),
         (Permission.SlcReset, "SLC Reset"),
-        (Permission.ToggleLightGateBypass, "暫停光閘切換"),
+        (Permission.ToggleLightGateBypass, "上料/下料模式切換"),
     ];
 
     private static readonly (Permission Permission, string DisplayName)[] AdvancedDefs =
     [
-        (Permission.PositionSettings, "座標設定（含Recipe）"),
+        (Permission.PositionSettings, "料號切換（含座標調整）"),
         (Permission.LightSettings, "光源設定"),
         (Permission.CropSettings, "裁切設定"),
         (Permission.AxisSettleDelay, "ZL/ZR 安定延遲"),
+        (Permission.QcRecipe, "QC 基準比對"),
         // SimulationMode 固定為 Admin 專屬，不開放角色設定
     ];
 
