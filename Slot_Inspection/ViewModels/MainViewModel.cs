@@ -50,18 +50,36 @@ public sealed class MainViewModel : ObservableObject
     private Thread? _emoWatchThread;
     private volatile bool _emoWatchRunning;
     private static readonly TimeSpan EmoPollInterval = TimeSpan.FromMilliseconds(100);
+    // 光閘（X7）跟 EMO 一樣是保護人身安全的訊號，原本掛在共用的 UI 執行緒 _plcTimer 上，
+    // 跟 X3/X11 板子感測、紅燈同步、R/L 即時顯示等一大堆其他功能搶同一個計時器——EMO 已經
+    // 實測證實過這種共用計時器在 UI 執行緒忙碌/卡頓時會不可靠，光閘沒理由繼續冒同樣的風險，
+    // 所以這裡直接複製 EMO 那一套：獨立 Thread（非 ThreadPool），道理同上。
+    private Thread? _lightGateWatchThread;
+    private volatile bool _lightGateWatchRunning;
+    private static readonly TimeSpan LightGatePollInterval = TimeSpan.FromMilliseconds(100);
     // MES 重試計時器：失敗時每 15 秒自動重試，連線成功後停止
     private readonly DispatcherTimer _mesRetryTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
     private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
     private DateTime _runStartTime;  // 主流程開始時間（用於 MES 上傳 ProcessStartTime）
     private bool _prevX10 = false; // X10 上一次狀態（預設 0，保留供未來使用）
-    private bool _isLightGateBlocked; // X7=LOW：光閘遮斷中
-    private int _lightGateBlockedCount = 0; // 連續讀到 LOW 的次數（觸發防抖用）
+    private bool _isLightGateBlocked; // X7=LOW：光閘遮斷中（UI 綁定用，只能透過 IsLightGateBlocked 的 setter 寫入）
+    // 背景執行緒（LightGateWatchLoop）自己的、同步更新的遮斷狀態，專供防抖分支判斷用，
+    // 不可以改用 _isLightGateBlocked：那個欄位只會在 ApplyLightGateState 裡透過 BeginInvoke
+    // 非同步寫入，UI 執行緒若忙碌會延遲套用，背景執行緒下一輪輪詢讀到的就會是舊值，
+    // 導致「明明已經又進入新的遮斷狀態，卻因為還讀到舊的『尚未解除』而判斷錯分支、
+    // 誤把新的觸發吃掉」——這個 bug 已經實測發生過一次（G 鍵按住 501ms 卻沒觸發）。
+    private bool _lightGateBlockedConfirmed;
     private bool? _lastLoggedX7Raw; // 診斷用：X7 原始讀值一有變化就記 log，不用等防抖確認觸發
-    private int _lightGateClearCount = 0;  // 連續讀到 HIGH 的次數（釋放防抖用）
-    private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
-    private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
+    // 觸發/解除防抖改用牆鐘時間，不用「連續 tick 次數」——比照 EMO 已經踩過的雷：DispatcherTimer
+    // 在機台忙碌時 tick 間隔常被拉長到數秒，用「連續 N 次 tick」防抖在這種情況下不可靠。
+    // 解除跟觸發用同樣的短門檻（接近瞬間）：光閘解除後，真正能不能繼續動作還是要操作員自己
+    // 按「原點賦歸」再確認一次，這道人工確認本身就是最後防線，解除防抖只需要濾掉單次雜訊，
+    // 不需要讓操作員多等好幾秒站在機台前面乾等。
+    private DateTime? _lightGateLowSince;            // 目前這段連續 LOW 從何時開始（未觸發狀態下用）
+    private DateTime? _lightGateHighSinceAfterBlock; // 已觸發後，目前這段連續 HIGH 從何時開始（觸發狀態下用）
+    private static readonly TimeSpan LightGateTriggerDuration = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan LightGateClearDuration   = TimeSpan.FromMilliseconds(300);
     // X0 緊急停止(EMO)
     private bool _isEmoTriggered; // X0=HIGH：EMO 觸發中（現場實測極性跟電路圖判讀相反，已更正，見 OnEmoTick）
     // 觸發防抖改用「牆鐘時間」而非「連續 tick 次數」：現場實測發現 _emoTimer 雖然設定 100ms，
@@ -100,9 +118,10 @@ public sealed class MainViewModel : ObservableObject
     // Interval 在建構式裡會被覆寫為 InspectionConfig.IdleLockTimeoutMinutes（可由Admin在帳號管理視窗調整）
     private readonly DispatcherTimer _idleTimer = new() { Interval = TimeSpan.FromMinutes(10) };
 
-    // X7 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，觸發遮斷時一起寫 log
-    private readonly Queue<(DateTime Time, bool X7Raw, bool Blocked, int Count)> _x7SignalHistory = new();
-    private const int X7HistorySize = 10;
+    // X7 訊號歷史：每次背景輪詢都記錄，最多保留 30 筆（改用獨立 Thread 100ms 輪詢後，
+    // 30 筆約涵蓋 3 秒，跟改用獨立 Thread 之前 10 筆×500ms 的涵蓋時間差不多），觸發遮斷時一起寫 log
+    private readonly Queue<(DateTime Time, bool X7Raw, bool RawBlocked)> _x7SignalHistory = new();
+    private const int X7HistorySize = 30;
     private readonly MachineController _machine = new();
     private CancellationTokenSource? _cts;
     private TaskCompletionSource<string>? _barcodeTcs; // 等待使用者手動輸入條碼
@@ -836,6 +855,16 @@ public sealed class MainViewModel : ObservableObject
         };
         _emoWatchThread.Start();
 
+        // 光閘（X7）獨立 Thread，見上面 _lightGateWatchThread 欄位的說明。
+        _lightGateWatchRunning = true;
+        _lightGateWatchThread = new Thread(LightGateWatchLoop)
+        {
+            IsBackground = true,
+            Name = "LightGateWatch",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _lightGateWatchThread.Start();
+
         // ★ 登入成功後非同步連線 MES（不阻塞 UI）
         _ = InitMesAsync();
     }
@@ -1077,7 +1106,199 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 每 500ms 輪詢一次 PLC 光閘/板子感測等訊號（EMO 已移到獨立的 <see cref="OnEmoTick"/>）。
+    /// <see cref="_lightGateWatchThread"/> 的主迴圈，架構跟 <see cref="EmoWatchLoop"/> 完全對稱。
+    /// </summary>
+    private void LightGateWatchLoop()
+    {
+        while (_lightGateWatchRunning)
+        {
+            try
+            {
+                OnLightGateTickCore();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "[LightGate] 背景輪詢例外");
+            }
+
+            Thread.Sleep(LightGatePollInterval);
+        }
+    }
+
+    /// <summary>
+    /// 光閘（X7）專用快速輪詢，實際跑在 <see cref="_lightGateWatchThread"/> 這個獨立 background Thread，
+    /// 理由跟 <see cref="OnEmoTickCore"/> 完全一樣：不受 UI 執行緒忙碌、也不受 ThreadPool 被其他工作
+    /// （例如軸體 Modbus 重試）佔滿影響。讀 X7＋累計牆鐘時間防抖都在這裡完成；
+    /// 只有真的發生「觸發」或「解除」狀態轉換時，才需要切回 UI 執行緒套用畫面/警報狀態。
+    /// </summary>
+    private void OnLightGateTickCore()
+    {
+        // 不論任何模式都追蹤，LOW = 遮斷。x7ReadingValid=false 代表這次是 PLC 斷線，或連線
+        // 沒斷但讀取已經停止更新（IsXDataFresh=false，GetPlcXOctal 皆回傳 null），此時凍結
+        // 現有狀態、不更新任何計時、不觸發任何轉換——絕不能把「讀不到最新狀態」當成
+        // 「光閘暢通」而誤解除警報。
+        bool x7 = true;
+        bool rawBlocked = false;
+        bool x7ReadingValid;
+        if (IsSimulationMode)
+        {
+            // 模擬模式：依 _simLightGateBlocked（按 G 鍵切換）決定，刻意不跳過防抖，直接走
+            // 跟真實 PLC 一模一樣的判斷邏輯，方便沒有真實硬體時也能驗證防抖時間反應。
+            rawBlocked = _simLightGateBlocked;
+            x7 = !rawBlocked;
+            x7ReadingValid = true;
+        }
+        else
+        {
+            bool? rawX7 = _machine.GetPlcXOctal(7);
+            if (rawX7 == null)
+            {
+                x7ReadingValid = false;
+            }
+            else
+            {
+                x7 = rawX7.Value;
+                rawBlocked = !x7;
+                x7ReadingValid = true;
+            }
+        }
+
+        // 診斷用：原始讀值（或斷線狀態）一有變化就記一行，不用等防抖確認觸發。
+        bool? x7RawForLog = x7ReadingValid ? x7 : null;
+        if (x7RawForLog != _lastLoggedX7Raw)
+        {
+            _logger.Debug($"[LightGate] X7 原始讀值變化：{(x7RawForLog?.ToString() ?? "null(斷線/讀取已停止更新)")}" +
+                $"（{(x7RawForLog == false ? "遮斷中" : "暢通")}）");
+            _lastLoggedX7Raw = x7RawForLog;
+        }
+
+        // 每次輪詢都將原始訊號存入歷史佇列（最多 X7HistorySize 筆），純背景執行緒內部狀態，
+        // 不需要切回 UI 執行緒。
+        _x7SignalHistory.Enqueue((DateTime.Now, x7, rawBlocked));
+        if (_x7SignalHistory.Count > X7HistorySize)
+            _x7SignalHistory.Dequeue();
+
+        if (!x7ReadingValid) return;
+
+        var now = DateTime.Now;
+        // 用 _lightGateBlockedConfirmed（背景執行緒自己同步維護），不要用 _isLightGateBlocked——
+        // 後者只會透過 ApplyLightGateState 的 BeginInvoke 非同步更新，UI 執行緒忙碌時會延遲，
+        // 這裡如果讀到舊值，會判斷錯分支、把真正的新觸發/新解除吃掉（見欄位上的說明）。
+        bool blocked = _lightGateBlockedConfirmed; // 預設維持現狀，只有下面滿足對應門檻才轉換
+
+        if (!_lightGateBlockedConfirmed)
+        {
+            // 目前是「暢通」狀態：要持續 LOW 滿 LightGateTriggerDuration 才確認觸發
+            if (rawBlocked)
+            {
+                _lightGateLowSince ??= now;
+                if (now - _lightGateLowSince.Value >= LightGateTriggerDuration)
+                    blocked = true;
+            }
+            else
+            {
+                _lightGateLowSince = null;
+            }
+        }
+        else
+        {
+            // 目前是「遮斷」狀態：要持續 HIGH 滿 LightGateClearDuration 才確認解除
+            if (!rawBlocked)
+            {
+                _lightGateHighSinceAfterBlock ??= now;
+                if (now - _lightGateHighSinceAfterBlock.Value >= LightGateClearDuration)
+                    blocked = false;
+            }
+            else
+            {
+                _lightGateHighSinceAfterBlock = null;
+            }
+        }
+
+        if (blocked == _lightGateBlockedConfirmed)
+            return; // 沒有狀態轉換，不用切回 UI 執行緒，避免每 100ms 都排一次空的 BeginInvoke
+
+        bool justTriggered = blocked && !_lightGateBlockedConfirmed;
+        bool justCleared = !blocked && _lightGateBlockedConfirmed;
+
+        // 立刻同步更新，不等 UI 執行緒的 BeginInvoke——下一輪輪詢（100ms 後）才不會讀到舊值。
+        _lightGateBlockedConfirmed = blocked;
+
+        if (justTriggered && !IsLightGateBypassActive)
+        {
+            // 跟 EMO 一致：安全動作（取消流程＋強制煞停）直接在背景執行緒做，不等 UI 執行緒排隊，
+            // 機台停下來的動作不能因為 UI 執行緒卡住而跟著延遲。CancellationToken.Cancel() 是
+            // 幂等操作，StopAllAxesImmediate 內部有自己的序列化保護，這裡先做一次不會有安全疑慮。
+            _cts?.Cancel();
+            _ = Task.Run(() => _machine.StopAllAxesImmediate("X7 光閘遮斷"));
+        }
+
+        if (justCleared)
+        {
+            // 光閘確認解除：清空計時器，讓下一次觸發從頭重新累積。
+            _lightGateLowSince = null;
+            _lightGateHighSinceAfterBlock = null;
+            _logger.Info($"[LightGate] 光閘已持續暢通滿 {LightGateClearDuration.TotalMilliseconds:F0}ms，確認解除遮斷" +
+                "（IsLightGateBlocked → false）。注意：異常燈號/Alarm 不會因此自動清除，" +
+                "仍需執行原點賦歸或重新 Init 才能繼續 RUN——這是既有設計，不是這次改動造成的。");
+        }
+
+        // 其餘 UI 綁定狀態（IsLightGateBlocked、StatusMessage、Alarm、MES 回報…）一定要切回
+        // UI 執行緒才能正確更新，但用 BeginInvoke（非阻塞）而不是 Invoke——原因跟 EMO 完全一樣：
+        // 如果用 Invoke，UI 執行緒一旦卡住，這條專屬背景執行緒也會被拖著一起卡住，等於獨立
+        // 執行緒的保護整個失效（EMO 那邊 8/26 現場已經實測踩過這個坑）。
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+
+        dispatcher.BeginInvoke(() => ApplyLightGateState(blocked, justTriggered));
+    }
+
+    /// <summary>
+    /// 套用光閘狀態轉換對應的 UI 綁定狀態／警報／MES 回報，只由 <see cref="OnLightGateTickCore"/>
+    /// 透過 Dispatcher.BeginInvoke 呼叫，只在真的發生「觸發」或「解除」轉換時才會被呼叫。
+    /// </summary>
+    private void ApplyLightGateState(bool blocked, bool justTriggered)
+    {
+        if (justTriggered)
+        {
+            if (!IsLightGateBypassActive)
+            {
+                IsInitialized = false;
+                StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
+                _machine.Alarms.Raise("LightGateX7", "X7 光閘遮斷，流程已取消，等待原點賦歸");
+
+                // ── MES 上報 Alarm（光閘觸發事件）──
+                _ = _mesClient.ReportAlarmAsync()
+                    .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                        TaskScheduler.FromCurrentSynchronizationContext());
+
+                // 組合前 N 筆 X7 訊號歷史一併寫入 log
+                var historySb = new System.Text.StringBuilder();
+                historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 {X7HistorySize} 筆，觸發門檻={LightGateTriggerDuration.TotalMilliseconds:F0}ms 持續 LOW）---");
+                int idx = 1;
+                foreach (var entry in _x7SignalHistory)
+                {
+                    historySb.AppendLine(
+                        $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X7={entry.X7Raw,-5} | rawBlocked={entry.RawBlocked,-5}");
+                }
+
+                CancelEventLogger.Write(
+                    "光閘X7",
+                    "X7 光閘遮斷觸發，流程已取消，等待原點賦歸\n" + historySb);
+            }
+            else
+            {
+                // 上料模式：僅顯示提示，不中斷流程
+                StatusMessage = "⚠ 光閘觸發（上料模式，流程不中斷）";
+            }
+        }
+
+        IsLightGateBlocked = blocked;
+    }
+
+    /// <summary>
+    /// 每 500ms 輪詢一次 PLC 板子感測等訊號（EMO 已移到獨立的 <see cref="EmoWatchLoop"/>，
+    /// 光閘 X7 已移到獨立的 <see cref="LightGateWatchLoop"/>，都不再共用這個 UI 執行緒計時器）。
     /// X1+X2 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
@@ -1109,104 +1330,8 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
-        // X7 光閘狀態：不論任何模式都追蹤，LOW = 遮斷（加入防抖：需連續 LightGateDebounceCount 次才觸發）
-        // x7ReadingValid=false 代表這次是 PLC 斷線（GetPlcXOctal 回傳 null），此時凍結現有狀態、
-        // 不更新防抖計數、不觸發任何轉換——絕不能把「斷線」當成「光閘暢通」而誤解除警報。
-        bool x7 = true;
-        bool rawBlocked = false;
-        bool x7ReadingValid;
-        if (IsSimulationMode)
-        {
-            // 模擬模式：依 _simLightGateBlocked（按 G 鍵切換）決定，跳過防抖立即生效，
-            // 且不讀真實 PLC（模擬模式下 PLC 多半未連線，GetPlcXOctal 只會回傳 null）。
-            rawBlocked = _simLightGateBlocked;
-            x7 = !rawBlocked;
-            _lightGateBlockedCount = rawBlocked ? LightGateDebounceCount : 0;
-            x7ReadingValid = true;
-        }
-        else
-        {
-            bool? rawX7 = _machine.GetPlcXOctal(7);
-            if (rawX7 == null)
-            {
-                // PLC 斷線：凍結現有狀態，不更新計數器、不觸發任何轉換
-                _lightGateBlockedCount = 0;
-                x7ReadingValid = false;
-            }
-            else
-            {
-                x7 = rawX7.Value;
-                rawBlocked = !x7;
-                // 先更新防抖計數，再 Enqueue，確保歷史裡的 Count 是當下真實值
-                _lightGateBlockedCount = rawBlocked ? _lightGateBlockedCount + 1 : 0;
-                x7ReadingValid = true;
-            }
-        }
-
-        // 診斷用：原始讀值（或斷線狀態）一有變化就記一行，不用等防抖確認觸發，
-        // 才能看出「訊號本身有沒有在變」跟「有沒有因為防抖被吃掉」是分開的兩件事。
-        bool? x7RawForLog = x7ReadingValid ? x7 : null;
-        if (x7RawForLog != _lastLoggedX7Raw)
-        {
-            _logger.Debug($"[LightGate] X7 原始讀值變化：{(x7RawForLog?.ToString() ?? "null(斷線)")}" +
-                $"（{(x7RawForLog == false ? "遮斷中" : "暢通")}，累積 count={_lightGateBlockedCount}）");
-            _lastLoggedX7Raw = x7RawForLog;
-        }
-
-        // 每次 Tick 都將原始訊號與當下 count 存入歷史佇列（最多 X7HistorySize 筆）
-        _x7SignalHistory.Enqueue((DateTime.Now, x7, rawBlocked, _lightGateBlockedCount));
-        if (_x7SignalHistory.Count > X7HistorySize)
-            _x7SignalHistory.Dequeue();
-
-        if (x7ReadingValid)
-        {
-            bool blocked = (_lightGateBlockedCount >= LightGateDebounceCount);
-
-            // 光閘確認觸發（從未遮斷 → 遮斷，且已通過防抖確認）
-            if (blocked && !_isLightGateBlocked)
-            {
-                if (!IsLightGateBypassActive)
-                {
-                    // 正常模式：取消流程並強制重新原點賦歸
-                    _cts?.Cancel();
-                    // 跟 EMO 一致：光閘屬於安全訊號，只取消流程不夠——CancellationToken 是合作式取消，
-                    // 只會在下一次要發指令前的 ct.ThrowIfCancellationRequested() 生效，當下正在執行中的
-                    // 移動指令仍會走完（曾被現場回報「遮光柵時 Y 軸還是有移到定位」），必須額外強制煞停。
-                    _ = Task.Run(() => _machine.StopAllAxesImmediate("X7 光閘遮斷"));
-                    IsInitialized = false;
-                    StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
-                    _machine.Alarms.Raise("LightGateX7", "X7 光閘遮斷，流程已取消，等待原點賦歸");
-
-                    // ── MES 上報 Alarm（光閘觸發事件）──
-                    _ = _mesClient.ReportAlarmAsync()
-                        .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                            TaskScheduler.FromCurrentSynchronizationContext());
-
-                    // 組合前 N 筆 X7 訊號歷史一併寫入 log
-                    var historySb = new System.Text.StringBuilder();
-                    historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 10 筆，門檻={LightGateDebounceCount}）---");
-                    int idx = 1;
-                    foreach (var entry in _x7SignalHistory)
-                    {
-                        string countInfo = entry.Blocked ? $"count={entry.Count}" : "正常";
-                        string trigger  = (entry.Blocked && entry.Count >= LightGateDebounceCount) ? " ✅ 本筆觸發" : "";
-                        historySb.AppendLine(
-                            $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X7={entry.X7Raw,-5} | rawBlocked={entry.Blocked,-5} | {countInfo}{trigger}");
-                    }
-
-                    CancelEventLogger.Write(
-                        "光閘X7",
-                        "X7 光閘遮斷觸發，流程已取消，等待原點賦歸\n" + historySb);
-                }
-                else
-                {
-                    // 上料模式：僅顯示提示，不中斷流程
-                    StatusMessage = "⚠ 光閘觸發（上料模式，流程不中斷）";
-                }
-            }
-
-            IsLightGateBlocked = blocked;
-        }
+        // X7 光閘：已改成跟 EMO 一樣的獨立背景 Thread（見 LightGateWatchLoop/OnLightGateTickCore），
+        // 不再掛在這個共用的 UI 執行緒 _plcTimer 上，這裡不需要再處理。
 
         // ─── X3/X11 板子放置雷射感測（任一 true = 未放好）───
         // x3/x11 一律保留「感測器實際原始值」供歷史/追蹤 log 還原真實時間軸；
@@ -2301,9 +2426,11 @@ public sealed class MainViewModel : ObservableObject
 
         if (!IsLightGateBypassActive)
         {
-            // 切換為下料模式時：重置防抖計數，讓光閘狀態在下一次 PLC 輪詢時重新評估
+            // 切換為下料模式時：重置防抖計時，讓光閘狀態在下一次 PLC 輪詢時重新評估
             // 避免取料期間的遮斷殘留導致 RUN / 原點賦歸持續鎖定
-            _lightGateBlockedCount = 0;
+            _lightGateLowSince = null;
+            _lightGateHighSinceAfterBlock = null;
+            _lightGateBlockedConfirmed = false; // 同步重置背景執行緒自己的狀態，避免跟 UI 顯示不一致
             IsLightGateBlocked = false;
         }
 
@@ -2363,7 +2490,9 @@ public sealed class MainViewModel : ObservableObject
             await _machine.SlcResetAsync();
 
             // Reset 成功：清除光閘遮斷狀態，讓 RUN / 原點賦歸恢復可用
-            _lightGateBlockedCount = 0;
+            _lightGateLowSince = null;
+            _lightGateHighSinceAfterBlock = null;
+            _lightGateBlockedConfirmed = false; // 同步重置背景執行緒自己的狀態，避免跟 UI 顯示不一致
             IsLightGateBlocked = false;
 
             StatusMessage = "✔ 光柵Reset OK";

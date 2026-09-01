@@ -4,28 +4,34 @@ using System.IO.Ports;
 namespace Slot_Inspection.Services;
 
 /// <summary>
-/// HighBright ¥ú·½±±¨î¾¹
-/// RS-232 ³]©w¡G9600-N-8-1
-/// «ü¥O®æ¦¡¡G{channel},{brightness}\r\n
-/// «G«×½d³ò¡G0~255¡]¦Ê¤À¤ñ´«ºâ¡^
+/// HighBright ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½î¾¹
+/// RS-232 ï¿½]ï¿½wï¿½G9600-N-8-1
+/// ï¿½ï¿½ï¿½Oï¿½æ¦¡ï¿½G{channel},{brightness}\r\n
+/// ï¿½Gï¿½×½dï¿½ï¿½G0~255ï¿½]ï¿½Ê¤ï¿½ï¿½ñ´«ºï¿½^
 /// </summary>
 public sealed class HighBright_Controller : IDisposable
 {
-    // ¢w¢w ©T©w±`¼Æ ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w ï¿½Tï¿½wï¿½`ï¿½ï¿½ ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     private const int    MaxDeviceValue          = 255;
     private const string RespChannelNotDefined   = "CHANNEL not Defined!";
     private const string RespChannelNotAvailable = "CHANNEL not available!";
     private const string RespError               = "E";
 
-    // ¢w¢w Äæ¦ì ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // å» å•†èªªæ˜ï¼šRS-232 æŒ‡ä»¤ç™¼å‡ºè‹¥å½¼æ­¤é‡ç–Šï¼ˆé–“éš”ä¸è¶³ 300msï¼‰ï¼Œæ§åˆ¶å™¨å¯èƒ½ç•¥éå…¶ä¸­ä¸€å€‹æŒ‡ä»¤ï¼Œ
+    // å›æ‡‰æœƒå‡ºç¾é€šç”¨éŒ¯èª¤ç¢¼ã€ŒEã€ï¼Œæˆ–æ®˜ç¼ºå›æ‡‰ï¼ˆä¾‹å¦‚è§€å¯Ÿåˆ°çš„ "1,<"ï¼‰ã€‚å¯¦æ¸¬éé‡é–‹è»Ÿé«”/é‡é€£
+    // COM Port éƒ½ç„¡æ³•æ¸…é™¤é€™å€‹ç‹€æ…‹ï¼Œå¿…é ˆæ¯å€‹æŒ‡ä»¤ä¹‹é–“è‡³å°‘é–“éš” 300ms æ‰ä¸æœƒè§¸ç™¼ã€‚
+    private const int MinCommandIntervalMs = 300;
+
+    // ï¿½wï¿½w ï¿½ï¿½ï¿½ ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     private readonly SerialPort _port;
     private bool _disposed;
+    private DateTime _lastCommandUtc = DateTime.MinValue;
 
-    // ¢w¢w Äİ©Ê ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w ï¿½İ©ï¿½ ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     public bool   IsOpen   => _port?.IsOpen    == true;
     public string PortName => _port?.PortName  ?? string.Empty;
 
-    // ¢w¢w «Øºc¤l ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w ï¿½Øºcï¿½l ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     public HighBright_Controller(string portName, int baudRate = 9600)
     {
         _port = new SerialPort(portName)
@@ -40,7 +46,7 @@ public sealed class HighBright_Controller : IDisposable
         };
     }
 
-    // ¢w¢w ³s½u / Â_½u ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w ï¿½sï¿½u / ï¿½_ï¿½u ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     public void Connect()
     {
         if (IsOpen) return;
@@ -52,14 +58,15 @@ public sealed class HighBright_Controller : IDisposable
     public void Disconnect()
     {
         if (!IsOpen) return;
-        try { _port.Close(); } catch { /* ©¿²¤Ãö³¬®Éªº¨Ò¥~ */ }
+        try { _port.Close(); } catch { /* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Éªï¿½ï¿½Ò¥~ */ }
     }
 
-    // ¢w¢w ³]­È¡]¿é¤J 0~100 % ¡÷ ¸Ë¸m 0~255¡^¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
-    /// <returns>true = ¦¨¥\¦^À³¡Ffalse = ³q°T¿ù»~©Î³q°T¥¢±Ñ</returns>
+    // ï¿½wï¿½w ï¿½]ï¿½È¡]ï¿½ï¿½J 0~100 % ï¿½ï¿½ ï¿½Ë¸m 0~255ï¿½^ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
+    /// <returns>true = ï¿½ï¿½ï¿½\ï¿½^ï¿½ï¿½ï¿½Ffalse = ï¿½qï¿½Tï¿½ï¿½ï¿½~ï¿½Î³qï¿½Tï¿½ï¿½ï¿½ï¿½</returns>
     public bool SetValue(int channel, int percent)
     {
         ThrowIfNotOpen();
+        WaitForMinInterval();
 
         int    deviceValue = ConvertPercentToDeviceValue(percent);
         string command     = $"{channel},{deviceValue}";
@@ -68,15 +75,15 @@ public sealed class HighBright_Controller : IDisposable
         {
             _port.DiscardInBuffer();
             _port.DiscardOutBuffer();
-            _port.WriteLine(command);                   // °e¥X "ch,val\r\n"
+            _port.WriteLine(command);                   // ï¿½eï¿½X "ch,val\r\n"
 
-            string response = _port.ReadLine().Trim();  // Åª¦^¤@¦æ
+            string response = _port.ReadLine().Trim();  // Åªï¿½^ï¿½@ï¿½ï¿½
 
-            // ¦¨¥\¡G¸Ë¸m¦^¶Ç¬Û¦Pªº«ü¥O¤º®e
+            // ï¿½ï¿½ï¿½\ï¿½Gï¿½Ë¸mï¿½^ï¿½Ç¬Û¦Pï¿½ï¿½ï¿½ï¿½ï¿½Oï¿½ï¿½ï¿½e
             if (response == command)
                 return true;
 
-            // ¤wª¾¿ù»~¦^À³
+            // ï¿½wï¿½ï¿½ï¿½ï¿½ï¿½~ï¿½^ï¿½ï¿½
             if (response.StartsWith(RespChannelNotDefined)  ||
                 response.StartsWith(RespChannelNotAvailable) ||
                 response.StartsWith(RespError))
@@ -85,7 +92,7 @@ public sealed class HighBright_Controller : IDisposable
                 return false;
             }
 
-            // ¥¼ª¾¦^À³¡]«O¯d¨Ñ¥~³¡ Log °lÂÜ¡^
+            // ï¿½ï¿½ï¿½ï¿½ï¿½^ï¿½ï¿½ï¿½]ï¿½Oï¿½dï¿½Ñ¥~ï¿½ï¿½ Log ï¿½lï¿½Ü¡^
             LastUnexpectedResponse = response;
             return false;
         }
@@ -94,15 +101,28 @@ public sealed class HighBright_Controller : IDisposable
             LastUnexpectedResponse = $"[Timeout] cmd={command}";
             return false;
         }
+        finally
+        {
+            _lastCommandUtc = DateTime.UtcNow;
+        }
     }
 
-    /// <summary>³Ìªñ¤@¦¸«D¹w´Áªº¦^À³¤º®e¡]¨Ñ¥~³¡ Log ¨Ï¥Î¡^</summary>
+    private void WaitForMinInterval()
+    {
+        var elapsed = DateTime.UtcNow - _lastCommandUtc;
+        var remaining = TimeSpan.FromMilliseconds(MinCommandIntervalMs) - elapsed;
+        if (remaining > TimeSpan.Zero)
+            System.Threading.Thread.Sleep(remaining);
+    }
+
+    /// <summary>ï¿½Ìªï¿½@ï¿½ï¿½ï¿½Dï¿½wï¿½ï¿½ï¿½ï¿½ï¿½^ï¿½ï¿½ï¿½ï¿½ï¿½eï¿½]ï¿½Ñ¥~ï¿½ï¿½ Log ï¿½Ï¥Î¡^</summary>
     public string LastUnexpectedResponse { get; private set; } = string.Empty;
 
-    /// <summary>Ãö³¬©Ò¦³³q¹D¡]°e¥X A,0¡^</summary>
+    /// <summary>ï¿½ï¿½ï¿½ï¿½ï¿½Ò¦ï¿½ï¿½qï¿½Dï¿½]ï¿½eï¿½X A,0ï¿½^</summary>
     public bool TurnOffAll()
     {
         ThrowIfNotOpen();
+        WaitForMinInterval();
 
         const string command = "A,0";
         try
@@ -116,9 +136,13 @@ public sealed class HighBright_Controller : IDisposable
         {
             return false;
         }
+        finally
+        {
+            _lastCommandUtc = DateTime.UtcNow;
+        }
     }
 
-    // ¢w¢w ¤º³¡ ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w ï¿½ï¿½ï¿½ï¿½ ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     private static int ConvertPercentToDeviceValue(int percent)
     {
         percent = Math.Max(0, Math.Min(100, percent));
@@ -128,10 +152,10 @@ public sealed class HighBright_Controller : IDisposable
     private void ThrowIfNotOpen()
     {
         if (!IsOpen)
-            throw new InvalidOperationException("HighBright ¥ú·½©|¥¼³s½u");
+            throw new InvalidOperationException("HighBright ï¿½ï¿½ï¿½ï¿½ï¿½|ï¿½ï¿½ï¿½sï¿½u");
     }
 
-    // ¢w¢w Dispose ¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w¢w
+    // ï¿½wï¿½w Dispose ï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½wï¿½w
     public void Dispose()
     {
         if (_disposed) return;

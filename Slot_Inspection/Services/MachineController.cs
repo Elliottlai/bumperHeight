@@ -283,7 +283,11 @@ public sealed class MachineController : IDisposable
     /// </summary>
     public bool? GetPlcXOctal(int plcOctalAddr)
     {
-        if (_plc == null || !_plc.IsConnected) return null;
+        // IsConnected 只代表底層連線（COM Port）還開著；IsXDataFresh 才是「讀取真的還在正常更新」。
+        // 兩者都要成立，否則 GetX() 回傳的可能只是卡住很久的舊快取值——這個 session 已經在
+        // PLC 寫入佇列餓死讀取、HighBright 光源控制器連線未斷但停止正確回應這兩個地方各踩過一次，
+        // 對安全訊號（尤其是 X7 光閘）不能只信任「連線還開著」。
+        if (_plc == null || !_plc.IsConnected || !_plc.IsXDataFresh) return null;
         return _plc.GetX(OctalAddrToIndex(plcOctalAddr));
     }
 
@@ -1439,8 +1443,6 @@ public sealed class MachineController : IDisposable
         Dictionary<string, double>? zDangerThresholds = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        const int DebounceCount = 3;
-        int x7LowCount = 0;
 
         while (sw.Elapsed < _axisHomeTimeout)
         {
@@ -1468,43 +1470,9 @@ public sealed class MachineController : IDisposable
                 }
             }
 
-            // X7 光閘偵測（暫時停用）
-            //bool? x7 = GetPlcXOctal(7);
-            //if (x7 == false)
-            //{
-            //    x7LowCount++;
-            //}
-            //else
-            //{
-            //    x7LowCount = 0;
-            //}
-            //if (x7LowCount >= DebounceCount)
-            //{
-            //    x7LowCount = 0;
-            //    foreach (var n in _axisNames)
-            //        if (Axes.TryGetValue(n, out var ax)) try { ax.MotStop(isImmediate: true); } catch { }
-            //    progress?.Report("[Home] ? 光閘觸發！等待 X10=1 繼續歸原點...");
-            //    _logger.Warn("[Home] X7 confirmed LOW (debounced), axes stopped, waiting for X10=1 + X7=1");
-            //    while (true)
-            //    {
-            //        ct.ThrowIfCancellationRequested();
-            //        bool x10 = GetPlcXOctal(10) ?? false;
-            //        bool x7Clear = GetPlcXOctal(7) ?? false;
-            //        if (x10 && x7Clear) { _logger.Info("[Home] X10=1, X7=1 → resume homing"); break; }
-            //        await Task.Delay(100, ct);
-            //    }
-            //    progress?.Report("[Home] 光閘解除，重新歸原點...");
-            //    _logger.Info("[Home] X10=1, re-issuing Home to all axes");
-            //    foreach (var axisName in _axisNames)
-            //    {
-            //        if (!Axes.TryGetValue(axisName, out var axis)) continue;
-            //        if (axis is cAxis_RS485 rs485Axis)
-            //            rs485Axis.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
-            //        axis.Home();
-            //    }
-            //    sw.Restart();
-            //    continue;
-            //}
+            // 光閘（X7）監控統一由 MainViewModel.OnPlcTick 處理：觸發時會 _cts.Cancel() +
+            // StopAllAxesImmediate（涵蓋全部軸，包含正在歸原點的軸），OnHome() 用的也是同一個
+            // _cts，這裡不需要另外的 X7 偵測。
 
             // 檢查所有軸是否已到位
             if (_axisNames.All(n => Axes.TryGetValue(n, out var ax) && ax.Wait()))
@@ -1734,41 +1702,9 @@ public sealed class MachineController : IDisposable
         });
         _logger.Info("[DryRun] Y0 BLINK start");
 
-        // ── 背景光閘監控（暫時停用）──
-        using var x7MonitorCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var x7MonitorTask = Task.CompletedTask;
-        //var x7MonitorTask = Task.Run(async () =>
-        //{
-        //    const int DebounceCount = 3; // 連續幾次 LOW 才視為真實觸發
-        //    int lowCount = 0;
-        //    while (!x7MonitorCts.Token.IsCancellationRequested)
-        //    {
-        //        try
-        //        {
-        //            bool? x7 = GetPlcXOctal(7);
-        //            if (x7 == false) // null（斷線）不計入，只有確定 LOW 才累計
-        //            {
-        //                lowCount++;
-        //                if (lowCount >= DebounceCount)
-        //                {
-        //                    if (!_dryRunPaused)
-        //                        _logger.Warn($"[DryRun] X7 debounce confirmed LOW ({lowCount}×50ms), pausing");
-        //                    PauseDryRun();
-        //                }
-        //            }
-        //            else
-        //            {
-        //                if (lowCount > 0 && lowCount < DebounceCount)
-        //                    _logger.Debug($"[DryRun] X7 glitch suppressed ({lowCount}×50ms)");
-        //                lowCount = 0; // HIGH 或斷線都重設計數
-        //            }
-        //            await Task.Delay(50, x7MonitorCts.Token);
-        //        }
-        //        catch (OperationCanceledException) { break; }
-        //        catch { break; }
-        //    }
-        //});
-        _logger.Info("[DryRun] X7 monitor disabled");
+        // 光閘（X7）監控統一由 MainViewModel.OnPlcTick 處理，不論是否在 DryRun 期間都會持續輪詢，
+        // 這裡不需要另外的背景監控。
+        _logger.Info("[DryRun] X7 monitor: 由 OnPlcTick 統一處理");
 
         try
         {
@@ -2054,11 +1990,6 @@ public sealed class MachineController : IDisposable
                     _logger.Warn($"[DryRun] finally: 光源關閉失敗 {ex.Message}");
                 }
             }
-
-            // 停止 X7 背景監控
-            x7MonitorCts.Cancel();
-            try { await x7MonitorTask; } catch { }
-            _logger.Info("[DryRun] X7 monitor stop");
 
             // 停止閃爍，Y0 恢復恆亮（idle 狀態）
             blinkCts.Cancel();

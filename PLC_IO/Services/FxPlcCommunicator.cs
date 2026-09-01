@@ -90,6 +90,13 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
     public bool AsPLC { get; set; }
 
     public bool IsConnected => _transport.Communicatable();
+
+    // X 訊框新鮮度門檻：正常情況下背景 MessageLoop 每個 cycle 都會嘗試補讀 X/Y，
+    // 遠比這個門檻頻繁；設 2 秒是「明顯異常」但又不會對暫時性的單次逾時反應過度敏感。
+    private static readonly TimeSpan XDataFreshWindow = TimeSpan.FromSeconds(2);
+    private DateTime _lastXParseUtc = DateTime.MinValue;
+    public bool IsXDataFresh => DateTime.UtcNow - _lastXParseUtc < XDataFreshWindow;
+
     public long DogValue => _dogValue;
 
     public int RefreshInterval
@@ -417,6 +424,7 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
                 _xData[8 + i] = (bytes[0] & (1 << i)) > 0;
 
             _readXAnswered = true;
+            _lastXParseUtc = DateTime.UtcNow;
 
             // ★ 診斷：X12（index 10）/X13（index 11）/X7（index 7，光閘）一有變化就記主要 log，
             // 另外每 200 次成功解析（背景輪詢正常時大約幾十秒一次）記一次心跳，
