@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Text;
+using NLog;
 using PLC_IO.Interfaces;
 using PLC_IO.Models;
 
@@ -10,6 +11,8 @@ namespace PLC_IO.Services;
 /// </summary>
 public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, ICommandHandler<PlcCommand>
 {
+    private static readonly Logger _nlog = LogManager.GetCurrentClassLogger();
+
     private const int MaxPoints = 16;
     private const int MinFrameLength = 6;
     private const string ReadXCommandString = "E008CA002";
@@ -31,6 +34,11 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
 
     private long _dogValue;
     private bool _disposed;
+
+    // ★ 診斷用：X12/X13（載台側別感測器，array index 10/11）、X7（光閘，index 7）獨立追蹤，
+    // 排查「背景輪詢是否還活著」「X 訊框有沒有持續進來」用。
+    private bool? _lastLoggedX12, _lastLoggedX13, _lastLoggedX7;
+    private int _xParseCount;
 
     // ★ 診斷用：記錄最近的通訊事件
     private readonly List<string> _diagLog = [];
@@ -97,8 +105,18 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
         _readYCommand = new PlcCommand("ReadY", BuildFrameBytes(ReadYCommandString));
 
         _controller = new RequestReplyController<PlcCommand>(this) { CycleInterval = 20 };
-        _controller.OnTimeout += cmd => Log($"⏱ TIMEOUT: {cmd.Command}");
-        _controller.OnError += ex => Log($"❌ MessageLoop error: {ex.Message}");
+        _controller.OnTimeout += cmd =>
+        {
+            Log($"⏱ TIMEOUT: {cmd.Command}");
+            // 逾時/錯誤本來只寫進 _diagLog（要另外呼叫 GetDiagLog() 才看得到），
+            // 這裡額外同步寫一份到主要 log 檔，才能排查「背景輪詢是不是卡住/一直逾時」這種問題。
+            _nlog.Warn($"[FxPlc] 命令逾時：{cmd.Command}");
+        };
+        _controller.OnError += ex =>
+        {
+            Log($"❌ MessageLoop error: {ex.Message}");
+            _nlog.Error(ex, "[FxPlc] MessageLoop 例外");
+        };
         _transport.AddDataArrivalEvent(OnDataArrival);
     }
 
@@ -252,10 +270,12 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
     {
         if (AsPLC) return;
 
+        // 用優先佇列送出，避免被堆積的一般命令（例如持續逾時的 WriteY）卡住，
+        // 導致 X12/X13/X7/X3/X11 這些依賴 ReadX 的訊號長時間讀不到新值。
         _readXAnswered = false;
-        _controller.AddRequest(_readXCommand);
+        _controller.AddPriorityRequest(_readXCommand);
         _readYAnswered = false;
-        _controller.AddRequest(_readYCommand);
+        _controller.AddPriorityRequest(_readYCommand);
     }
 
     // ── 資料接收處理 ──
@@ -397,6 +417,26 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
                 _xData[8 + i] = (bytes[0] & (1 << i)) > 0;
 
             _readXAnswered = true;
+
+            // ★ 診斷：X12（index 10）/X13（index 11）/X7（index 7，光閘）一有變化就記主要 log，
+            // 另外每 200 次成功解析（背景輪詢正常時大約幾十秒一次）記一次心跳，
+            // 用來確認「背景輪詢到底還有沒有持續收到 PLC 回覆」。
+            bool x12Now = _xData[10], x13Now = _xData[11], x7Now = _xData[7];
+            if (x12Now != _lastLoggedX12 || x13Now != _lastLoggedX13)
+            {
+                _nlog.Debug($"[FxPlc] X12/X13 原始值變化：X12={x12Now} X13={x13Now}（第 {_xParseCount} 次成功解析 X）");
+                _lastLoggedX12 = x12Now;
+                _lastLoggedX13 = x13Now;
+            }
+            if (x7Now != _lastLoggedX7)
+            {
+                _nlog.Debug($"[FxPlc] X7（光閘）原始值變化：X7={x7Now}（第 {_xParseCount} 次成功解析 X）");
+                _lastLoggedX7 = x7Now;
+            }
+            _xParseCount++;
+            if (_xParseCount % 200 == 0)
+                _nlog.Debug($"[FxPlc] 心跳：已成功解析 {_xParseCount} 次 X 訊框，目前 X12={x12Now} X13={x13Now} X7={x7Now}");
+
             return true;
         }
         catch (Exception ex)

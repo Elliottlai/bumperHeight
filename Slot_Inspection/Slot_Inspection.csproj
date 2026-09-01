@@ -9,6 +9,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Configurations>Debug;Release;Debug-Sim</Configurations>
     <Platforms>AnyCPU;x64;x86</Platforms>
+    <!-- 版本號＝建置當下的日期，每次重新建置都會自動更新，方便在標題列直接確認機台上跑的是哪一天的版本。
+         SDK 預設會在 InformationalVersion 後面自動加上 git commit hash（例如 "+786fb12..."），
+         這裡關掉，只留乾淨的日期字串。 -->
+    <InformationalVersion>$([System.DateTime]::Now.ToString(yyyy.MM.dd))</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <!-- Debug-Sim: 定義 DEBUG_SIM 常數，啟用模擬模式 -->
@@ -37,6 +42,10 @@
     <Reference Include="BumperFlat.ImageProcessing">
       <HintPath>..\TestALG\TestALG\Lib\BumperFlat.ImageProcessing.dll</HintPath>
     </Reference>
+    <!-- BumperFlatDetection 不在這裡靜態參照：它跟自己那份 Emgu.CV 4.8.1.5350 一起放進
+         BumperFlatDetectionPrivate\（見下方 None Include），改由 BumperFlatDetectionLoadContext
+         在執行期用私有 AssemblyLoadContext 動態載入，避免跟主程式 NuGet 參照的
+         Emgu.CV 4.12.0.5764 檔名衝突、互相覆蓋。 -->
     <Reference Include="MvCodeReaderSDK.Net">
       <HintPath>..\BarcodeReader\Lib\MvCodeReaderSDK.Net.dll</HintPath>
     </Reference>
@@ -45,6 +54,20 @@
 
   <ItemGroup>
     <None Update="Config\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- BumperFlatDetection（新版 AI 演算法）相依檔案：複製到獨立的 BumperFlatDetectionPrivate\ 子資料夾，
+         刻意不 Flatten 到輸出根目錄——這包裡的 Emgu.CV.dll（4.8.1.5350）跟主程式 NuGet 參照的
+         Emgu.CV（4.12.0.5764）檔名相同，放同一層會被新版蓋掉，導致 BumperFlatDetection.dll 內部
+         用到 Emgu.CV 的地方版本對不上、InitializeAsync 靜默回傳 false。
+         隔開放子資料夾後由 BumperFlatDetectionLoadContext（私有 AssemblyLoadContext）從這裡載入，
+         兩份 Emgu.CV 才能在同一個 process 裡互不干擾地並存。 -->
+    <None Include="Lib\BumperFlatDetection\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>BumperFlatDetectionPrivate\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+    <!-- 加密授權模型檔，可能之後會換發，跟 Config 資料一起管理而非放在 Lib -->
+    <None Include="Config\Models\bumperflat.dll" Condition="Exists('Config\Models\bumperflat.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

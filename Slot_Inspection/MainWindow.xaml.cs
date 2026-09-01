@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.Reflection;
+using System.Windows;
 using System.Windows.Input;
 using Slot_Inspection.Models;
 using Slot_Inspection.ViewModels;
@@ -15,6 +16,13 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = new MainViewModel(user);
+
+        // 版本號＝建置日期（見 Slot_Inspection.csproj 的 InformationalVersion），
+        // 標題列直接看得到，部署後不用另外做 MD5 比對就能確認機台上是不是最新版本。
+        var version = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrEmpty(version))
+            Title = $"Slot Inspection v{version}";
     }
 
     // ★ 程式關閉時上報 MES Disconnected
@@ -59,6 +67,16 @@ public partial class MainWindow : Window
             && e.OriginalSource is not System.Windows.Controls.TextBox)
         {
             vm2.ToggleSimEmo();
+            e.Handled = true;
+        }
+
+        // 模擬模式下按 G 鍵切換「光閘(X7)遮斷」狀態（焦點在輸入框時不觸發，避免誤擋打字）
+        if (e.Key == Key.G
+            && DataContext is MainViewModel vm3
+            && vm3.IsSimulationMode
+            && e.OriginalSource is not System.Windows.Controls.TextBox)
+        {
+            vm3.ToggleSimLightGate();
             e.Handled = true;
         }
     }

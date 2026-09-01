@@ -376,6 +376,106 @@ public sealed class MachineController : IDisposable
     private const int CarrierLeftSensorPlcAddr = 12;   // X12（八進制）→ OctalAddrToIndex = 10
     private const int CarrierRightSensorPlcAddr = 13;   // X13（八進制）→ OctalAddrToIndex = 11
 
+    /// <summary>
+    /// 讀取 X12/X13 判斷載台側別（R/L），連續 <paramref name="confirmCount"/> 次讀值一致才確認，
+    /// 避免單次 PLC 訊號雜訊/接觸不良瞬間誤判（跟 X3/X11 板子在席感測器的 debounce 精神一致，
+    /// 只是這裡是一次性判斷用的輪詢版本，不是持續監控）。
+    ///
+    /// 注意：跟 UI 上顯示的 R/L（<c>x12 ? "R" : "L"</c>）同一套慣例——X12 為 true 判定 R 側，
+    /// 且 X12 優先於 X13（兩者同時為 true 這種矛盾狀態時，仍依此慣例判定為 R，但會記警告 log）。
+    /// </summary>
+    /// <param name="confirmCount">需連續讀到幾次相同結果才確認（預設 5 次）</param>
+    /// <param name="intervalMs">每次讀取間隔（毫秒，預設 50ms）</param>
+    /// <param name="maxAttempts">最多嘗試幾次，超過仍未穩定就用最後一次讀值並記警告（預設 40 次，約 2 秒上限）</param>
+    public async Task<(bool X12, bool X13)> DetermineCarrierSideDebouncedAsync(
+        CancellationToken ct, int confirmCount = 5, int intervalMs = 50, int maxAttempts = 40)
+    {
+        bool lastX12 = false, lastX13 = false;
+        int consistentCount = 0;
+        int attempts = 0;
+
+        while (consistentCount < confirmCount && attempts < maxAttempts)
+        {
+            ct.ThrowIfCancellationRequested();
+            attempts++;
+
+            bool x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;
+            bool x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;
+
+            consistentCount = (attempts > 1 && x12 == lastX12 && x13 == lastX13) ? consistentCount + 1 : 1;
+            lastX12 = x12;
+            lastX13 = x13;
+
+            if (consistentCount < confirmCount)
+                await Task.Delay(intervalMs, ct);
+        }
+
+        if (consistentCount < confirmCount)
+            _logger.Warn($"[CarrierSide] X12/X13 訊號在 {maxAttempts} 次讀取內未能連續 {confirmCount} 次穩定一致，" +
+                $"改用最後一次讀值：X12={lastX12}, X13={lastX13}");
+
+        if (lastX12 && lastX13)
+            _logger.Warn("[CarrierSide] X12 與 X13 同時為 true（矛盾狀態，理論上不該同時觸發），依既有慣例（X12 優先）判定為 R 側");
+
+        return (lastX12, lastX13);
+    }
+
+    // ── 即時載台側別監控（供畫面即時顯示 R/L，不用等按 RUN）──
+    private bool _liveCarrierPrevX12, _liveCarrierPrevX13;
+    private int _liveCarrierStableCount;
+    private const int LiveCarrierSideDebounceCount = 3; // 連續 3 次 tick（跟 OnPlcTick 週期一致，約 1.5 秒）讀值一致才更新
+
+    /// <summary>
+    /// 目前已 debounce 確認的載台側別即時狀態；PLC 尚未連線、或讀值還沒穩定夠 N 次時為 null
+    /// （例如剛開機、PLC 斷線中），呼叫端應保留畫面上原本顯示的值，不要清空。
+    /// </summary>
+    public (bool X12, bool X13)? LiveCarrierSide { get; private set; }
+
+    /// <summary>
+    /// 供 <see cref="MainViewModel"/> 的 PLC tick 每次呼叫一次，累積 X12/X13 debounce 狀態，
+    /// 連續穩定 <see cref="LiveCarrierSideDebounceCount"/> 次後更新 <see cref="LiveCarrierSide"/>，
+    /// 讓畫面上的 R/L 顯示即時反映目前載台狀態。跟 <see cref="DetermineCarrierSideDebouncedAsync"/>
+    /// 是兩條獨立的路——這裡只更新畫面顯示用的即時狀態，RUN 當下實際判斷還是走原本那條阻塞式輪詢，
+    /// 避免畫面顯示的即時值萬一還沒穩定，反而拖慢或影響到 RUN 流程本身的判斷時機。
+    /// </summary>
+    private bool? _liveCarrierLastLoggedX12, _liveCarrierLastLoggedX13;
+
+    public void UpdateLiveCarrierSideTick()
+    {
+        bool? rawX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr);
+        bool? rawX13 = GetPlcXOctal(CarrierRightSensorPlcAddr);
+
+        // 診斷用：原始讀值一有變化（含變成/脫離斷線）就記一行，藉此還原真實時間軸，
+        // 排查完「即時顯示」這個功能沒問題後可以拿掉這段。
+        if (rawX12 != _liveCarrierLastLoggedX12 || rawX13 != _liveCarrierLastLoggedX13)
+        {
+            _logger.Debug($"[LiveCarrierSide] 原始讀值變化：X12={(rawX12?.ToString() ?? "null(斷線)")} " +
+                $"X13={(rawX13?.ToString() ?? "null(斷線)")}，目前 LiveCarrierSide={LiveCarrierSide}");
+            _liveCarrierLastLoggedX12 = rawX12;
+            _liveCarrierLastLoggedX13 = rawX13;
+        }
+
+        if (rawX12 == null || rawX13 == null)
+        {
+            // PLC 斷線：凍結目前畫面顯示的狀態，不更新計數器、不清空 LiveCarrierSide
+            _liveCarrierStableCount = 0;
+            return;
+        }
+
+        bool x12 = rawX12.Value, x13 = rawX13.Value;
+        _liveCarrierStableCount = (x12 == _liveCarrierPrevX12 && x13 == _liveCarrierPrevX13)
+            ? _liveCarrierStableCount + 1 : 1;
+        _liveCarrierPrevX12 = x12;
+        _liveCarrierPrevX13 = x13;
+
+        if (_liveCarrierStableCount >= LiveCarrierSideDebounceCount
+            && LiveCarrierSide != (x12, x13))
+        {
+            _logger.Debug($"[LiveCarrierSide] 確認更新：X12={x12} X13={x13}（累積穩定次數={_liveCarrierStableCount}）");
+            LiveCarrierSide = (x12, x13);
+        }
+    }
+
     /// <summary>載台在席偵測結果</summary>
     public enum CarrierPosition { None, Left, Right, Both }
 
@@ -958,8 +1058,7 @@ public sealed class MachineController : IDisposable
                 System.Diagnostics.Debug.WriteLine(
                     $"[S03-Sim] slot={slotLabel}, simPath={simPath}, file={Path.GetFileName(simPath)}");
 
-                var algResult = await Task.Run(
-                    () => _bumperAlg.Analyze(simPath, jsonKey, slotLabel), ct);
+                var algResult = await _bumperAlg.AnalyzeAsync(simPath, jsonKey, slotLabel, _config.UseNewBumperAlgorithm);
 
                 if (algResult.Success && algResult.Image != null)
                 {
@@ -1110,8 +1209,8 @@ public sealed class MachineController : IDisposable
         // STEP 7: 呼叫 BumperFlat 演算法分析（使用已存檔的 .tif 路徑）
         string algJsonKey = _config.GetAlgJsonKey(target, slotIndex);
 
-        var algResultL = await Task.Run(() => _bumperAlg.Analyze(pathL, algJsonKey, $"{slotName}_L"), ct);
-        var algResultR = await Task.Run(() => _bumperAlg.Analyze(pathR, algJsonKey, $"{slotName}_R"), ct);
+        var algResultL = await _bumperAlg.AnalyzeAsync(pathL, algJsonKey, $"{slotName}_L", _config.UseNewBumperAlgorithm);
+        var algResultR = await _bumperAlg.AnalyzeAsync(pathR, algJsonKey, $"{slotName}_R", _config.UseNewBumperAlgorithm);
 
         _logger.Debug($"[S03] {slotName} ALG L={algResultL.Message} R={algResultR.Message}");
 
@@ -2004,8 +2103,8 @@ public sealed class MachineController : IDisposable
         // ── 根據 X12 / X13 判斷相機編號與板子側別 ──
         // X12=true → 板子在 R側 → RSlot；Left=C4, Right=C3
         // X13=true → 板子在 L側 → LSlot；Left=C2, Right=C1
-        bool x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12
-        bool x13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13
+        // 連續讀值一致才確認，避免單次 PLC 雜訊讓某個 Slot 誤判到跟其他 Slot 不同側
+        (bool x12, bool x13) = await DetermineCarrierSideDebouncedAsync(ct);
         string camLeft = x12 ? "C4" : "C2";   // X12→C4, X13（或預設）→C2
         string camRight = x12 ? "C3" : "C1";   // X12→C3, X13（或預設）→C1
         string slotSide = x12 ? "RSlot" : "LSlot";  // X12→RSlot, X13→LSlot
@@ -2086,7 +2185,7 @@ public sealed class MachineController : IDisposable
             // 右相機圖片 → AreaB：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartR = DateTime.Now;
-            var algR = await Task.Run(() => _bumperAlg.Analyze(path, algKeyR, $"{slotLabel}_R"), ct);
+            var algR = await _bumperAlg.AnalyzeAsync(path, algKeyR, $"{slotLabel}_R", _config.UseNewBumperAlgorithm);
             // DetectedArea 已在 BumperAlgService 內換算為 mm²，直接使用
             detectedAreaR = algR.DetectedArea;
             isNgR = detectedAreaR < _config.ValueLimitLow || detectedAreaR > _config.ValueLimitHigh;
@@ -2131,7 +2230,7 @@ public sealed class MachineController : IDisposable
             // 左相機圖片 → AreaA：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartL = DateTime.Now;
-            var algL = await Task.Run(() => _bumperAlg.Analyze(path, algKeyL, $"{slotLabel}_L"), ct);
+            var algL = await _bumperAlg.AnalyzeAsync(path, algKeyL, $"{slotLabel}_L", _config.UseNewBumperAlgorithm);
             detectedAreaL = algL.DetectedArea;
             isNgL = detectedAreaL < _config.ValueLimitLow || detectedAreaL > _config.ValueLimitHigh;
             meanIntensityL = algL.MeanIntensity;
@@ -2331,8 +2430,12 @@ public sealed class MachineController : IDisposable
 
     /// <summary>
     /// 依 HighBright 最近一次非預期回應，組出操作員看得懂的具體原因。
-    /// 目前已知：控制器面板被切到「VR Mode」（本機旋鈕手動控制）時，會拒絕所有 RS-232 遠端調光指令，
-    /// 此時軟體端不管送 0% 還是 100% 都不會生效，必須先在控制器面板切回遠端/RS232 控制模式。
+    /// 目前已知：
+    /// 1. 控制器面板被切到「VR Mode」（本機旋鈕手動控制）時，會拒絕所有 RS-232 遠端調光指令，
+    ///    此時軟體端不管送 0% 還是 100% 都不會生效，必須先在控制器面板切回遠端/RS232 控制模式。
+    /// 2. 控制器對指令持續回應通用錯誤碼「E」（有時混雜殘缺回應，例如 "1,&lt;"），且 COM Port
+    ///    本身並未斷線（IsOpen 仍是 true）——實測過重開軟體/重連 COM Port 都無法解決，
+    ///    必須把控制器「實體斷電重開」才會恢復，研判是控制器內部卡住而非通訊參數問題。
     /// </summary>
     private static string DescribeLightFailureReason(string? lastUnexpectedResponse)
     {
@@ -2340,6 +2443,10 @@ public sealed class MachineController : IDisposable
             lastUnexpectedResponse.Contains("VR Mode", StringComparison.OrdinalIgnoreCase))
         {
             return "光源控制器目前為面板手動模式（VR Mode），已拒絕遠端調光指令，請至控制器面板切換為遠端/RS232 控制模式後再試";
+        }
+        if (!string.IsNullOrEmpty(lastUnexpectedResponse))
+        {
+            return $"光源控制器回應錯誤（{lastUnexpectedResponse}），COM Port 本身仍連線中，重開軟體無效——請將光源控制器「實體斷電重開」後再試";
         }
         return "請確認光源控制器連線";
     }
@@ -2395,8 +2502,14 @@ public sealed class MachineController : IDisposable
 
         if (_lightHB == null || !_lightHB.IsOpen)
         {
-            message = "光源控制器尚未連線，設定僅先存檔，將於下次開燈時套用";
-            return false;
+            // Devices Init（InitializeDevicesAsync）不會連光源，只有跑過 DryRun/Run 才會順便連上；
+            // 測試按鈕的目的就是不用先跑 Run 才能測，所以這裡自己嘗試連線一次，而不是直接回報失敗。
+            var lightInit = InitLightHB();
+            if (!lightInit.Success)
+            {
+                message = $"光源控制器連線失敗（{_lightComPort}）：{lightInit.Message}";
+                return false;
+            }
         }
 
         bool okL = LightSetWithRetry(_config.LightChannelLeft, leftPercent, "LightSettings", "SET");
@@ -2566,6 +2679,9 @@ public sealed class MachineController : IDisposable
             foreach (var axis in Axes.Values)
                 try { axis.MotStop(); axis.SetSVON(false); } catch { }
         }
+
+        // AI演算法(BumperFlatDetection)的模型即使在模擬模式下也可能被觸發載入，disposal 不受 SimulationMode 限制
+        try { _bumperAlg.DisposeNewDetector(); } catch { }
 
         _logger.Info("MachineController Disposed");
     }

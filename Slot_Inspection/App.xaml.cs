@@ -1,4 +1,5 @@
-﻿using System.Windows;
+﻿using System.Reflection;
+using System.Windows;
 using System.Windows.Threading;
 using NLog;
 using NLog.Config;
@@ -16,6 +17,11 @@ namespace Slot_Inspection
         {
             // ── 1. 初始化 NLog（純程式碼設定，不依賴 NLog.config 檔案）──
             InitNLog();
+
+            // 版本號寫進 log 開頭，之後回頭看某天的 log 時，不用另外截圖標題列也能知道當時跑的是哪個版本。
+            var version = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            LogManager.GetCurrentClassLogger().Info($"===== Slot Inspection v{version} Started =====");
 
             // ── 2. 全域例外攔截（讓閃退時能看到錯誤訊息）──
 

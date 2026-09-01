@@ -1,0 +1,7 @@
+{
+  "ConfidenceThreshold": 0.7,
+  "IoUThreshold": 0.7,
+  "PolishingAreaSpecMin": 50,
+  "PolishingAreaSpecMax": 200,
+  "PixelToMm2Factor": 0.00004761
+}

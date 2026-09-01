@@ -68,6 +68,12 @@ public sealed class InspectionConfig
     /// <summary>是否停用 X11 板子放置感測判斷（停用後該訊號永遠視為正常）。</summary>
     public bool PauseX11BoardSensor { get; set; } = false;
 
+    /// <summary>
+    /// true=使用新版 BumperFlatDetection AI 演算法；false=使用原本的 BumperFlat.ImageProcessing。
+    /// 預設 false，評估階段須明確切換才會啟用（模型有授權到期日、現場 GPU 可用性未確認）。
+    /// </summary>
+    public bool UseNewBumperAlgorithm { get; set; } = false;
+
     // -- NG threshold --
     public double NgThresholdLow { get; set; } = 0.40;
     public double NgThresholdHigh { get; set; } = 0.60;

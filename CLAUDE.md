@@ -19,6 +19,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 執行：`Slot_Inspection\bin\Debug\net8.0-windows\Slot_Inspection.exe`（開發機無硬體時用 Debug-Sim 建置）
 - 本 repo **沒有單元測試專案**；`TestALG` 是獨立的演算法測試 GUI 工具，不是測試專案
 
+## 部署到機台測試
+
+機台（實機，有 PLC/軸體硬體）透過網路芳鄰共用資料夾更新，路徑固定是：
+
+```
+\\DESKTOP-0CCMP1C\Software\Slot_Inspection_正式版\net8.0-windows
+```
+
+（2026-08-28 起：這是正式上線版本的資料夾，從原本的 `Nico_Test\Slot_Inspection_0821` 改名搬移過來，
+機台桌面捷徑需要手動更新指向新路徑，才不會開到舊的失效路徑。）
+
+**一律用 `Scripts\deploy.ps1` 部署，不要手動壓縮/複製整包資料夾**——它用 robocopy 做增量同步，只複製有變更的檔案（CUDA/cuDNN/onnxruntime 等原生 DLL 平常不會變，全部跳過），一次部署通常只要幾秒到幾十秒，比整包壓縮/解壓縮快非常多。
+
+```powershell
+# 先建置（Debug-Sim 或機台實際要用的組態）
+"C:\Program Files\Microsoft Visual Studio\18\Professional\MSBuild\Current\Bin\MSBuild.exe" bumperHeight.sln -p:Configuration=Debug-Sim -restore
+
+# 再部署（預設來源 bin\Debug\net8.0-windows，預設目的地就是上面那個機台路徑）
+.\Scripts\deploy.ps1
+
+# 想先看這次會複製哪些檔案、不真的動到機台，加 -Preview
+.\Scripts\deploy.ps1 -Preview
+```
+
+- 部署腳本會自動排除 `Config`、`logs`、`Results`、`MachineAssembly`、`MvSDKLog`、`WebApiLog`——這些是機台現場執行時期會自己產生/累積的資料，不會被覆蓋或刪除
+- 每次執行的複製明細存在 `Scripts\deploy_logs\deploy_<時間戳記>.log`
+- **部署前務必先確認機台上沒有殘留執行中的 `Slot_Inspection.exe`**，否則 DLL 會被鎖住、robocopy 會回報 FAILED；卡死或未回應的舊程序也要先在工作管理員強制結束
+- 機台上的 log 檔在 `<部署目的地>\logs\<yyyy-MM-dd>.log`，可以直接用檔案路徑讀取（`\\DESKTOP-0CCMP1C\Software\Slot_Inspection_正式版\net8.0-windows\logs\...`），不需要使用者手動複製回來
+
 ## 專案結構
 
 | 目錄 | 用途 |

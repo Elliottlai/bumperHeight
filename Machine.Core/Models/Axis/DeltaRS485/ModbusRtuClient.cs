@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Ports;
+using System.Threading;
 
 namespace Machine.Core.Models.Axis.DeltaRS485
 {
@@ -183,7 +184,25 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         private void SendAndFlush(byte[] request)
         {
             _serial!.DiscardInBuffer();
-            _serial.Write(request, 0, request.Length);
+            // 跟 ReadWithWatchdog 同樣的理由：SerialPort.Write() 的 WriteTimeout 一樣不完全可靠，
+            // 8/25 現場實測發現「只修讀取端」還是會卡死——RS485 半雙工收發器在對方裝置完全
+            // 斷電/無回應時，寫入端也可能卡住，不能只顧讀取那一半。
+            WriteWithWatchdog(request, 0, request.Length);
+        }
+
+        /// <summary>寫入端的強制看門狗，用法與理由同 <see cref="ReadWithWatchdog"/>。</summary>
+        private void WriteWithWatchdog(byte[] buffer, int offset, int count)
+        {
+            using var cts = new CancellationTokenSource(ReadWatchdogMs);
+            try
+            {
+                _serial!.BaseStream.WriteAsync(buffer, offset, count, cts.Token)
+                    .GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException("Modbus RTU 寫入逾時（WriteTimeout 未生效，watchdog 強制中止）");
+            }
         }
 
         /// <summary>
@@ -211,6 +230,12 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             return response;
         }
 
+        /// <summary>
+        /// 讀取逾時的強制看門狗上限（毫秒）。故意設得比 <see cref="SerialPort.ReadTimeout"/>（1000ms）
+        /// 略長一點，正常情況下 ReadTimeout 會先生效；這個值只在 ReadTimeout 失靈時才會用到。
+        /// </summary>
+        private const int ReadWatchdogMs = 1500;
+
         /// <summary>從序列埠精確讀取指定長度的 bytes，不足則持續等待直到逾時</summary>
         private byte[] ReadExact(int length)
         {
@@ -223,7 +248,7 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                 int bytesRead;
                 try
                 {
-                    bytesRead = _serial!.Read(buffer, offset, remaining);
+                    bytesRead = ReadWithWatchdog(buffer, offset, remaining);
                 }
                 catch (TimeoutException)
                 {
@@ -237,6 +262,32 @@ namespace Machine.Core.Models.Axis.DeltaRS485
                 remaining -= bytesRead;
             }
             return buffer;
+        }
+
+        /// <summary>
+        /// 包一層強制逾時的讀取，不能只信任 <see cref="SerialPort.ReadTimeout"/>——實際踩過的問題：
+        /// 對方裝置完全沒回應時（例如 EMO 觸發、伺服電源被切斷，軸體整個斷訊），部分 USB 轉 RS485
+        /// 驅動下 <c>SerialPort.Read()</c> 有機率完全不理會 ReadTimeout，直接卡死，呼叫端永遠等不到
+        /// 例外也等不到資料——會把整條呼叫鏈（包含可能在等待結果的 UI 執行緒）一起拖死到程式看起來
+        /// 像當機（8/25 現場實測：CPU 掉到 0%、程式完全沒回應，重開才能恢復）。
+        ///
+        /// 改用 <c>BaseStream.ReadAsync</c> + <see cref="CancellationTokenSource"/>：.NET 的
+        /// <c>SerialStream</c> 在 token 被取消時會呼叫 Win32 <c>CancelIoEx</c> 真正中止底層的
+        /// overlapped I/O，比同步 <c>Read()</c> 的 ReadTimeout 機制可靠得多，逾時後呼叫端一定能
+        /// 拿回控制權繼續走既有的重試/失敗流程，不會無限期卡住。
+        /// </summary>
+        private int ReadWithWatchdog(byte[] buffer, int offset, int count)
+        {
+            using var cts = new CancellationTokenSource(ReadWatchdogMs);
+            try
+            {
+                return _serial!.BaseStream.ReadAsync(buffer, offset, count, cts.Token)
+                    .GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException("Modbus RTU 讀取逾時（ReadTimeout 未生效，watchdog 強制中止）");
+            }
         }
 
         /// <summary>

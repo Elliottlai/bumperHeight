@@ -309,16 +309,25 @@
                     <Grid Grid.Row="0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="380"/>
                             <ColumnDefinition Width="80"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
-                        <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Padding="12,0">
+                        <!-- 目前套用中的 Recipe：唯讀顯示，實際切換仍走「Recipe 切換」視窗；
+                             原本放在最下方 Footer，移到這裡讓操作員一開始就先看到，跟 Barcode 一起判讀 -->
+                        <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" Padding="12,0" Background="#FFF3E0">
+                            <TextBlock Text="{Binding CurrentRecipeDisplay, StringFormat='📦 目前 Recipe：{0}'}"
+                                       FontSize="16" FontWeight="Bold"
+                                       VerticalAlignment="Center"/>
+                        </Border>
+
+                        <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" Padding="12,0">
                             <TextBlock Text="Barcode" VerticalAlignment="Center"/>
                         </Border>
 
-                        <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1">
+                        <Border Grid.Column="2" BorderBrush="#333" BorderThickness="1">
                             <TextBox Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}"
                                      FontSize="34"
                                      HorizontalContentAlignment="Center"
@@ -332,7 +341,7 @@
                         </Border>
 
                         <!-- X12=R / X13=L 側別顯示 -->
-                        <Border Grid.Column="2" BorderBrush="#333" BorderThickness="1" Background="#E3F2FD">
+                        <Border Grid.Column="3" BorderBrush="#333" BorderThickness="1" Background="#E3F2FD">
                             <TextBlock Text="{Binding CarrierSide}"
                                        FontSize="34" FontWeight="Bold"
                                        HorizontalAlignment="Center"
@@ -340,10 +349,9 @@
                                        Foreground="#1565C0"/>
                         </Border>
 
-                        <Grid Grid.Column="3" Margin="2,0,0,0">
+                        <!-- 原本這裡還有日期/時間兩顆按鈕，釋放掉讓其餘按鈕分到更多空間 -->
+                        <Grid Grid.Column="4" Margin="2,0,0,0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
@@ -369,8 +377,6 @@
                                     Style="{StaticResource StateButtonStyle}"
                                     Background="#FFCCCC" FontSize="11" Padding="16,4"
                                     FontWeight="Bold"/>
-                            <Button Grid.Column="4" Content="{Binding CurrentDate}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
-                            <Button Grid.Column="5" Content="{Binding CurrentTime}" Style="{StaticResource StateButtonStyle}" Background="#EEEEEE"/>
                         </Grid>
                     </Grid>
 
@@ -582,7 +588,7 @@
             </Border>
 
             <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="4" Columns="12" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
+            <UniformGrid Grid.Row="4" Columns="13" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
 
                 <Button Content="⚙ Setting"
                         Command="{Binding LightSettingsCommand}"
@@ -592,8 +598,20 @@
                 <Button Content="{Binding LightGateBypassButtonText}"
                         Command="{Binding ToggleLightGateBypassCommand}"
                         FontSize="11" Padding="4,4"
-                        Background="#FFE0B2" FontWeight="Bold"
-                        ToolTip="按下：進入上料/下料模式（光閘觸發不中斷流程，供人工上料/下料使用）；按下 RUN 或再按一次會自動恢復正常光閘防護"/>
+                        FontWeight="Bold"
+                        ToolTip="按下：切換為上料模式（關閉光閘，觸發不中斷流程，供人工上料使用）；再按一次切換為下料模式（開啟光閘，恢復正常防護）；按下 RUN 也會自動切換為下料模式">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <!-- OFF（光閘正常防護中）＝綠；ON（光閘保護暫停，上料中）＝橘，提醒安全防護目前暫停 -->
+                            <Setter Property="Background" Value="#A5D6A7"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLightGateBypassActive}" Value="True">
+                                    <Setter Property="Background" Value="#FFB74D"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
                 <Button Content="{Binding BoardSensorBypassButtonText}"
                         Command="{Binding ToggleBoardSensorBypassCommand}"
                         FontSize="11" Padding="4,4"
@@ -608,6 +626,11 @@
                         FontSize="11" Padding="4,4"
                         Background="#F8CECC" FontWeight="Bold"
                         ToolTip="送出 SLC Reset 訊號（Y0 pulse），完成後彈出提示"/>
+                <Button Content="🔄 EMO Reset"
+                        Command="{Binding EmoResetCommand}"
+                        FontSize="11" Padding="4,4"
+                        Background="#F8CECC" FontWeight="Bold"
+                        ToolTip="確認 EMO 已釋放、現場安全後按下，才會清除 EMO 異常燈號/訊息（僅按下 EMO 又放開後可按）"/>
                 <CheckBox Content="模擬模式"
                           IsChecked="{Binding IsSimulationMode}"
                           IsEnabled="{Binding CanToggleSimulationMode}"
@@ -637,12 +660,12 @@
                         Background="#FFF2CC" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
                         ToolTip="Y 軸移動到取料位置的座標"/>
-                <Button Content="📦 料號切換"
+                <Button Content="📦 Recipe 切換"
                         Command="{Binding PositionSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
                         Background="#E2EFDA" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
-                        ToolTip="切換／備份／刪除料號設定；也可在此微調 Y / X / ZL / ZR / Z安全高度座標"/>
+                        ToolTip="切換／備份／刪除 Recipe 設定；也可在此微調 Y / X / ZL / ZR / Z安全高度座標"/>
                 <Button Content="✂ 裁切設定"
                         Command="{Binding CropSettingsCommand}"
                         Style="{StaticResource StateButtonStyle}"
@@ -673,12 +696,9 @@
                                FontSize="14"
                                TextTrimming="CharacterEllipsis"/>
 
-                    <!-- 右半：目前料號 + MES 連線狀態 -->
+                    <!-- 右半：MES 連線狀態（目前 Recipe 已移到上方 Barcode 列最前面顯示） -->
                     <StackPanel Grid.Column="1" Orientation="Horizontal"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <!-- 目前套用中的料號：唯讀顯示，實際切換仍走「料號切換」視窗 -->
-                        <TextBlock Text="{Binding CurrentRecipeDisplay, StringFormat='📦 目前料號：{0}'}"
-                                   FontSize="13" Foreground="White" VerticalAlignment="Center" Margin="0,0,20,0"/>
                         <Ellipse Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,6,0">
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">

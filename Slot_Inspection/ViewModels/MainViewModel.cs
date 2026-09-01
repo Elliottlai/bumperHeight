@@ -38,6 +38,18 @@ public sealed class MainViewModel : ObservableObject
 
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _plcTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
+    // EMO 專用快速輪詢：用獨立的 background Thread（不是 DispatcherTimer，也刻意不是
+    // System.Threading.Timer／ThreadPool）。原因是實測踩過兩層坑：
+    //   1) 掛 DispatcherTimer 會被 UI 執行緒忙碌拖慢（見 OnEmoTickCore 上的說明）。
+    //   2) 改成 ThreadPool 版 Timer 後，8/25 現場又遇到「EMO 觸發時軸體 Modbus 逾時重試
+    //      量太大，把 ThreadPool 工作執行緒全部佔滿」，導致連 EMO 輪詢自己的 callback 都
+    //      排不到執行緒可以跑，整個輪詢直接停擺數十秒（log 完全沒有新的 [EMO-DIAG]），
+    //      使用者實際扭轉解除 EMO 後，畫面警示橫幅完全不會消失，因為程式根本沒有在跑。
+    // 獨立 Thread 有自己專屬的作業系統執行緒，不會被 ThreadPool 裡其他工作（例如軸體
+    // StopAllAxesImmediate 的 Modbus 重試）排擠，確保 EMO 輪詢永遠有機會照原訂間隔執行。
+    private Thread? _emoWatchThread;
+    private volatile bool _emoWatchRunning;
+    private static readonly TimeSpan EmoPollInterval = TimeSpan.FromMilliseconds(100);
     // MES 重試計時器：失敗時每 15 秒自動重試，連線成功後停止
     private readonly DispatcherTimer _mesRetryTimer = new() { Interval = TimeSpan.FromSeconds(15) };
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
@@ -46,13 +58,28 @@ public sealed class MainViewModel : ObservableObject
     private bool _prevX10 = false; // X10 上一次狀態（預設 0，保留供未來使用）
     private bool _isLightGateBlocked; // X7=LOW：光閘遮斷中
     private int _lightGateBlockedCount = 0; // 連續讀到 LOW 的次數（觸發防抖用）
+    private bool? _lastLoggedX7Raw; // 診斷用：X7 原始讀值一有變化就記 log，不用等防抖確認觸發
     private int _lightGateClearCount = 0;  // 連續讀到 HIGH 的次數（釋放防抖用）
     private const int LightGateDebounceCount = 3;      // 需連續 N 次（×100ms）LOW 才視為真正觸發
     private const int LightGateClearDebounceCount = 5; // 需連續 N 次（×100ms）HIGH 才視為真正解除
     // X0 緊急停止(EMO)
-    private bool _isEmoTriggered; // X0=LOW：EMO 觸發中
-    private int _emoTriggeredCount = 0; // 連續讀到 LOW 的次數（觸發防抖用）
-    private const int EmoDebounceCount = 3; // 需連續 N 次（×500ms）才視為真正觸發，避免雜訊誤判
+    private bool _isEmoTriggered; // X0=HIGH：EMO 觸發中（現場實測極性跟電路圖判讀相反，已更正，見 OnEmoTick）
+    // 觸發防抖改用「牆鐘時間」而非「連續 tick 次數」：現場實測發現 _emoTimer 雖然設定 100ms，
+    // 實際 tick 間隔在機台上常常拉長到數秒（懷疑 UI Dispatcher 執行緒被其他同步呼叫卡住），
+    // 用「連續 N 次 tick」的防抖在這種情況下幾乎永遠湊不滿，導致按下 EMO 也不會觸發。
+    // 改成「從第一次讀到觸發電位算起，經過 EmoDebounceDuration 仍持續為觸發」，不管中間 tick
+    // 實際間隔多長、多不規則，只要訊號真的有持續住，遲早會滿足門檻——同時仍能過濾單次雜訊尖峰
+    // （雜訊通常下一個 tick 就掉回去，_emoHighSince 會被清成 null，不會累積時間）。
+    private DateTime? _emoHighSince;
+    private static readonly TimeSpan EmoDebounceDuration = TimeSpan.FromMilliseconds(300);
+    private bool _isEmoAlarmPendingReset; // EMO 觸發過、尚未經使用者按「EMO Reset」確認（即使 X0 已釋放仍維持 true）
+    // EMO 診斷 log 節流狀態：避免 tick 洗版，只在「數值有變化」或超過心跳間隔才寫一筆，
+    // 但保證固定心跳間隔一定有一筆，讓看 log 的人能確認 tick 真的還在跑、不是卡住或被例外中斷。
+    // 現場測試時把 logs\ 下當天的 .log 檔帶回來，搜尋 "[EMO-DIAG]" 就能看到完整時間序列，
+    // 兩筆之間的實際時間差就是 _emoTimer 真實的 tick 間隔（拿來確認 timer 有沒有卡住）。
+    private (bool? RawX0, bool Simulation, bool Triggered)? _emoDiagLastLogged;
+    private DateTime _emoDiagLastLogTime = DateTime.MinValue;
+    private static readonly TimeSpan EmoDiagHeartbeatInterval = TimeSpan.FromSeconds(2);
     // X3/X11 板子放置雷射感測
     private bool _isBoardMisplaced;
     private int _boardMisplacedCount;
@@ -107,7 +134,7 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>供 XAML DataTrigger 比對用的字串（避免 enum 型別引用）。</summary>
     public string MesStatusKey => _mesStatus.ToString();
 
-    /// <summary>目前套用中的料號（Recipe）名稱，供首頁唯讀顯示；實際切換由「料號切換」視窗負責並即時寫回 InspectionConfig。</summary>
+    /// <summary>目前套用中的 Recipe 名稱，供首頁唯讀顯示；實際切換由「Recipe 切換」視窗負責並即時寫回 InspectionConfig。</summary>
     public string CurrentRecipeDisplay =>
         string.IsNullOrWhiteSpace(_machine.Config.CurrentRecipeName)
             ? "未指定"
@@ -134,7 +161,7 @@ public sealed class MainViewModel : ObservableObject
     public string RunStateText => RunState switch
     {
         MachineRunState.Alarm   => "⚠ 異常",
-        MachineRunState.Paused  => "上料/下料模式中",
+        MachineRunState.Paused  => "上料模式中",
         MachineRunState.Running => "運行中",
         MachineRunState.Ready   => "待命中",
         _                       => "未連線"
@@ -306,10 +333,19 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 畫面狀態列文字。集中在這裡寫 log 而不是在 101 個賦值處各自補一行——
+    /// 現場測試沒有網路，只能事後帶 log 檔回來分析，操作員當下畫面看到的訊息若沒進 log，
+    /// 就只能靠人工描述回報還原，等於每次都要重寫一次「0820客服描述問題.txt」。
+    /// </summary>
     public string StatusMessage
     {
         get => _statusMessage;
-        set => SetProperty(ref _statusMessage, value);
+        set
+        {
+            if (SetProperty(ref _statusMessage, value))
+                _logger.Info($"[Status] {value}");
+        }
     }
 
     public bool IsInitialized
@@ -341,7 +377,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// X0 緊急停止(EMO)觸發中（LOW）→ 禁止按 RUN／原點賦歸。
+    /// X0 緊急停止(EMO)觸發中（HIGH，見 OnEmoTick）→ 禁止按 RUN／原點賦歸。
     /// </summary>
     public bool IsEmoTriggered
     {
@@ -353,6 +389,21 @@ public sealed class MainViewModel : ObservableObject
                 CommandManager.InvalidateRequerySuggested();
                 NotifyRunStateChanged();
             }
+        }
+    }
+
+    /// <summary>
+    /// EMO 曾觸發、尚未經使用者按「EMO Reset」確認 → true。跟 <see cref="IsEmoTriggered"/> 不同：
+    /// 後者跟著 X0 即時訊號走（放開就變 false，用來即時鎖定/解鎖 RUN、原點賦歸等按鈕），
+    /// 這個旗標則要求操作員實際確認過現場安全、按下 Reset，才會變回 false，異常燈號也才會熄滅。
+    /// </summary>
+    public bool IsEmoAlarmPendingReset
+    {
+        get => _isEmoAlarmPendingReset;
+        private set
+        {
+            if (SetProperty(ref _isEmoAlarmPendingReset, value))
+                CommandManager.InvalidateRequerySuggested();
         }
     }
 
@@ -385,6 +436,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand ToggleLightGateBypassCommand { get; }
     public ICommand ToggleBoardSensorBypassCommand { get; }
     public ICommand SlcResetCommand { get; }
+    public ICommand EmoResetCommand { get; }
     public ICommand WebApiTestCommand { get; }
     public ICommand ChangePasswordCommand { get; }
     public ICommand OpenUserManagementCommand { get; }
@@ -411,9 +463,12 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>按鈕顯示文字，隨狀態切換；啟用時顯示「取消上料/下料模式」，停用時顯示「上料/下料模式」。</summary>
+    /// <summary>
+    /// 按鈕顯示文字，隨狀態切換；啟用時（光閘關閉，光閘觸發不中斷流程）顯示「上料下料模式ON」，
+    /// 停用時（光閘開啟，恢復正常防護）顯示「上料下料模式OFF」。同一功能用 ON/OFF 表示開關兩態，避免被誤認成兩個不同功能。
+    /// </summary>
     public string LightGateBypassButtonText =>
-        IsLightGateBypassActive ? "取消上料/下料模式" : "上料/下料模式";
+        IsLightGateBypassActive ? "上料下料模式ON" : "上料下料模式OFF";
 
     /// <summary>
     /// Admin 專用安全開關：啟用時完全忽略 X3/X11 雷射感測的板子放置判斷（視為永遠正常），
@@ -556,6 +611,20 @@ public sealed class MainViewModel : ObservableObject
         _logger.Debug($"[SIM] SimEmoTriggered 切換為 {_simEmoTriggered}");
     }
 
+    /// <summary>
+    /// 模擬模式專用：按 G 鍵切換的 X7 光閘遮斷狀態，供測試「光閘觸發時軸立即煞停」用，
+    /// 不需要接真實 PLC。僅在 IsSimulationMode=true 時生效，OnPlcTick 讀此值直接跳過防抖。
+    /// </summary>
+    private bool _simLightGateBlocked;
+
+    /// <summary>由 MainWindow 鍵盤事件呼叫，切換模擬 X7 光閘遮斷/解除。非模擬模式下無效。</summary>
+    public void ToggleSimLightGate()
+    {
+        if (!IsSimulationMode) return;
+        _simLightGateBlocked = !_simLightGateBlocked;
+        _logger.Debug($"[SIM] SimLightGateBlocked 切換為 {_simLightGateBlocked}");
+    }
+
     /// <summary>ZL/ZR安定延遲checkbox是否可操作，依「角色權限設定」決定。</summary>
     public bool CanToggleAxisSettleDelay => HasPermission(Permission.AxisSettleDelay);
 
@@ -643,15 +712,15 @@ public sealed class MainViewModel : ObservableObject
         StopCommand = new RelayCommand(OnStop, () => HasPermission(Permission.Stop));
         // 主流程：逐 Slot 移動、取像、存圖
         // 允許按 Run 的條件：裝置已就緒，且 (已完成原點賦歸 OR ZL/ZR 已達安全高度)，同時非正在執行/非 DryRun，且光閘未遮斷，且板子已放妥，且該角色有RUN權限。
-        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && !IsBoardMisplaced && HasPermission(Permission.Run));
+        RunCommand = new RelayCommand(OnRunInspection, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && !IsEmoAlarmPendingReset && !IsBoardMisplaced && HasPermission(Permission.Run));
         // 初始化：Config + Servo + PLC（不含原點賦歸）
         InitAxesCommand = new RelayCommand(OnInitDevices, () => !IsRunning && !IsDryRunning && !IsDeviceReady && HasPermission(Permission.InitDevices));
         // 原點賦歸：光閘必須未遮斷才可按（不因暫停光閘而全域禁用）
-        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && HasPermission(Permission.Home));
+        HomeCommand = new RelayCommand(OnHome, () => IsDeviceReady && !IsRunning && !IsDryRunning && !IsLightGateBlocked && !IsEmoTriggered && !IsEmoAlarmPendingReset && HasPermission(Permission.Home));
         // 讀取條碼：Y→491 → 偵測 X12/X13 → 移動 X 軸
         ReadBarcodeCommand = new RelayCommand(OnReadBarcode, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.ReadBarcode));
         // 移至取料位：Y 軸移動到取料位座標（與 RUN 一致：需已復歸或 Z 已在安全高度且未被要求重新復歸）
-        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && HasPermission(Permission.MoveToPickPosition));
+        MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && !IsEmoAlarmPendingReset && HasPermission(Permission.MoveToPickPosition));
         // 座標設定：依「角色權限設定」決定 Operator/Engineer 是否可開啟，Admin永遠可以
         PositionSettingsCommand = new RelayCommand(OnPositionSettings, () => !IsRunning && !IsDryRunning && HasPermission(Permission.PositionSettings));
 
@@ -671,13 +740,16 @@ public sealed class MainViewModel : ObservableObject
         ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
 
         // 暫停光閘 toggle
-        ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => HasPermission(Permission.ToggleLightGateBypass));
+        ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => !IsRunning && !IsDryRunning && HasPermission(Permission.ToggleLightGateBypass));
 
         // 暫停板子感測 toggle：僅 Admin 可操作，不透過角色權限表開放
         ToggleBoardSensorBypassCommand = new RelayCommand(OnToggleBoardSensorBypass, () => IsAdmin);
 
         // SLC Reset
         SlcResetCommand = new RelayCommand(OnSlcReset, () => IsDeviceReady && !IsRunning && !IsDryRunning && HasPermission(Permission.SlcReset));
+
+        // EMO Reset：EMO 曾觸發過就必須手動按這顆才能清除異常燈號/訊息，即使 X0 已釋放也一樣
+        EmoResetCommand = new RelayCommand(OnEmoReset, () => IsEmoAlarmPendingReset && !IsEmoTriggered && HasPermission(Permission.SlcReset));
 
         // WebAPI 模擬測試：僅Admin
         WebApiTestCommand = new RelayCommand(OnWebApiTest, () => IsAdmin);
@@ -723,6 +795,7 @@ public sealed class MainViewModel : ObservableObject
         });
 
         _plcTimer.Tick += OnPlcTick;
+        // EMO 背景輪詢不用 Tick 事件訂閱，見 StartBackgroundWork() 裡 _emoBgTimer 的建立方式。
 
         // MES 重試計時器訂閱
         _mesRetryTimer.Tick += OnMesRetryTick;
@@ -753,6 +826,15 @@ public sealed class MainViewModel : ObservableObject
 
         _timer.Start();
         _plcTimer.Start();
+        // 獨立 Thread（非 ThreadPool），見上面 _emoWatchThread 欄位的說明。
+        _emoWatchRunning = true;
+        _emoWatchThread = new Thread(EmoWatchLoop)
+        {
+            IsBackground = true,
+            Name = "EmoWatch",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _emoWatchThread.Start();
 
         // ★ 登入成功後非同步連線 MES（不阻塞 UI）
         _ = InitMesAsync();
@@ -827,19 +909,26 @@ public sealed class MainViewModel : ObservableObject
         IsEmoTriggered ? "偵測到緊急停止(EMO)已觸發，機台動作已中斷" : fallback;
 
     /// <summary>
-    /// 依當下 EMO 狀態（不論來自真實 X0 或模擬模式）套用邊緣觸發的副作用（取消流程、鎖定 RUN、告警），
-    /// 並更新 IsEmoTriggered。由 OnPlcTick 的真實/模擬兩個分支共用，避免邏輯寫兩份。
+    /// 依當下 EMO 狀態（不論來自真實 X0 或模擬模式）套用邊緣觸發的副作用（鎖定 RUN、告警等 UI 狀態），
+    /// 並更新 IsEmoTriggered。只由 <see cref="OnEmoTickCore"/> 透過 Dispatcher.Invoke 呼叫。
+    /// 注意：取消流程（_cts.Cancel()）與強制煞停（StopAllAxesImmediate）**不**在這裡做——
+    /// 那兩個呼叫已經在 OnEmoTickCore 偵測到剛觸發的當下、在背景執行緒直接執行過一次了，
+    /// 這裡如果重複呼叫，會對同一批軸體同時送出兩輪 Stop 指令，實測會讓 RS485 Modbus
+    /// 逾時/重試互相搶通訊埠，反而讓整個停止流程拖更久、连带拖慢這裡 Dispatcher.Invoke 排隊
+    /// （8/25 現場測試看到「UI 延遲很久才顯示 EMO」，log 顯示 4 軸的 MotStop 逾時重試訊息
+    /// 反覆出現超過 20 秒，就是這裡曾經重複呼叫造成的）。
     /// </summary>
     private void ProcessEmoState(bool emoNow)
     {
         if (emoNow && !_isEmoTriggered)
         {
-            _cts?.Cancel();
-            // MotStop 內部的 Modbus 重試在 EMO 觸發、軸體多半已斷線時可能要等好幾秒才會逾時，
-            // OnPlcTick 是 UI 執行緒的 500ms timer callback，丟到背景執行避免卡住整個畫面。
-            _ = Task.Run(() => _machine.StopAllAxesImmediate("EMO 緊急停止觸發"));
             IsInitialized = false; // setter 會自動鎖上 _requireReinitAfterStop
-            StatusMessage = "⚠ 緊急停止(EMO)已觸發！機台動作已中斷，請確認機台安全後釋放並復歸 EMO、按下面板異常復歸按鈕，再重新執行原點賦歸";
+            // EMO 觸發後強制要求重新初始化（不只是原點復歸）：EMO 發生當下軸體 RS485 連線
+            // 常常已經不穩定（MotStop 逾時、收不到回應），只做原點復歸不會重新建立連線，
+            // 必須先走一次 S00 初始化。IsDeviceReady=false 會鎖住 HomeCommand、解鎖 InitAxesCommand。
+            IsDeviceReady = false;
+            IsEmoAlarmPendingReset = true;
+            StatusMessage = "⚠ 緊急停止(EMO)已觸發！機台動作已中斷，請確認機台安全後釋放 EMO，再重新執行初始化與原點賦歸";
             _machine.Alarms.Raise("EMO", "X0 緊急停止觸發，流程已取消，等待操作員復歸與原點賦歸");
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus, TaskScheduler.FromCurrentSynchronizationContext());
@@ -847,15 +936,149 @@ public sealed class MainViewModel : ObservableObject
         }
         else if (!emoNow && _isEmoTriggered)
         {
-            _machine.Alarms.Clear("EMO");
-            StatusMessage = "✔ EMO 已復歸，請重新執行原點賦歸後再繼續 RUN";
+            // 注意：這裡刻意不清除 "EMO" 警報、不熄異常燈號——EMO 是最高等級的安全訊號，
+            // 光是 X0 訊號恢復正常（旋鈕被放開）不代表操作員已經確認過現場安全，
+            // 必須等操作員按下「EMO Reset」（見 OnEmoReset）才真正清除，見 IsEmoAlarmPendingReset。
+            StatusMessage = "✔ EMO 已放開，請按下「EMO Reset」確認現場安全後，再重新執行初始化與原點賦歸";
         }
         IsEmoTriggered = emoNow;
     }
 
     /// <summary>
-    /// 每 100ms 輪詢一次 PLC X1+X2 訊號。
-    /// 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
+    /// <see cref="_emoWatchThread"/> 的主迴圈。跑在專屬的 background Thread，不是 UI 執行緒、
+    /// 也不是 ThreadPool——即使 ThreadPool 被其他工作（例如軸體 Modbus 重試）全部佔滿，
+    /// 這裡仍然保證能照 <see cref="EmoPollInterval"/> 繼續執行。
+    /// </summary>
+    private void EmoWatchLoop()
+    {
+        while (_emoWatchRunning)
+        {
+            try
+            {
+                OnEmoTickCore();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "[EMO-DIAG] 背景輪詢例外");
+            }
+
+            Thread.Sleep(EmoPollInterval);
+        }
+    }
+
+    /// <summary>
+    /// EMO(X0) 專用快速輪詢邏輯，實際跑在 <see cref="_emoWatchThread"/> 這個獨立 background Thread，
+    /// 不是 UI 執行緒、也不是 ThreadPool——避免 EMO 這種最高等級的安全訊號被 UI 執行緒忙碌/卡頓
+    /// 拖累，也不受 ThreadPool 被其他工作佔滿影響（見 <see cref="_emoWatchThread"/> 上的說明）。
+    /// 讀 X0＋累計「牆鐘時間」防抖（見 <see cref="_emoHighSince"/> 上的說明）都在這裡完成，
+    /// 完全不受 UI 執行緒影響；只有最後真的要更新 UI 綁定屬性時才切回 UI 執行緒（Dispatcher.Invoke）。
+    /// </summary>
+    private void OnEmoTickCore()
+    {
+        // X0 緊急停止(EMO)狀態：HIGH = 觸發（現場已用 PLC 本體 X0 指示燈實測確認）。
+        // PLC 斷線(null)時凍結現有狀態，不誤判為「未觸發」
+        // （跟 X7 目前的 ?? true 寫法不同——EMO 是最關鍵的安全訊號，斷線時絕不能悄悄當成正常）。
+        bool simulation = IsSimulationMode;
+        bool? rawX0 = null;
+        bool triggered;
+
+        if (simulation)
+        {
+            // 模擬模式：依 _simEmoTriggered（按 E 鍵切換）決定，跳過防抖立即生效，
+            // 且不讀真實 PLC（模擬模式下 PLC 多半未連線，GetPlcXOctal 只會回傳 null）。
+            // 注意：模擬模式下這裡完全不會去讀 X0，實機測試前務必確認 IsSimulationMode 是 false，
+            // 否則按下實體 EMO 鈕不會有任何反應——這是最常見的「UI 不顯示觸發」原因之一。
+            _emoHighSince = null;
+            triggered = _simEmoTriggered;
+        }
+        else
+        {
+            rawX0 = _machine.GetPlcXOctal(0);
+            if (rawX0.HasValue)
+            {
+                bool rawEmo = rawX0.Value;
+                if (rawEmo)
+                    _emoHighSince ??= DateTime.Now; // 第一次讀到觸發電位才記錄起始時間，之後持續為 true 不覆蓋
+                else
+                    _emoHighSince = null; // 只要有一次讀到未觸發，視為雜訊或真的放開，計時歸零重來
+
+                triggered = _emoHighSince.HasValue
+                    && (DateTime.Now - _emoHighSince.Value) >= EmoDebounceDuration;
+            }
+            else
+            {
+                // PLC 斷線，凍結現有狀態，不當成觸發也不當成解除。
+                triggered = _isEmoTriggered;
+            }
+        }
+
+        // 剛從「未觸發」變成「觸發」的當下，立即（在背景執行緒，不等 UI 執行緒排隊）取消流程、
+        // 強制煞停軸體——這兩個呼叫本身跟 UI 無關，不需要切回 UI 執行緒，機台停下來的動作
+        // 不能因為 UI 執行緒卡住而跟著延遲。ProcessEmoState 裡也有同一段呼叫（供其他呼叫路徑
+        // 共用邏輯），Cancel() 是幂等操作、StopAllAxesImmediate 內部有自己的序列化保護，
+        // 這裡先做一次不會造成安全疑慮，只是確保「卡 UI 執行緒不會拖慢煞停」。
+        if (triggered && !_isEmoTriggered)
+        {
+            _cts?.Cancel();
+            _ = Task.Run(() => _machine.StopAllAxesImmediate("EMO 緊急停止觸發"));
+        }
+
+        // 其餘 UI 綁定狀態（IsEmoTriggered、StatusMessage、CommandManager…）與 MES 回報
+        // （TaskScheduler.FromCurrentSynchronizationContext() 需要 UI 執行緒的 SynchronizationContext）
+        // 一定要切回 UI 執行緒才能正確更新，但改用 BeginInvoke（非阻塞）而不是 Invoke。
+        // 8/26 現場實測發現用 Invoke 會有更嚴重的問題：如果 UI 執行緒因為其他原因（跟這次
+        // EMO 無關的某個呼叫）整個卡住，Invoke 會讓「這條專屬背景執行緒」也跟著永久卡住，
+        // 導致連 EmoWatchLoop 自己都無法再往下跑、完全停止輪詢（log 連一筆心跳都不會有，
+        // 比先前任何一次卡死都更早、更徹底）——等於獨立執行緒的保護完全失效。
+        // 改成 BeginInvoke 後，這裡只是把「套用畫面狀態」這件事丟進 UI 執行緒的佇列就馬上
+        // return，EmoWatchLoop 永遠不會被 UI 執行緒卡住，能持續輪詢、持續留下 log 心跳；
+        // 畫面套用本身如果因為 UI 執行緒卡住而延遲，最多就是画面慢一點更新，不會回頭拖累偵測。
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+
+        var capturedRawX0 = rawX0;
+        dispatcher.BeginInvoke(() =>
+        {
+            _machine.SyncRedAlarmOutput();
+            LogEmoDiag(capturedRawX0, simulation, triggered);
+            ProcessEmoState(triggered);
+        });
+    }
+
+    /// <summary>
+    /// EMO 診斷 log：只在數值有變化，或超過 <see cref="EmoDiagHeartbeatInterval"/> 沒寫過時才輸出，
+    /// 避免 tick 洗版。目的是讓現場測試後把 logs\ 下的檔案帶回來，不需要重現問題也能從時間序列判斷根因：
+    ///   - 全程 raw=(sim) → 現場忘記把「模擬模式」關掉，沒有真的在讀 PLC。
+    ///   - 全程 raw=PLC斷線(null) → PLC 通訊沒接上，不是 EMO 邏輯本身的問題。
+    ///   - raw 全程都是 LOW，按下實體 EMO 也沒變化 → 電路配線 X0 對應的可能不是 EMO 迴路本身
+    ///     （已排除：8/25 現場用 PLC 本體 X0 指示燈確認過，按下去燈會亮）。
+    ///   - raw 有跳到 HIGH，但兩筆不同狀態的 log 之間時間差遠大於 100ms（例如數秒）→
+    ///     _emoTimer 實際 tick 間隔被拉長，不是防抖邏輯本身的問題，要往「UI 執行緒被什麼卡住」查。
+    /// </summary>
+    private void LogEmoDiag(bool? rawX0, bool simulation, bool triggered)
+    {
+        var state = (rawX0, simulation, triggered);
+        bool changed = _emoDiagLastLogged is null || _emoDiagLastLogged.Value != state;
+        bool heartbeatDue = DateTime.Now - _emoDiagLastLogTime >= EmoDiagHeartbeatInterval;
+        if (!changed && !heartbeatDue) return;
+
+        _emoDiagLastLogged = state;
+        _emoDiagLastLogTime = DateTime.Now;
+
+        string rawText = simulation
+            ? $"(sim){(triggered ? "ON" : "OFF")}"
+            : rawX0.HasValue ? (rawX0.Value ? "HIGH" : "LOW") : "PLC斷線(null)";
+        string highSinceText = _emoHighSince.HasValue
+            ? $"{(DateTime.Now - _emoHighSince.Value).TotalMilliseconds:F0}ms"
+            : "-";
+
+        _logger.Debug($"[EMO-DIAG] raw={rawText} sim={simulation} highFor={highSinceText}/{EmoDebounceDuration.TotalMilliseconds:F0}ms " +
+            $"IsEmoTriggered={triggered} IsEmoAlarmPendingReset={_isEmoAlarmPendingReset}");
+    }
+
+    /// <summary>
+    /// 每 500ms 輪詢一次 PLC 光閘/板子感測等訊號（EMO 已移到獨立的 <see cref="OnEmoTick"/>）。
+    /// X1+X2 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
     {
@@ -866,39 +1089,68 @@ public sealed class MainViewModel : ObservableObject
         // 就會自動補回正確狀態，不需要使用者手動按任何按鈕才能讓燈熄滅。
         _machine.SyncRedAlarmOutput();
 
-        // X0 緊急停止(EMO)狀態：LOW = 觸發。PLC 斷線(null)時凍結現有狀態，不誤判為「未觸發」
-        // （跟 X7 目前的 ?? true 寫法不同——EMO 是最關鍵的安全訊號，斷線時絕不能悄悄當成正常）。
-        if (IsSimulationMode)
+        // 即時載台側別（R/L）：累積 debounce 狀態，穩定後更新畫面顯示，不用等按 RUN 才知道目前是哪一側。
+        // 只影響畫面顯示；RUN 當下實際判斷仍走 OnRunInspection 自己的阻塞式輪詢（DetermineCarrierSideDebouncedAsync）。
+        if (!IsSimulationMode)
         {
-            // 模擬模式：依 _simEmoTriggered（按 E 鍵切換）決定，跳過防抖立即生效，
-            // 且不讀真實 PLC（模擬模式下 PLC 多半未連線，GetPlcXOctal 只會回傳 null）。
-            _emoTriggeredCount = 0;
-            ProcessEmoState(_simEmoTriggered);
-        }
-        else
-        {
-            bool? rawX0 = _machine.GetPlcXOctal(0);
-            if (rawX0.HasValue)
+            _machine.UpdateLiveCarrierSideTick();
+            if (_machine.LiveCarrierSide is { } liveSide)
             {
-                bool rawEmo = !rawX0.Value;
-                _emoTriggeredCount = rawEmo ? _emoTriggeredCount + 1 : 0;
-                ProcessEmoState(_emoTriggeredCount >= EmoDebounceCount);
+                string liveSideText = liveSide.X12 ? "R" : "L";
+                if (CarrierSide != liveSideText)
+                {
+                    // 第三層：確認「畫面綁定的屬性」真的有被寫入新值，不是只有 MachineController
+                    // 內部的 LiveCarrierSide 更新了、卻沒傳到這裡。
+                    _logger.Debug($"[LiveCarrierSide] UI 套用：CarrierSide {CarrierSide} → {liveSideText}");
+                    CarrierSide = liveSideText;
+                    AreaATitle = liveSide.X12 ? "Area A  (C4)" : "Area A  (C2)";
+                    AreaBTitle = liveSide.X12 ? "Area B  (C3)" : "Area B  (C1)";
+                }
             }
-            // else：PLC 斷線，凍結現有狀態，不呼叫 ProcessEmoState
         }
 
         // X7 光閘狀態：不論任何模式都追蹤，LOW = 遮斷（加入防抖：需連續 LightGateDebounceCount 次才觸發）
-        bool x7 = _machine.GetPlcXOctal(7) ?? true;
-        bool rawBlocked = !x7;
-
-        // 先更新防抖計數，再 Enqueue，確保歷史裡的 Count 是當下真實值
-        if (rawBlocked)
+        // x7ReadingValid=false 代表這次是 PLC 斷線（GetPlcXOctal 回傳 null），此時凍結現有狀態、
+        // 不更新防抖計數、不觸發任何轉換——絕不能把「斷線」當成「光閘暢通」而誤解除警報。
+        bool x7 = true;
+        bool rawBlocked = false;
+        bool x7ReadingValid;
+        if (IsSimulationMode)
         {
-            _lightGateBlockedCount++;
+            // 模擬模式：依 _simLightGateBlocked（按 G 鍵切換）決定，跳過防抖立即生效，
+            // 且不讀真實 PLC（模擬模式下 PLC 多半未連線，GetPlcXOctal 只會回傳 null）。
+            rawBlocked = _simLightGateBlocked;
+            x7 = !rawBlocked;
+            _lightGateBlockedCount = rawBlocked ? LightGateDebounceCount : 0;
+            x7ReadingValid = true;
         }
         else
         {
-            _lightGateBlockedCount = 0;
+            bool? rawX7 = _machine.GetPlcXOctal(7);
+            if (rawX7 == null)
+            {
+                // PLC 斷線：凍結現有狀態，不更新計數器、不觸發任何轉換
+                _lightGateBlockedCount = 0;
+                x7ReadingValid = false;
+            }
+            else
+            {
+                x7 = rawX7.Value;
+                rawBlocked = !x7;
+                // 先更新防抖計數，再 Enqueue，確保歷史裡的 Count 是當下真實值
+                _lightGateBlockedCount = rawBlocked ? _lightGateBlockedCount + 1 : 0;
+                x7ReadingValid = true;
+            }
+        }
+
+        // 診斷用：原始讀值（或斷線狀態）一有變化就記一行，不用等防抖確認觸發，
+        // 才能看出「訊號本身有沒有在變」跟「有沒有因為防抖被吃掉」是分開的兩件事。
+        bool? x7RawForLog = x7ReadingValid ? x7 : null;
+        if (x7RawForLog != _lastLoggedX7Raw)
+        {
+            _logger.Debug($"[LightGate] X7 原始讀值變化：{(x7RawForLog?.ToString() ?? "null(斷線)")}" +
+                $"（{(x7RawForLog == false ? "遮斷中" : "暢通")}，累積 count={_lightGateBlockedCount}）");
+            _lastLoggedX7Raw = x7RawForLog;
         }
 
         // 每次 Tick 都將原始訊號與當下 count 存入歷史佇列（最多 X7HistorySize 筆）
@@ -906,52 +1158,55 @@ public sealed class MainViewModel : ObservableObject
         if (_x7SignalHistory.Count > X7HistorySize)
             _x7SignalHistory.Dequeue();
 
-        bool blocked = (_lightGateBlockedCount >= LightGateDebounceCount);
-         
-
-
-          //  bool blocked = _lightGateBlockedCount >= LightGateDebounceCount;
-
-        // 光閘確認觸發（從未遮斷 → 遮斷，且已通過防抖確認）
-        if (blocked && !_isLightGateBlocked)
+        if (x7ReadingValid)
         {
-            if (!IsLightGateBypassActive)
+            bool blocked = (_lightGateBlockedCount >= LightGateDebounceCount);
+
+            // 光閘確認觸發（從未遮斷 → 遮斷，且已通過防抖確認）
+            if (blocked && !_isLightGateBlocked)
             {
-                // 正常模式：取消流程並強制重新原點賦歸
-                _cts?.Cancel();
-                IsInitialized = false;
-                StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
-                _machine.Alarms.Raise("LightGateX7", "X7 光閘遮斷，流程已取消，等待原點賦歸");
-
-                // ── MES 上報 Alarm（光閘觸發事件）──
-                _ = _mesClient.ReportAlarmAsync()
-                    .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                        TaskScheduler.FromCurrentSynchronizationContext());
-
-                // 組合前 N 筆 X7 訊號歷史一併寫入 log
-                var historySb = new System.Text.StringBuilder();
-                historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 10 筆，門檻={LightGateDebounceCount}）---");
-                int idx = 1;
-                foreach (var entry in _x7SignalHistory)
+                if (!IsLightGateBypassActive)
                 {
-                    string countInfo = entry.Blocked ? $"count={entry.Count}" : "正常";
-                    string trigger  = (entry.Blocked && entry.Count >= LightGateDebounceCount) ? " ✅ 本筆觸發" : "";
-                    historySb.AppendLine(
-                        $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X7={entry.X7Raw,-5} | rawBlocked={entry.Blocked,-5} | {countInfo}{trigger}");
+                    // 正常模式：取消流程並強制重新原點賦歸
+                    _cts?.Cancel();
+                    // 跟 EMO 一致：光閘屬於安全訊號，只取消流程不夠——CancellationToken 是合作式取消，
+                    // 只會在下一次要發指令前的 ct.ThrowIfCancellationRequested() 生效，當下正在執行中的
+                    // 移動指令仍會走完（曾被現場回報「遮光柵時 Y 軸還是有移到定位」），必須額外強制煞停。
+                    _ = Task.Run(() => _machine.StopAllAxesImmediate("X7 光閘遮斷"));
+                    IsInitialized = false;
+                    StatusMessage = "⚠ 光閘觸發！請解除光閘後執行原點賦歸才可繼續 RUN";
+                    _machine.Alarms.Raise("LightGateX7", "X7 光閘遮斷，流程已取消，等待原點賦歸");
+
+                    // ── MES 上報 Alarm（光閘觸發事件）──
+                    _ = _mesClient.ReportAlarmAsync()
+                        .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                            TaskScheduler.FromCurrentSynchronizationContext());
+
+                    // 組合前 N 筆 X7 訊號歷史一併寫入 log
+                    var historySb = new System.Text.StringBuilder();
+                    historySb.AppendLine($"--- 觸發前 X7 訊號歷史（最多 10 筆，門檻={LightGateDebounceCount}）---");
+                    int idx = 1;
+                    foreach (var entry in _x7SignalHistory)
+                    {
+                        string countInfo = entry.Blocked ? $"count={entry.Count}" : "正常";
+                        string trigger  = (entry.Blocked && entry.Count >= LightGateDebounceCount) ? " ✅ 本筆觸發" : "";
+                        historySb.AppendLine(
+                            $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X7={entry.X7Raw,-5} | rawBlocked={entry.Blocked,-5} | {countInfo}{trigger}");
+                    }
+
+                    CancelEventLogger.Write(
+                        "光閘X7",
+                        "X7 光閘遮斷觸發，流程已取消，等待原點賦歸\n" + historySb);
                 }
+                else
+                {
+                    // 上料模式：僅顯示提示，不中斷流程
+                    StatusMessage = "⚠ 光閘觸發（上料模式，流程不中斷）";
+                }
+            }
 
-                CancelEventLogger.Write(
-                    "光閘X7",
-                    "X7 光閘遮斷觸發，流程已取消，等待原點賦歸\n" + historySb);
-            }
-            else
-            {
-                // 上料/下料模式：僅顯示提示，不中斷流程
-                StatusMessage = "⚠ 光閘觸發（上料/下料模式，流程不中斷）";
-            }
+            IsLightGateBlocked = blocked;
         }
-
-        IsLightGateBlocked = blocked;
 
         // ─── X3/X11 板子放置雷射感測（任一 true = 未放好）───
         // x3/x11 一律保留「感測器實際原始值」供歷史/追蹤 log 還原真實時間軸；
@@ -1331,7 +1586,7 @@ public sealed class MainViewModel : ObservableObject
         if (IsLightGateBypassActive)
         {
             IsLightGateBypassActive = false;
-            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "RUN 觸發自動恢復光閘保護（取消上料/下料模式）");
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "RUN 觸發自動恢復光閘保護（自動切換為下料模式）");
         }
 
         IsDryRunning = true;
@@ -1391,9 +1646,8 @@ public sealed class MainViewModel : ObservableObject
             }
             StatusMessage = $"✔ Y 軸已到達指定位置（{_machine.Config.BarcodePositionY:F1} mm）";
 
-            // 偵測 X12 / X13 載台訊號
-            bool x12 = _machine.GetPlcXOctal(12) ?? false;
-            bool x13 = _machine.GetPlcXOctal(13) ?? false;
+            // 偵測 X12 / X13 載台訊號（連續讀值一致才確認，避免單次雜訊誤判 R/L）
+            (bool x12, bool x13) = await _machine.DetermineCarrierSideDebouncedAsync(ct);
 
             double targetX = x12 ? _machine.Config.BarcodePositionLeftX : _machine.Config.BarcodePositionRightX;
             CarrierSide = x12 ? "R" : "L";
@@ -1725,7 +1979,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 開啟「料號切換」對話視窗（料號切換／備份／刪除，也可微調座標），確認後寫回 InspectionConfig。
+    /// 開啟「Recipe 切換」對話視窗（Recipe 切換／備份／刪除，也可微調座標），確認後寫回 InspectionConfig。
     /// </summary>
     private void OnPositionSettings()
     {
@@ -1754,8 +2008,8 @@ public sealed class MainViewModel : ObservableObject
             AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "套用座標設定");
         }
 
-        // 視窗內「讀取套用／備份／刪除」料號會立即寫回 _machine.Config 並存檔，
-        // 即使使用者最後按取消，料號也可能已經變了，所以不論回傳值都要刷新首頁顯示。
+        // 視窗內「讀取套用／備份／刪除」Recipe 會立即寫回 _machine.Config 並存檔，
+        // 即使使用者最後按取消，Recipe 也可能已經變了，所以不論回傳值都要刷新首頁顯示。
         OnPropertyChanged(nameof(CurrentRecipeDisplay));
     }
 
@@ -1797,7 +2051,7 @@ public sealed class MainViewModel : ObservableObject
     {
         var config = _machine.Config;
         bool admin = IsAdmin;
-        var vm = new LightSettingsViewModel(config, admin);
+        var vm = new LightSettingsViewModel(config, admin, _machine.TryApplyLightIntensityNow);
         var win = new Views.LightSettingsWindow
         {
             DataContext = vm,
@@ -2033,27 +2287,29 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 切換「上料/下料模式」。
-    /// 啟用：光閘觸發不中斷流程，同時鎖定 RUN 與原點賦歸。
-    /// 停用：恢復正常光閘防護。
+    /// 在「上料模式」（關閉光閘，光閘觸發不中斷流程）與「下料模式」（開啟光閘，恢復正常防護）之間切換。
+    /// 上料模式：同時鎖定 RUN 與原點賦歸。
+    /// 下料模式：恢復正常光閘防護。
     /// </summary>
     private void OnToggleLightGateBypass()
     {
+        _logger.Info($"[LightGateBypass] OnToggleLightGateBypass 被觸發，切換前 IsLightGateBypassActive={IsLightGateBypassActive}，" +
+            $"User={CurrentUser.Username}, Role={CurrentUser.Role}, HasPermission={HasPermission(Permission.ToggleLightGateBypass)}");
         IsLightGateBypassActive = !IsLightGateBypassActive;
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
-            $"上料/下料模式切換為{(IsLightGateBypassActive ? "啟用" : "停用")}");
+            $"光閘保護切換為{(IsLightGateBypassActive ? "上料模式" : "下料模式")}");
 
         if (!IsLightGateBypassActive)
         {
-            // 停用 bypass 時：重置防抖計數，讓光閘狀態在下一次 PLC 輪詢時重新評估
+            // 切換為下料模式時：重置防抖計數，讓光閘狀態在下一次 PLC 輪詢時重新評估
             // 避免取料期間的遮斷殘留導致 RUN / 原點賦歸持續鎖定
             _lightGateBlockedCount = 0;
             IsLightGateBlocked = false;
         }
 
         StatusMessage = IsLightGateBypassActive
-            ? "⚠ 上料/下料模式已啟用：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
-            : "✔ 上料/下料模式已取消，恢復正常光閘防護";
+            ? "⚠ 已切換為上料模式：光閘觸發不中斷流程（RUN 與原點賦歸暫時鎖定）"
+            : "✔ 已切換為下料模式，恢復正常光閘防護";
     }
 
     /// <summary>
@@ -2117,6 +2373,18 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = $"✘ SLC Reset 失敗：{ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// 操作員確認 EMO 已釋放、現場安全後手動按下，才真正清除 "EMO" 異常燈號/訊息。
+    /// 只在 X0 已恢復正常（!IsEmoTriggered）且確實有待確認的 EMO 事件（IsEmoAlarmPendingReset）時可按。
+    /// </summary>
+    private void OnEmoReset()
+    {
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行 EMO Reset 確認");
+        _machine.Alarms.Clear("EMO");
+        IsEmoAlarmPendingReset = false;
+        StatusMessage = "✔ EMO 已復歸確認，請重新執行初始化與原點賦歸後再繼續 RUN";
     }
 
     /// <summary>

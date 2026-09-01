@@ -1,7 +1,15 @@
 using System.Windows;
+using System.Windows.Input;
 using Slot_Inspection.Models;
 
 namespace Slot_Inspection.ViewModels;
+
+/// <summary>
+/// 亮度設定視窗按下「測試」時呼叫，直接把目前 UI 上的百分比送到硬體，不用等按 OK 存檔、
+/// 也不用跑 Run/DryRun 才看得到燈的變化。簽章刻意對齊 MachineController.TryApplyLightIntensityNow，
+/// 呼叫端可以直接把該方法當委派傳進來，不用另外包一層。
+/// </summary>
+public delegate bool LightTestDelegate(int leftPercent, int rightPercent, out string message);
 
 /// <summary>
 /// 亮度設定視窗的 ViewModel。
@@ -61,6 +69,46 @@ public sealed class LightSettingsViewModel : ObservableObject
 
     /// <summary>目前登入者是否為 Admin；決定曝光時間 Tab、板子感測停用 Tab 是否顯示（由呼叫端傳入，不在此判斷角色）。</summary>
     public bool IsAdmin { get; }
+
+    private readonly LightTestDelegate? _lightTest;
+
+    /// <summary>測試按鈕的結果訊息（成功/失敗原因），顯示在亮度設定 Tab 裡。</summary>
+    private string _testResultMessage = "";
+    public string TestResultMessage
+    {
+        get => _testResultMessage;
+        set => SetProperty(ref _testResultMessage, value);
+    }
+
+    // 曾實測連續快速切換測試按鈕（100%↔0% 每秒以上）十幾次後，光源控制器開始對所有後續
+    // 指令回應通用錯誤碼「E」，且不會自行恢復。實機 S03 流程從不會這樣高頻切換，這裡加個
+    // 最短間隔保護測試按鈕本身，避免手動測試時不小心把控制器逼進這個狀態。
+    private const int MinTestIntervalMs = 800;
+    private DateTime _lastTestCallUtc = DateTime.MinValue;
+
+    /// <summary>把目前滑桿上的百分比（不用先按 OK）直接送到硬體開燈，方便反覆調整測試。</summary>
+    public ICommand TestLightOnCommand { get; }
+
+    /// <summary>兩通道都設為 0%，方便確認「真的有在控制」而不是燈本來就一直亮著。</summary>
+    public ICommand TestLightOffCommand { get; }
+
+    private bool CanTest() => DateTime.UtcNow - _lastTestCallUtc >= TimeSpan.FromMilliseconds(MinTestIntervalMs);
+
+    private void OnTestLightOn()
+    {
+        if (_lightTest == null) { TestResultMessage = "✘ 尚未連接測試功能"; return; }
+        _lastTestCallUtc = DateTime.UtcNow;
+        bool ok = _lightTest(LightIntensityLeft, LightIntensityRight, out string message);
+        TestResultMessage = (ok ? "✔ " : "✘ ") + message;
+    }
+
+    private void OnTestLightOff()
+    {
+        if (_lightTest == null) { TestResultMessage = "✘ 尚未連接測試功能"; return; }
+        _lastTestCallUtc = DateTime.UtcNow;
+        bool ok = _lightTest(0, 0, out string message);
+        TestResultMessage = (ok ? "✔ " : "✘ ") + message;
+    }
 
     public double QcToleranceValue
     {
@@ -123,7 +171,7 @@ public sealed class LightSettingsViewModel : ObservableObject
         return confirm == MessageBoxResult.Yes;
     }
 
-    public LightSettingsViewModel(InspectionConfig config, bool isAdmin)
+    public LightSettingsViewModel(InspectionConfig config, bool isAdmin, LightTestDelegate? lightTest = null)
     {
         _lightIntensityLeft   = config.LightIntensityLeft;
         _lightIntensityRight  = config.LightIntensityRight;
@@ -137,6 +185,10 @@ public sealed class LightSettingsViewModel : ObservableObject
         _qcToleranceMeanIntensity       = config.QcToleranceMeanIntensity;
         _qcToleranceDistanceToRoiCenter = config.QcToleranceDistanceToRoiCenter;
         IsAdmin = isAdmin;
+
+        _lightTest = lightTest;
+        TestLightOnCommand = new RelayCommand(OnTestLightOn, CanTest);
+        TestLightOffCommand = new RelayCommand(OnTestLightOff, CanTest);
     }
 
     /// <summary>將目前值寫回 InspectionConfig 並呼叫 Save()。</summary>

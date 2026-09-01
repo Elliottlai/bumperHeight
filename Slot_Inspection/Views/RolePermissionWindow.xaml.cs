@@ -39,7 +39,7 @@ public partial class RolePermissionWindow : Window
 
     private static readonly (Permission Permission, string DisplayName)[] AdvancedDefs =
     [
-        (Permission.PositionSettings, "料號切換（含座標調整）"),
+        (Permission.PositionSettings, "Recipe 切換（含座標調整）"),
         (Permission.LightSettings, "光源設定"),
         (Permission.CropSettings, "裁切設定"),
         (Permission.AxisSettleDelay, "ZL/ZR 安定延遲"),

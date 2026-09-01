@@ -3,6 +3,19 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+# AI 演算法（BumperFlatDetection）廠商交付：整包原始交付資料夾與整合過程的備份都不進 git，
+# 本機保留即可，不用版控——單一原生 DLL（CUDA/cuDNN/onnxruntime）常超過 GitHub 100MB 上限。
+/AI演算法整合資料/
+/Slot_Inspection/Lib/BumperFlatDetection_backup_*/
+
+# Lib/BumperFlatDetection 是實際整合進主程式的私有依賴（供 BumperFlatDetectionLoadContext 動態載入），
+# 只有 BumperFlatDetection.dll / SegmentationNative.dll 是廠商實際交付、不可重建的演算法本體才進 git，
+# 其餘都是可從 NuGet/官方安裝檔重新取得的通用原生執行期 DLL（Emgu.CV、CUDA、cuDNN、onnxruntime、
+# MSVC runtime 等），體積龐大且每次廠商更新都會整批變動，版控只會讓 repo 越滾越大。
+/Slot_Inspection/Lib/BumperFlatDetection/*
+!/Slot_Inspection/Lib/BumperFlatDetection/BumperFlatDetection.dll
+!/Slot_Inspection/Lib/BumperFlatDetection/SegmentationNative.dll
+
 # User-specific files
 *.rsuser
 *.suo

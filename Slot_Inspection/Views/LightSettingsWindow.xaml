@@ -43,7 +43,7 @@
                         <TextBox Style="{StaticResource NumBox}"
                                  Text="{Binding LightIntensityLeft, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0}}"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                         <TextBlock Text="右相機 亮度 (CH2)" Style="{StaticResource RowLabel}"/>
                         <Slider Width="200" Minimum="0" Maximum="100"
                                 TickFrequency="1" IsSnapToTickEnabled="True"
@@ -52,6 +52,20 @@
                         <TextBox Style="{StaticResource NumBox}"
                                  Text="{Binding LightIntensityRight, UpdateSourceTrigger=PropertyChanged, StringFormat={}{0:0}}"/>
                     </StackPanel>
+
+                    <!-- 測試按鈕：直接把目前滑桿上的百分比送到硬體，不用按 OK、也不用跑 RUN/DryRun -->
+                    <StackPanel Orientation="Horizontal" Margin="140,4,0,0">
+                        <Button Content="測試開燈" Width="90" Height="28" Margin="0,0,8,0"
+                                Command="{Binding TestLightOnCommand}"
+                                Background="#C6EFCE" FontWeight="Bold"
+                                ToolTip="用目前滑桿上的百分比立即開燈，不用按 OK 存檔"/>
+                        <Button Content="測試關燈" Width="90" Height="28"
+                                Command="{Binding TestLightOffCommand}"
+                                Background="#F8CECC" FontWeight="Bold"
+                                ToolTip="兩通道都設為 0%，確認燈真的有被控制"/>
+                    </StackPanel>
+                    <TextBlock Margin="140,6,0,0" FontSize="11" TextWrapping="Wrap"
+                               Text="{Binding TestResultMessage}"/>
                 </StackPanel>
             </TabItem>
 
