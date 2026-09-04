@@ -108,23 +108,39 @@ public static class AxisRecipeManager
             Directory.Delete(dir, recursive: true);
     }
 
-    private static string QcBaselinePath(string name) => Path.Combine(AlgFolderPath(name), "QcBaseline.json");
+    /// <summary>side 只接受 "R" / "L"（不分大小寫），其餘一律丟例外，避免存到含意不明的檔名。</summary>
+    private static string NormalizeSide(string side)
+    {
+        if (string.Equals(side, "R", StringComparison.OrdinalIgnoreCase)) return "R";
+        if (string.Equals(side, "L", StringComparison.OrdinalIgnoreCase)) return "L";
+        throw new ArgumentException($"QC 基準的載台側別只能是 R 或 L，收到：「{side}」", nameof(side));
+    }
 
-    /// <summary>是否已有這個 Recipe 的 QC 基準快照。</summary>
-    public static bool HasBaseline(string name) => File.Exists(QcBaselinePath(name));
+    /// <summary>QC 基準檔路徑：R、L 各一份，Config/Recipes/{name}/QcBaseline_{R|L}.json。</summary>
+    private static string QcBaselinePath(string name, string side) =>
+        Path.Combine(AlgFolderPath(name), $"QcBaseline_{NormalizeSide(side)}.json");
 
-    /// <summary>儲存（或覆寫）一份 Recipe 的 QC 基準快照。</summary>
-    public static void SaveBaseline(string name, QcBaselineData data)
+    /// <summary>side 是否為有效的 R / L（呼叫端可先用它擋掉「尚未偵測到側別」的情況）。</summary>
+    public static bool IsValidSide(string side) =>
+        string.Equals(side, "R", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(side, "L", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>是否已有這個 Recipe「指定側別」的 QC 基準快照。side 非 R/L 時回傳 false。</summary>
+    public static bool HasBaseline(string name, string side) =>
+        IsValidSide(side) && File.Exists(QcBaselinePath(name, side));
+
+    /// <summary>儲存（或覆寫）一份 Recipe「指定側別」的 QC 基準快照。</summary>
+    public static void SaveBaseline(string name, string side, QcBaselineData data)
     {
         string dir = AlgFolderPath(name);
         Directory.CreateDirectory(dir);
-        File.WriteAllText(QcBaselinePath(name), JsonSerializer.Serialize(data, JsonOpts));
+        File.WriteAllText(QcBaselinePath(name, side), JsonSerializer.Serialize(data, JsonOpts));
     }
 
-    /// <summary>讀取一份 Recipe 的 QC 基準快照；找不到檔案或解析失敗時丟例外，由呼叫端顯示錯誤訊息。</summary>
-    public static QcBaselineData LoadBaseline(string name)
+    /// <summary>讀取一份 Recipe「指定側別」的 QC 基準快照；找不到檔案或解析失敗時丟例外，由呼叫端顯示錯誤訊息。</summary>
+    public static QcBaselineData LoadBaseline(string name, string side)
     {
-        string path = QcBaselinePath(name);
+        string path = QcBaselinePath(name, side);
         if (!File.Exists(path))
             throw new FileNotFoundException($"找不到 QC 基準檔案：{path}");
 

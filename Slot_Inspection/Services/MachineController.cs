@@ -244,6 +244,53 @@ public sealed class MachineController : IDisposable
         progress?.Report($"✔ ZL/ZR 已恢復安全高度（ZL={okZL:F2} mm，ZR={okZR:F2} mm）");
     }
 
+    /// <summary>
+    /// Y 軸移動的「最後一道」硬檢查：ZL 或 ZR 只要沒回到安全高度（往下降超過容差）就回傳 (false, 原因)。
+    /// 由 <see cref="ZSafeGuardedYAxis"/> 在每次 MotMoveAbs / MotMoveRel 送出前呼叫；不通過就丟例外、指令不送出。
+    /// 跟 <see cref="EnsureZSafeBeforeYMoveAsync"/> 用同一套判斷（實際位置 &gt; 安全高度 + 容差 = 不安全），
+    /// 安全高度依當下 PLC 偵測到的側別（X12/X13）取 R 組或 L 組；讀不到側別時用兩組裡較嚴格的。
+    /// 模擬模式一律放行（cAxis_Simulation 的位置是固定假值，套這道檢查會誤擋）。
+    /// </summary>
+    private (bool ok, string reason) CheckZSafeForYMoveHardGate()
+    {
+        if (SimulationMode) return (true, string.Empty);
+        try
+        {
+            double tol = _config.ZSafeTolerance;
+
+            bool? x12 = GetPlcXOctal(CarrierLeftSensorPlcAddr);
+            bool? x13 = GetPlcXOctal(CarrierRightSensorPlcAddr);
+            double safeZL, safeZR;
+            if (x12.HasValue && x13.HasValue)
+            {
+                safeZL = _config.GetZLSafeHeight(x12.Value, x13.Value);
+                safeZR = _config.GetZRSafeHeight(x12.Value, x13.Value);
+            }
+            else
+            {
+                // 讀不到側別 → 用兩組裡「較嚴格（較低）」的安全高度當門檻，不放行有疑慮的移動
+                safeZL = Math.Min(_config.ZLSafeHeight_R, _config.ZLSafeHeight_L);
+                safeZR = Math.Min(_config.ZRSafeHeight_R, _config.ZRSafeHeight_L);
+            }
+
+            double zl = Axes["AxisZL"].GetRealPosition();
+            double zr = Axes["AxisZR"].GetRealPosition();
+            if (zl > safeZL + tol)
+                return (false, $"ZL 目前 {zl:F2} mm 未回到安全高度（安全上限 {safeZL:F2} + 容差 {tol:F1} mm）");
+            if (zr > safeZR + tol)
+                return (false, $"ZR 目前 {zr:F2} mm 未回到安全高度（安全上限 {safeZR:F2} + 容差 {tol:F1} mm）");
+            return (true, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            // 讀不到 ZL/ZR 位置：保守起見「擋下」，不放行狀態不明的 Y 移動
+            return (false, $"無法確認 ZL/ZR 安全高度（{ex.Message}），保守擋下 Y 軸移動");
+        }
+    }
+
+    /// <summary>把可能被 <see cref="ZSafeGuardedYAxis"/> 包住的軸拆回真正的內層軸（給只吃具體型別的地方用，例如 <c>is cAxis_RS485</c>）。</summary>
+    private static IAxis Unwrap(IAxis axis) => axis is ZSafeGuardedYAxis g ? g.Inner : axis;
+
     private readonly InspectionConfig _config = InspectionConfig.Load();
     public InspectionConfig Config => _config;
     private readonly BumperAlgService _bumperAlg = new();
@@ -267,8 +314,12 @@ public sealed class MachineController : IDisposable
     /// </summary>
     public bool GetPlcX(int index)
     {
-        if (_plc == null || !_plc.IsConnected) return false;
-        return _plc.GetX(index);
+        // 先取本地參考再用：InitPlc() 重新初始化時會有一小段 _plc == null 的空窗
+        // （舊連線已 Dispose、新連線還沒建好），其他執行緒此時剛好進來不能 NRE / ObjectDisposedException。
+        var plc = _plc;
+        if (plc == null || !plc.IsConnected) return false;
+        try { return plc.GetX(index); }
+        catch (ObjectDisposedException) { return false; }
     }
 
     /// <summary>
@@ -287,8 +338,10 @@ public sealed class MachineController : IDisposable
         // 兩者都要成立，否則 GetX() 回傳的可能只是卡住很久的舊快取值——這個 session 已經在
         // PLC 寫入佇列餓死讀取、HighBright 光源控制器連線未斷但停止正確回應這兩個地方各踩過一次，
         // 對安全訊號（尤其是 X7 光閘）不能只信任「連線還開著」。
-        if (_plc == null || !_plc.IsConnected || !_plc.IsXDataFresh) return null;
-        return _plc.GetX(OctalAddrToIndex(plcOctalAddr));
+        var plc = _plc; // 見 GetPlcX 的說明：InitPlc 重連空窗期要能安全處理
+        if (plc == null || !plc.IsConnected || !plc.IsXDataFresh) return null;
+        try { return plc.GetX(OctalAddrToIndex(plcOctalAddr)); }
+        catch (ObjectDisposedException) { return null; }
     }
 
     /// <summary>
@@ -296,8 +349,10 @@ public sealed class MachineController : IDisposable
     /// </summary>
     public void SetPlcYOctal(int plcOctalAddr, bool value)
     {
-        if (_plc == null || !_plc.IsConnected) return;
-        _plc.SetY(OctalAddrToIndex(plcOctalAddr), value);
+        var plc = _plc; // 見 GetPlcX 的說明：InitPlc 重連空窗期要能安全處理
+        if (plc == null || !plc.IsConnected) return;
+        try { plc.SetY(OctalAddrToIndex(plcOctalAddr), value); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>
@@ -1269,6 +1324,16 @@ public sealed class MachineController : IDisposable
         const string name = "HighBright Light";
         try
         {
+            // 跟 InitPlc 同理：重複初始化前要先 Dispose 舊的 HighBright_Controller，
+            // 否則舊 instance 的 SerialPort 會一直握著光源 COM Port，
+            // 新的 Connect() → _port.Open() 會被拒（Access to the path 'COMxx' is denied）。
+            if (_lightHB != null)
+            {
+                try { _lightHB.Dispose(); }
+                catch (Exception ex) { _logger.Warn(ex, "[Light] 關閉舊光源連線時發生例外（忽略，繼續建立新連線）"); }
+                _lightHB = null;
+            }
+
             _lightHB = new HighBright_Controller(_lightComPort);
             _lightHB.Connect();
             if (!_lightHB.IsOpen)
@@ -1295,7 +1360,8 @@ public sealed class MachineController : IDisposable
                     return DeviceInitResult.Fail(name, $"Axis not found: {axisName}");
 
                 // RS485 軸需要先呼叫 Connect() 建立 Modbus RTU 連線
-                if (axis is cAxis_RS485 rs485Axis)
+                // （Y 軸可能已被 ZSafeGuardedYAxis 包住，先 Unwrap 才拿得到 cAxis_RS485）
+                if (Unwrap(axis) is cAxis_RS485 rs485Axis)
                 {
                     _logger.Info($"[S00] {axisName} Connecting RS485 ({rs485Axis.PortName}, Baud={rs485Axis.BaudRate}, Slave={rs485Axis.SlaveId})...");
                     rs485Axis.Connect();
@@ -1316,6 +1382,14 @@ public sealed class MachineController : IDisposable
                 }
                 Alarms.Clear($"AxisAlarm:{axisName}");
                 _logger.Debug($"{axisName} ServoOn OK");
+
+                // Y 軸連上、Servo On 後，套上「ZL/ZR 未在安全高度就擋下 Y 移動」的安全外殼（結構性保證）。
+                // 之後所有 Axes["AxisY"].MotMoveAbs/MotMoveRel 都會先過 CheckZSafeForYMoveHardGate。
+                if (axisName == "AxisY" && Axes[axisName] is not ZSafeGuardedYAxis)
+                {
+                    Axes[axisName] = new ZSafeGuardedYAxis(Axes[axisName], CheckZSafeForYMoveHardGate);
+                    _logger.Info("[S00] AxisY 已套用 Z 安全高度移動保護（ZSafeGuardedYAxis）");
+                }
             }
             _logger.Info($"{name}: OK");
             return DeviceInitResult.Ok(name);
@@ -1374,7 +1448,8 @@ public sealed class MachineController : IDisposable
             progress?.Report("Y 軸歸原點...");
             if (!Axes.TryGetValue("AxisY", out var axisY))
                 return DeviceInitResult.Fail(name, "AxisY 不存在");
-            if (axisY is cAxis_RS485 yRs485)
+            // AxisY 可能已被 ZSafeGuardedYAxis 包住，Unwrap 才拿得到 cAxis_RS485
+            if (Unwrap(axisY) is cAxis_RS485 yRs485)
                 yRs485.Controller.SetHomingSpeed(highSpeedRpm: 8000, lowSpeedRpm: 800);
             axisY.Home();
 
@@ -1563,6 +1638,16 @@ public sealed class MachineController : IDisposable
 
             _logger.Info($"[S01] 找到 {devices.Count} 台讀碼器，使用: {devices[devId].DisplayName}");
 
+            // 重複初始化（前一次連上後又斷線）前，先銷毀舊的 handle，避免 SDK handle 洩漏。
+            // 讀碼器是 GigE 不是 COM Port，不會有「Access denied」，但長時間多次重連仍可能累積未釋放的 handle。
+            if (_barcodeDevice != null)
+            {
+                try { _barcodeDevice.Dispose(); }
+                catch (Exception ex) { _logger.Warn(ex, "[S01] 銷毀舊讀碼器 handle 時發生例外（忽略，繼續建立新的）"); }
+                _barcodeDevice = null;
+                _barcodeParser = null;
+            }
+
             // 建立 BarcodeReader 專案的 SDK 封裝物件
             _barcodeDevice = new MvCodeReaderDevice();
             _barcodeParser = new MvBarcodeResultParser();
@@ -1607,15 +1692,44 @@ public sealed class MachineController : IDisposable
     /// 搭配 FxPlcCommunicator（FX 協定解析）。
     /// FxPlcCommunicator 會自動在背景輪詢 X/Y 點位，
     /// 之後透過 GetX(index) 即可讀取最新值。
+    ///
+    /// 同一次程式執行內第二次以上呼叫（EMO 復歸後重按初始化、流程取消後重新 Init…）：
+    /// 一定要先把舊的 _plc Dispose 掉，否則舊的 SerialBytesCommunicator 會一直握著 COM Port，
+    /// 新的 SerialPort.Open() 會丟 UnauthorizedAccessException（Access to the path 'COMxx' is denied），
+    /// 而且不會自己好，只能重開程式——這是實機踩過的坑。
     /// </summary>
     private DeviceInitResult InitPlc()
     {
         const string name = "PLC (FX)";
         try
         {
-            // 建立串口 Transport → FX 協定通訊器
-            var transport = new SerialBytesCommunicator(
-                _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
+            // 先關閉舊連線，釋放 COM Port（第一次呼叫時 _plc 為 null，直接跳過）
+            if (_plc != null)
+            {
+                try { _plc.Dispose(); }
+                catch (Exception ex) { _logger.Warn(ex, "[PLC] 關閉舊 PLC 連線時發生例外（忽略，繼續建立新連線）"); }
+                _plc = null;
+            }
+
+            // 建立串口 Transport → FX 協定通訊器。
+            // Dispose 是同步的（會 Join 讀取執行緒再 Close port），理論上回來時 COM Port 已釋放，
+            // 但少數 USB-serial 驅動釋放 handle 會慢半拍，所以開埠失敗時短暫等待後重試幾次。
+            SerialBytesCommunicator? transport = null;
+            const int openRetries = 4;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    transport = new SerialBytesCommunicator(
+                        _plcComPort, _plcBaudRate, 7, Parity.Even, StopBits.One);
+                    break;
+                }
+                catch (UnauthorizedAccessException) when (attempt < openRetries)
+                {
+                    _logger.Warn($"[PLC] {_plcComPort} 開啟被拒（第 {attempt}/{openRetries} 次），可能舊 handle 尚未釋放，250ms 後重試");
+                    Thread.Sleep(250);
+                }
+            }
             _plc = new FxPlcCommunicator(transport);
 
             // 等待 PLC 回應（DogValue 會隨每次成功通訊遞增）

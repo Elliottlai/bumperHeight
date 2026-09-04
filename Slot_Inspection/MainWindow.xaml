@@ -194,7 +194,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
-                <RowDefinition Height="36"/>
+                <RowDefinition Height="40"/>
                 <RowDefinition Height="44"/>
             </Grid.RowDefinitions>
 
@@ -587,8 +587,8 @@
                 </Grid>
             </Border>
 
-            <!-- Bottom tabs -->
-            <UniformGrid Grid.Row="4" Columns="13" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
+            <!-- Bottom tabs：常用功能留在列上，進階/少用功能收進「⋯ 更多」下拉 -->
+            <UniformGrid Grid.Row="4" Columns="10" Margin="12,4,12,4" IsEnabled="{Binding IsUnlocked}">
 
                 <Button Content="⚙ Setting"
                         Command="{Binding LightSettingsCommand}"
@@ -612,42 +612,6 @@
                         </Style>
                     </Button.Style>
                 </Button>
-                <Button Content="{Binding BoardSensorBypassButtonText}"
-                        Command="{Binding ToggleBoardSensorBypassCommand}"
-                        FontSize="11" Padding="4,4"
-                        Background="#F8CECC" FontWeight="Bold"
-                        Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
-                        ToolTip="Admin專用：暫時忽略 X3/X11 雷射感測（板子放置檢查），讓 RUN 不被卡住；再按一次恢復正常判斷"/>
-                <Button Content="CSV Result" FontSize="11" Padding="4,4"
-                        Command="{Binding OpenResultFolderCommand}"
-                        ToolTip="開啟 CSV 報表資料夾"/>
-                <Button Content="🔄 SLC Reset"
-                        Command="{Binding SlcResetCommand}"
-                        FontSize="11" Padding="4,4"
-                        Background="#F8CECC" FontWeight="Bold"
-                        ToolTip="送出 SLC Reset 訊號（Y0 pulse），完成後彈出提示"/>
-                <Button Content="🔄 EMO Reset"
-                        Command="{Binding EmoResetCommand}"
-                        FontSize="11" Padding="4,4"
-                        Background="#F8CECC" FontWeight="Bold"
-                        ToolTip="確認 EMO 已釋放、現場安全後按下，才會清除 EMO 異常燈號/訊息（僅按下 EMO 又放開後可按）"/>
-                <CheckBox Content="模擬模式"
-                          IsChecked="{Binding IsSimulationMode}"
-                          IsEnabled="{Binding CanToggleSimulationMode}"
-                          VerticalContentAlignment="Center"
-                          HorizontalAlignment="Center"
-                          VerticalAlignment="Center"
-                          Visibility="{Binding IsAdmin, Converter={StaticResource BoolToHiddenConverter}}"
-                          FontSize="11"
-                          ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
-                <CheckBox Content="⏱ 安定延遲"
-                          IsChecked="{Binding EnableAxisSettleDelay}"
-                          IsEnabled="{Binding CanToggleAxisSettleDelay}"
-                          VerticalContentAlignment="Center"
-                          HorizontalAlignment="Center"
-                          VerticalAlignment="Center"
-                          FontSize="11"
-                          ToolTip="勾選：ZL/ZR 到位後等待 150 ms 再拍照，防止機械振動造成影像模糊"/>
                 <Button Content="📷 讀取條碼"
                         Command="{Binding ReadBarcodeCommand}"
                         Style="{StaticResource StateButtonStyle}"
@@ -666,18 +630,42 @@
                         Background="#E2EFDA" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
                         ToolTip="切換／備份／刪除 Recipe 設定；也可在此微調 Y / X / ZL / ZR / Z安全高度座標"/>
-                <Button Content="✂ 裁切設定"
-                        Command="{Binding CropSettingsCommand}"
+                <Button Content="🔍 QC 比對"
+                        Command="{Binding QcInspectionCommand}"
                         Style="{StaticResource StateButtonStyle}"
-                        Background="#FCE4EC" FontSize="11" Padding="4,4"
+                        Background="#CFE2F3" FontSize="11" Padding="4,4"
                         FontWeight="Bold"
-                        ToolTip="設定 C1~C4 各相機的影像裁切 ROI（X/Y/W/H）"/>
-                <Button Content="🌐 WebAPI 設定"
-                        Command="{Binding WebApiTestCommand}"
-                        Style="{StaticResource StateButtonStyle}"
-                        Background="#E1D5E7" FontSize="11" Padding="4,4"
-                        FontWeight="Bold"
-                        ToolTip="設定 MES WebAPI 連線位址&#x0a;（BaseUrl / EquipmentId / ProductId）"/>
+                        ToolTip="開啟 QC 比對儀表板：拿生效 Recipe 的 R/L 基準比對每輪量測結果，並可存基準、調容差"/>
+                <Button Content="🔄 SLC Reset"
+                        Command="{Binding SlcResetCommand}"
+                        FontSize="11" Padding="4,4"
+                        Background="#F8CECC" FontWeight="Bold"
+                        ToolTip="送出 SLC Reset 訊號（Y0 pulse），完成後彈出提示"/>
+                <Button Content="🔄 EMO Reset"
+                        Command="{Binding EmoResetCommand}"
+                        FontSize="11" Padding="4,4"
+                        Background="#F8CECC" FontWeight="Bold"
+                        ToolTip="確認 EMO 已釋放、現場安全後按下，才會清除 EMO 異常燈號/訊息（僅按下 EMO 又放開後可按）"/>
+                <!-- 這一格：Admin 顯示「暫停板子感測」，非 Admin 改顯示「CSV Result」，不留空格 -->
+                <Grid Margin="1">
+                    <Button Content="{Binding BoardSensorBypassButtonText}"
+                            Command="{Binding ToggleBoardSensorBypassCommand}"
+                            FontSize="11" Padding="4,4"
+                            Background="#F8CECC" FontWeight="Bold"
+                            Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                            ToolTip="Admin專用：暫時忽略 X3/X11 雷射感測（板子放置檢查），讓 RUN 不被卡住；再按一次恢復正常判斷"/>
+                    <Button Content="📄 CSV Result"
+                            Command="{Binding OpenResultFolderCommand}"
+                            FontSize="11" Padding="4,4"
+                            Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}, ConverterParameter=invert}"
+                            ToolTip="開啟 CSV 報表資料夾"/>
+                </Grid>
+
+                <!-- 📋 其他：點開後在上方彈出選單（見下方 MoreMenuToggle 綁定的遮罩＋面板） -->
+                <ToggleButton x:Name="MoreMenuToggle" Content="📋 其他"
+                              FontSize="11" FontWeight="Bold" Padding="4,4" Margin="1"
+                              Background="#ECECEC" BorderBrush="#333" BorderThickness="1"
+                              ToolTip="裁切設定、WebAPI 設定、CSV、安定延遲、模擬模式等少用/進階功能"/>
             </UniformGrid>
 
             <!-- Footer -->
@@ -718,6 +706,55 @@
                                    VerticalAlignment="Center" Foreground="White"/>
                     </StackPanel>
                 </Grid>
+            </Border>
+
+            <!-- 「📋 其他」下拉：點畫面任一處關閉（透明遮罩 ToggleButton 綁同一個 IsChecked）。
+                 刻意不用 Popup——整個畫面包在 Viewbox 裡等比例縮放，Popup 是獨立視窗不會跟著縮放，會比例不一致。 -->
+            <ToggleButton Grid.RowSpan="6" Focusable="False"
+                          IsChecked="{Binding IsChecked, ElementName=MoreMenuToggle, Mode=TwoWay}"
+                          Visibility="{Binding IsChecked, ElementName=MoreMenuToggle, Converter={StaticResource BoolToVisConverter}}"
+                          Background="Transparent">
+                <ToggleButton.Template>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}"/>
+                    </ControlTemplate>
+                </ToggleButton.Template>
+            </ToggleButton>
+            <Border Grid.RowSpan="6" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                    Margin="0,0,12,86" Padding="4"
+                    Background="White" BorderBrush="#666" BorderThickness="1"
+                    Visibility="{Binding IsChecked, ElementName=MoreMenuToggle, Converter={StaticResource BoolToVisConverter}}">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="10" ShadowDepth="1" Opacity="0.3"/>
+                </Border.Effect>
+                <StackPanel MinWidth="240">
+                    <StackPanel Orientation="Horizontal" Margin="8,6">
+                        <CheckBox Content="⏱ 安定延遲" FontSize="12" Margin="0,0,18,0"
+                                  IsChecked="{Binding EnableAxisSettleDelay, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanToggleAxisSettleDelay}"
+                                  ToolTip="勾選：ZL/ZR 到位後等待 150 ms 再拍照，防止機械振動造成影像模糊"/>
+                        <CheckBox Content="🧪 模擬模式" FontSize="12"
+                                  IsChecked="{Binding IsSimulationMode, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanToggleSimulationMode}"
+                                  Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                                  ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
+                    </StackPanel>
+                    <Separator Margin="4,2"/>
+                    <Button Content="✂ 裁切設定" Margin="4,3" Padding="6,4" FontSize="12"
+                            HorizontalContentAlignment="Left"
+                            Command="{Binding CropSettingsCommand}" Click="MoreMenuAction_Click"
+                            ToolTip="設定 C1~C4 各相機的影像裁切 ROI（X/Y/W/H）"/>
+                    <Button Content="🌐 WebAPI 設定" Margin="4,3" Padding="6,4" FontSize="12"
+                            HorizontalContentAlignment="Left"
+                            Command="{Binding WebApiTestCommand}" Click="MoreMenuAction_Click"
+                            ToolTip="設定 MES WebAPI 連線位址（BaseUrl / EquipmentId / ProductId）"/>
+                    <!-- 非 Admin 已在下方工具列直接看得到 CSV Result，這裡只留給 Admin（Admin 那格是暫停板子感測） -->
+                    <Button Content="📄 CSV Result" Margin="4,3" Padding="6,4" FontSize="12"
+                            HorizontalContentAlignment="Left"
+                            Command="{Binding OpenResultFolderCommand}" Click="MoreMenuAction_Click"
+                            Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                            ToolTip="開啟 CSV 報表資料夾"/>
+                </StackPanel>
             </Border>
 
             <!-- 鎖定遮罩：蓋住整個視窗，畫面內容仍在背景看得到。

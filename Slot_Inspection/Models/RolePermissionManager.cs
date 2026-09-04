@@ -21,7 +21,7 @@ public static class RolePermissionManager
     [
         Permission.Run, Permission.Stop, Permission.Home, Permission.InitDevices,
         Permission.ReadBarcode, Permission.MoveToPickPosition, Permission.OpenResultFolder,
-        Permission.SlcReset, Permission.ToggleLightGateBypass,
+        Permission.SlcReset, Permission.ToggleLightGateBypass, Permission.RecipeSwitch,
     ];
 
     private static RolePermissionMatrix? _cache;

@@ -23,6 +23,8 @@ public sealed class MainViewModel : ObservableObject
     private string _areaATitle = "Area A";
     private string _areaBTitle = "Area B";
     private string _confirmedBarcode = "";
+    private DateTime? _lastQcRunAt; // 最後一次跑完檢測的時間，供獨立「QC 比對」視窗顯示
+    private Views.QcInspectionWindow? _qcWindow; // 獨立 QC 比對儀表板，單一實例；關窗時歸 null
     private string _currentDate = DateTime.Now.ToString("yyyy/MM/dd");
     private string _currentTime = DateTime.Now.ToString("HH:mm:ss");
     private bool _isRunning;
@@ -102,7 +104,9 @@ public sealed class MainViewModel : ObservableObject
     private bool _isBoardMisplaced;
     private int _boardMisplacedCount;
     private int _boardPlacedCount;
-    private bool _boardMisplacedDialogShown;
+    // 提示視窗目前是否開著：只在 MessageBox 顯示期間為 true，用來防止巢狀訊息泵期間 tick 持續疊出視窗。
+    // 人員按「確定」關掉視窗後會變回 false，下一次 tick 若板子仍未放妥就會立刻重新跳出提示，直到板子放好為止。
+    private bool _boardMisplacedDialogOpen;
     private const int BoardMisplacedDebounceCount = 3; // 需連續 N 次（×500ms）才確認未放好
     private const int BoardPlacedDebounceCount = 3;    // 需連續 N 次（×500ms）才確認放好
     // X3/X11 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，確認觸發時一起寫 log（做法比照 X7）
@@ -449,6 +453,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand PositionSettingsCommand { get; }
     public ICommand CropSettingsCommand { get; }
     public ICommand LightSettingsCommand { get; }
+    public ICommand QcInspectionCommand { get; }
     public ICommand OpenImageViewerCommand { get; }
     public ICommand OpenResultFolderCommand { get; }
     public ICommand ConfirmBarcodeCommand { get; }
@@ -741,13 +746,19 @@ public sealed class MainViewModel : ObservableObject
         // 移至取料位：Y 軸移動到取料位座標（與 RUN 一致：需已復歸或 Z 已在安全高度且未被要求重新復歸）
         MoveToPickPositionCommand = new RelayCommand(OnMoveToPickPosition, () => IsDeviceReady && (IsInitialized || (IsZAtSafeHeight && !_requireReinitAfterStop)) && !IsRunning && !IsDryRunning && !IsEmoAlarmPendingReset && HasPermission(Permission.MoveToPickPosition));
         // 座標設定：依「角色權限設定」決定 Operator/Engineer 是否可開啟，Admin永遠可以
-        PositionSettingsCommand = new RelayCommand(OnPositionSettings, () => !IsRunning && !IsDryRunning && HasPermission(Permission.PositionSettings));
+        PositionSettingsCommand = new RelayCommand(OnPositionSettings, () => !IsRunning && !IsDryRunning &&
+            (HasPermission(Permission.PositionSettings) || HasPermission(Permission.RecipeSwitch)));
 
         // 裁切設定：依「角色權限設定」決定
         CropSettingsCommand = new RelayCommand(OnCropSettings, () => HasPermission(Permission.CropSettings));
 
         // 亮度設定：依「角色權限設定」決定
         LightSettingsCommand = new RelayCommand(OnLightSettings, () => HasPermission(Permission.LightSettings));
+
+        // QC 比對：獨立儀表板。開視窗 / 查看比對結果 / 重新比對 不鎖（任何登入者都可以看）；
+        // 視窗內「用目前這片存為基準」與「允許範圍」欄位/儲存 僅 Engineer 以上可用，
+        // 見 OnOpenQcInspection 傳進去的 canEditQc。
+        QcInspectionCommand = new RelayCommand(OnOpenQcInspection);
 
         // 點擊圖像放大預覽
         OpenImageViewerCommand = new RelayCommand<SlotItem>(OnOpenImageViewer);
@@ -956,9 +967,21 @@ public sealed class MainViewModel : ObservableObject
             // 常常已經不穩定（MotStop 逾時、收不到回應），只做原點復歸不會重新建立連線，
             // 必須先走一次 S00 初始化。IsDeviceReady=false 會鎖住 HomeCommand、解鎖 InitAxesCommand。
             IsDeviceReady = false;
+            // EMO 是硬停止：直接把「執行中」旗標清掉，不依賴當下流程方法的 finally。
+            // 已知情況：EMO 剛好在原點賦歸的 Y 軸階段按下時，賦歸輪詢與強制煞停會在同一個
+            // COM 埠上撞在一起、卡進不理會 timeout / CancellationToken 的 Modbus 讀取，
+            // 導致 OnHome 的 finally 永遠不執行、IsDryRunning 卡在 true，
+            // EMO Reset 後初始化 / 原點賦歸 / RUN 三顆按鈕全部解不開，只能重開程式。
+            // 這裡直接清旗標，讓按鈕一定解得開。（卡住的舊工作等下次初始化 Connect() 關掉 COM 埠時會自行拋例外收掉。）
+            IsRunning = false;
+            IsDryRunning = false;
             IsEmoAlarmPendingReset = true;
             StatusMessage = "⚠ 緊急停止(EMO)已觸發！機台動作已中斷，請確認機台安全後釋放 EMO，再重新執行初始化與原點賦歸";
             _machine.Alarms.Raise("EMO", "X0 緊急停止觸發，流程已取消，等待操作員復歸與原點賦歸");
+            // 診斷用：曾懷疑「EMO 觸發後 Reset 完卻按不動初始化」是因為觸發當下流程正在跑，
+            // 取消後 IsRunning/IsDryRunning 沒有正常被 finally 區塊重設回 false 卡住——這裡先記錄
+            // 觸發當下的狀態，之後在 OnEmoReset 再記一次，兩相對照就能看出是不是這裡卡住。
+            _logger.Info($"[EMO] 觸發當下流程狀態：IsRunning={IsRunning} IsDryRunning={IsDryRunning}");
             _ = _mesClient.ReportAlarmAsync()
                 .ContinueWith(_ => MesStatus = _mesClient.LastStatus, TaskScheduler.FromCurrentSynchronizationContext());
             CancelEventLogger.Write("EMO_X0", "緊急停止(EMO)觸發，流程已取消，等待原點賦歸");
@@ -1406,7 +1429,6 @@ public sealed class MainViewModel : ObservableObject
             if (_isBoardMisplaced)
             {
                 IsBoardMisplaced = false;
-                _boardMisplacedDialogShown = false;
             }
         }
         // 正常 → 未放好（初次確認觸發）
@@ -1438,28 +1460,20 @@ public sealed class MainViewModel : ObservableObject
                 CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})\n" + boardHistorySb);
             }
 
-            if (!_boardMisplacedDialogShown)
-            {
-                _boardMisplacedDialogShown = true;
-                // 用 Effective 值判斷觸發原因（已停用的訊號即使原始值異常也不算數，避免誤導使用者）
-                string triggeredSignals = (x3Effective && x11Effective) ? "X3、X11" : (x3Effective ? "X3" : "X11");
-                // BeginInvoke 讓對話框在 DispatcherTimer tick 結束後才彈出，
-                // 避免 MessageBox 建立巢狀訊息泵（re-entrancy）導致 tick 重複執行
-                Application.Current.Dispatcher.BeginInvoke(() =>
-                {
-                    MessageBox.Show(
-                        $"偵測到板子未放妥（{triggeredSignals} 訊號異常）。\n請確認板子正確放置後再繼續操作。",
-                        "板子未放好",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                });
-            }
+            ShowBoardMisplacedDialog(x3Effective, x11Effective);
+        }
+        // 已在警報中且板子仍未放妥：人員把提示視窗關掉卻沒有移動 / 重放產品
+        // → 每次 tick 都重新跳出提示，直到板子確實放好（boardOkConfirmed）為止。
+        // ShowBoardMisplacedDialog 內部用 _boardMisplacedDialogOpen 擋掉「視窗還開著就再疊一個」的情況，
+        // 所以這裡放心每個 tick 都呼叫，實際上只會在使用者按掉上一個視窗後才再彈。
+        else if (boardMisplacedConfirmed && _isBoardMisplaced)
+        {
+            ShowBoardMisplacedDialog(x3Effective, x11Effective);
         }
         // 未放好 → 正常（訊號穩定回到正常後解除）
         else if (boardOkConfirmed && _isBoardMisplaced)
         {
             IsBoardMisplaced = false;
-            _boardMisplacedDialogShown = false;
             _logger.Info($"板子放妥確認 (X3={x3} X11={x11})，Run 已恢復");
             StatusMessage = "✔ 板子放妥確認，Run 已恢復";
         }
@@ -1501,7 +1515,9 @@ public sealed class MainViewModel : ObservableObject
             return;
 
         StatusMessage = "正在初始化設備（設定檔 / 伺服軸 / PLC），請稍候...";
-        _cts = new CancellationTokenSource();
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
         // 使用者主動嘗試初始化，視為對「上一次可由使用者操作解除」的異常做確認：
         // 只清可由重試解除的原因，軸警報等硬體原因由 MachineController 在檢查各軸狀態時自行 Raise/Clear。
         _machine.Alarms.Clear("LightGateX7");
@@ -1513,7 +1529,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             var result = await Task.Run(
-                () => _machine.InitializeAllAsync(progress, _cts.Token));
+                () => _machine.InitializeAllAsync(progress, myCts.Token));
 
             IsInitialized = result.AllPassed;
 
@@ -1539,8 +1555,8 @@ public sealed class MainViewModel : ObservableObject
         }
         finally
         {
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
         }
     }
 
@@ -1552,7 +1568,9 @@ public sealed class MainViewModel : ObservableObject
     private async void OnStart()
     {
         IsRunning = true;
-        _cts = new CancellationTokenSource();
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
         _machine.Alarms.Clear("LightGateX7");
         _machine.Alarms.Clear("RunException");
 
@@ -1584,12 +1602,12 @@ public sealed class MainViewModel : ObservableObject
 
             // ── S01b：移動到讀碼位置 → 自動讀碼 ──
             string? code = await Task.Run(
-                () => _machine.MoveAndReadBarcodeAsync(carrierPos, statusProgress, _cts.Token));
+                () => _machine.MoveAndReadBarcodeAsync(carrierPos, statusProgress, myCts.Token));
 
             if (string.IsNullOrEmpty(code))
             {
                 StatusMessage = "條碼讀取失敗，正在將軸退回原點...";
-                await Task.Run(() => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
+                await Task.Run(() => _machine.MoveBarcodeAxisHomeAsync(statusProgress, myCts.Token));
                 StatusMessage = "⚠ 條碼讀取失敗，軸已回原點，請重新放置後按 RUN";
                 return;
             }
@@ -1614,7 +1632,7 @@ public sealed class MainViewModel : ObservableObject
 
             // ── S01c：讀碼軸回歸原點 ──
             await Task.Run(
-                () => _machine.MoveBarcodeAxisHomeAsync(statusProgress, _cts.Token));
+                () => _machine.MoveBarcodeAxisHomeAsync(statusProgress, myCts.Token));
 
             // ── S03：開始檢測（載台在席已確認有料，直接進入檢測）──
             StatusMessage = $"▶ 開始量測 Slot，條碼：{_confirmedBarcode}";
@@ -1645,7 +1663,7 @@ public sealed class MainViewModel : ObservableObject
             });
 
             await Task.Run(
-                () => _machine.RunInspectionAsync(_confirmedBarcode, slotProgress, _cts.Token));
+                () => _machine.RunInspectionAsync(_confirmedBarcode, slotProgress, myCts.Token));
 
             // 全部完成 → 計算統計
             AreaA_Stats.Calculate(AreaA_Row1);
@@ -1694,8 +1712,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             _confirmedBarcode = "";
             Barcode = "";
             CommandManager.InvalidateRequerySuggested();
@@ -1715,7 +1733,9 @@ public sealed class MainViewModel : ObservableObject
         }
 
         IsDryRunning = true;
-        _cts = new CancellationTokenSource();
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
         _machine.Alarms.Clear("LightGateX7");
         _machine.Alarms.Clear("RunException");
         _runStartTime = DateTime.Now;
@@ -1735,7 +1755,7 @@ public sealed class MainViewModel : ObservableObject
 
         try
         {
-            var ct = _cts.Token;
+            var ct = myCts.Token;
 
             // ── 模擬模式：跳過所有機台動作，使用假資料直接走 WebAPI 流程 ──
             if (IsSimulationMode)
@@ -1914,8 +1934,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsDryRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -1924,8 +1944,10 @@ public sealed class MainViewModel : ObservableObject
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "讀取條碼");
         IsRunning = true;
-        _cts = new CancellationTokenSource();
-        var ct = _cts.Token;
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
+        var ct = myCts.Token;
 
         try
         {
@@ -2034,8 +2056,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -2060,8 +2082,10 @@ public sealed class MainViewModel : ObservableObject
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "移至取料位");
         IsRunning = true;
-        _cts = new CancellationTokenSource();
-        var ct = _cts.Token;
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
+        var ct = myCts.Token;
 
         try
         {
@@ -2097,8 +2121,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -2108,13 +2132,13 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void OnPositionSettings()
     {
+        // 只有真正的 PositionSettings 權限（Admin/Engineer，或 Admin 額外開放的 OP）才能編輯座標本身、
+        // 管理 Recipe 備份/刪除；只有 RecipeSwitch 權限（一般開放給 OP）只能選 Recipe + 讀取套用，
+        // 座標分頁顯示但唯讀，備份/建立/刪除按鈕停用。
         var vm = new PositionSettingsViewModel
         {
             CurrentUser = CurrentUser,
-            CanUseQcRecipe = HasPermission(Permission.QcRecipe),
-            CurrentMeasurementsAreaA = AreaA_Row1.ToList(),
-            CurrentMeasurementsAreaB = AreaB_Row1.ToList(),
-            CurrentBarcode = _confirmedBarcode,
+            CanEditCoordinates = HasPermission(Permission.PositionSettings),
         };
         vm.LoadFrom(_machine.Config);
 
@@ -2195,11 +2219,6 @@ public sealed class MainViewModel : ObservableObject
             changes.Add($"曝光時間（左={vm.ExposureTimeLeft:F0}µs，右={vm.ExposureTimeRight:F0}µs）");
         if (admin && (config.PauseX3BoardSensor != vm.PauseX3BoardSensor || config.PauseX11BoardSensor != vm.PauseX11BoardSensor))
             changes.Add($"板子感測停用（X3={(vm.PauseX3BoardSensor ? "停用" : "啟用")}，X11={(vm.PauseX11BoardSensor ? "停用" : "啟用")}）");
-        if (config.QcToleranceValue != vm.QcToleranceValue
-            || config.QcToleranceMeanIntensity != vm.QcToleranceMeanIntensity
-            || config.QcToleranceDistanceToRoiCenter != vm.QcToleranceDistanceToRoiCenter)
-            changes.Add($"QC容差（Value={vm.QcToleranceValue}，亮度={vm.QcToleranceMeanIntensity}，位置={vm.QcToleranceDistanceToRoiCenter}）");
-
         vm.ApplyTo(config);
 
         // 亮度變更時立即送到硬體套用，讓操作員馬上肉眼確認，不必等下次開燈才生效；
@@ -2226,25 +2245,71 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>如果目前 Recipe 有 QC 基準，跑完一輪後自動比對並在狀態列提示（不強制彈窗，避免量產連續RUN被中斷）。</summary>
+    /// <summary>如果目前 Recipe 有「這一輪偵測到的側別（R/L）」的 QC 基準，跑完一輪後自動比對並在狀態列提示
+    /// （不強制彈窗，避免量產連續RUN被中斷）。R、L 各自比對自己那份基準，不會互相比錯。</summary>
     private void RunQcAutoCheck()
     {
+        _lastQcRunAt = DateTime.Now;
+        _qcWindow?.NotifyInspectionCompleted(); // 開著獨立 QC 比對視窗的話，讓它即時重新比對
+
+        // QC 比對總開關（可在「QC 比對」視窗切換）：關閉時不自動比對、不寫狀態列、不產生 CSV
+        if (!_machine.Config.QcCompareEnabled) return;
+
         string recipeName = _machine.Config.CurrentRecipeName;
-        if (string.IsNullOrWhiteSpace(recipeName) || !AxisRecipeManager.HasBaseline(recipeName)) return;
+        string side = CarrierSide?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(recipeName)
+            || !AxisRecipeManager.IsValidSide(side)
+            || !AxisRecipeManager.HasBaseline(recipeName, side)) return;
         try
         {
-            var baseline = AxisRecipeManager.LoadBaseline(recipeName);
+            var baseline = AxisRecipeManager.LoadBaseline(recipeName, side);
             var rows = QcComparisonViewModel.BuildRows(baseline, AreaA_Row1, AreaB_Row1, _machine.Config);
-            QcComparisonResultWriter.Write(_confirmedBarcode, recipeName, rows);
+            QcComparisonResultWriter.Write(_confirmedBarcode, recipeName, side, rows);
             int exceedCount = rows.Count(r => r.ExceedsTolerance);
             StatusMessage += exceedCount > 0
-                ? $"　⚠ QC比對：{exceedCount} 個 Slot 超出容差（按「QC 比對」查看明細）"
-                : "　✔ QC比對：全部在容差內";
+                ? $"　⚠ QC比對（{side}側）：{exceedCount} 個 Slot 偏離基準（按「🔍 QC 比對」查看明細）"
+                : $"　✔ QC比對（{side}側）：全部貼近基準";
         }
         catch
         {
             // 基準檔損毀或報表寫入失敗等非致命錯誤，不影響主流程
         }
+    }
+
+    /// <summary>
+    /// 開啟獨立的「QC 比對」儀表板視窗（非強制回應，可一直開著）。
+    /// 生效 Recipe / 側別 / 條碼 / 量測結果都自動帶入；每跑完一輪 <see cref="RunQcAutoCheck"/> 會通知它重新比對。
+    /// 單一實例：已開著就把它帶到最上層，不重複開。
+    /// </summary>
+    private void OnOpenQcInspection()
+    {
+        if (_qcWindow != null)
+        {
+            _qcWindow.Activate();
+            return;
+        }
+
+        var vm = new QcInspectionViewModel(
+            _machine.Config, CurrentUser,
+            canUseQcRecipe: HasPermission(Permission.QcRecipe),
+            canEditQc: IsEngineerOrAbove,   // 存基準、改允許範圍：僅 Engineer / Admin（Operator 只能看）
+            () => new QcLiveSnapshot(
+                _machine.Config.CurrentRecipeName ?? "",
+                CarrierSide ?? "",
+                _confirmedBarcode ?? "",
+                _lastQcRunAt,
+                AreaA_Row1.ToList(),
+                AreaB_Row1.ToList()));
+
+        _qcWindow = new Views.QcInspectionWindow
+        {
+            DataContext = vm,
+            Owner = Application.Current.MainWindow
+        };
+        _qcWindow.Closed += (_, _) => _qcWindow = null;
+
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "開啟 QC 比對視窗");
+        _qcWindow.Show();
     }
 
     /// <summary>
@@ -2276,7 +2341,10 @@ public sealed class MainViewModel : ObservableObject
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "初始化設備");
         IsDryRunning = true;
-        _cts = new CancellationTokenSource();
+        // 用本地變數持有自己的 cts：EMO 卡死的舊流程工作稍後才解掉時，它的 finally 不會
+        // 誤 Dispose / 清掉「這次初始化」正在用的 _cts（見下方 finally 的 ReferenceEquals 判斷）。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
         var progress = new Progress<string>(msg => StatusMessage = msg);
 
         try
@@ -2286,7 +2354,7 @@ public sealed class MainViewModel : ObservableObject
 
             StatusMessage = "正在初始化設備（設定檔 / 伺服軸 / PLC），請稍候...";
             var result = await Task.Run(
-                () => _machine.InitializeDevicesAsync(progress, _cts.Token));
+                () => _machine.InitializeDevicesAsync(progress, myCts.Token));
 
             IsDeviceReady = result.AllPassed;
 
@@ -2316,8 +2384,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsDryRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -2329,7 +2397,9 @@ public sealed class MainViewModel : ObservableObject
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行原點賦歸");
         IsDryRunning = true;
-        _cts = new CancellationTokenSource();
+        // 見 OnInitDevices 的說明：用本地 cts，finally 只在仍是「自己這條」時才清 _cts。
+        var myCts = new CancellationTokenSource();
+        _cts = myCts;
         _machine.Alarms.Clear("LightGateX7");
         _machine.Alarms.Clear("RunException");
         var progress = new Progress<string>(msg => StatusMessage = msg);
@@ -2338,7 +2408,7 @@ public sealed class MainViewModel : ObservableObject
         {
             StatusMessage = "正在執行原點賦歸，請稍候...";
             var result = await Task.Run(
-                () => _machine.HomeAllAxesPublicAsync(progress, _cts.Token));
+                () => _machine.HomeAllAxesPublicAsync(progress, myCts.Token));
 
             if (result.AllPassed)
             {
@@ -2373,8 +2443,8 @@ public sealed class MainViewModel : ObservableObject
         finally
         {
             IsDryRunning = false;
-            _cts?.Dispose();
-            _cts = null;
+            if (ReferenceEquals(_cts, myCts)) _cts = null;
+            myCts.Dispose();
             CommandManager.InvalidateRequerySuggested();
         }
     }
@@ -2467,7 +2537,6 @@ public sealed class MainViewModel : ObservableObject
         {
             // 啟用當下立刻解除卡住的狀態，不用等下一次 tick
             IsBoardMisplaced = false;
-            _boardMisplacedDialogShown = false;
         }
         else
         {
@@ -2479,6 +2548,42 @@ public sealed class MainViewModel : ObservableObject
         StatusMessage = IsBoardSensorBypassActive
             ? "⚠ 暫停板子感測已啟用：X3/X11 雷射感測判斷已忽略，RUN 不受板子放置狀態影響"
             : "✔ 暫停板子感測已取消，恢復正常雷射感測判斷";
+    }
+
+    /// <summary>
+    /// 跳出「板子未放妥」提示視窗。
+    /// 初次觸發、以及之後每個 PLC tick 只要板子仍未放妥都會呼叫這裡；
+    /// _boardMisplacedDialogOpen 確保同一時間只會有一個視窗：使用者按掉上一個後，
+    /// 下一次 tick 才會再彈一個，等於「不放好就一直提醒」，直到訊號穩定回到正常。
+    /// </summary>
+    /// <param name="x3Effective">套用 Admin 個別停用設定後、X3 是否算異常</param>
+    /// <param name="x11Effective">套用 Admin 個別停用設定後、X11 是否算異常</param>
+    private void ShowBoardMisplacedDialog(bool x3Effective, bool x11Effective)
+    {
+        // 視窗還開著就不要再疊一個：MessageBox 的巢狀訊息泵期間 tick 仍會持續進來
+        if (_boardMisplacedDialogOpen) return;
+        _boardMisplacedDialogOpen = true;
+
+        // 用 Effective 值判斷觸發原因（已停用的訊號即使原始值異常也不算數，避免誤導使用者）
+        string triggeredSignals = (x3Effective && x11Effective) ? "X3、X11" : (x3Effective ? "X3" : "X11");
+
+        // BeginInvoke 讓對話框在 DispatcherTimer tick 結束後才彈出，
+        // 避免 MessageBox 建立巢狀訊息泵（re-entrancy）導致 tick 重複執行
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            try
+            {
+                MessageBox.Show(
+                    $"偵測到板子未放妥（{triggeredSignals} 訊號異常）。\n請確認板子正確放置後再繼續操作。",
+                    "板子未放好",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            finally
+            {
+                _boardMisplacedDialogOpen = false;
+            }
+        });
     }
 
     private async void OnSlcReset()
@@ -2513,7 +2618,17 @@ public sealed class MainViewModel : ObservableObject
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "執行 EMO Reset 確認");
         _machine.Alarms.Clear("EMO");
         IsEmoAlarmPendingReset = false;
+        // 保險：EMO 觸發當下若流程方法卡死、旗標沒被清乾淨，這裡再強制清一次，
+        // 確保初始化按鈕的解鎖條件（!IsRunning && !IsDryRunning && !IsDeviceReady）一定成立。
+        IsRunning = false;
+        IsDryRunning = false;
+        IsInitialized = false;
         StatusMessage = "✔ EMO 已復歸確認，請重新執行初始化與原點賦歸後再繼續 RUN";
+        // 診斷用：InitAxesCommand 的 CanExecute 要 !IsRunning && !IsDryRunning && !IsDeviceReady
+        // && 有權限 同時成立才會解鎖。這裡印出這四個條件的當下值，如果初始化按鈕按不動，
+        // 直接看這行就知道是哪個條件卡住，不用等重現、不用找機台上的 log。
+        _logger.Info($"[EMO] EMO Reset 完成，初始化按鈕解鎖條件：IsRunning={IsRunning} IsDryRunning={IsDryRunning} " +
+            $"IsDeviceReady={IsDeviceReady}（要是 false 才能按）HasInitPermission={HasPermission(Permission.InitDevices)}");
     }
 
     /// <summary>

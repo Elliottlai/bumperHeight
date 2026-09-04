@@ -25,9 +25,6 @@ public sealed class LightSettingsViewModel : ObservableObject
     private double _exposureTimeRight;
     private bool _pauseX3BoardSensor;
     private bool _pauseX11BoardSensor;
-    private double _qcToleranceValue;
-    private double _qcToleranceMeanIntensity;
-    private double _qcToleranceDistanceToRoiCenter;
 
     public int LightIntensityLeft
     {
@@ -110,24 +107,6 @@ public sealed class LightSettingsViewModel : ObservableObject
         TestResultMessage = (ok ? "✔ " : "✘ ") + message;
     }
 
-    public double QcToleranceValue
-    {
-        get => _qcToleranceValue;
-        set => SetProperty(ref _qcToleranceValue, value);
-    }
-
-    public double QcToleranceMeanIntensity
-    {
-        get => _qcToleranceMeanIntensity;
-        set => SetProperty(ref _qcToleranceMeanIntensity, value);
-    }
-
-    public double QcToleranceDistanceToRoiCenter
-    {
-        get => _qcToleranceDistanceToRoiCenter;
-        set => SetProperty(ref _qcToleranceDistanceToRoiCenter, value);
-    }
-
     /// <summary>是否停用 X3 板子放置感測判斷。勾選（false→true）時會跳出安全確認對話框。</summary>
     public bool PauseX3BoardSensor
     {
@@ -181,9 +160,6 @@ public sealed class LightSettingsViewModel : ObservableObject
         _exposureTimeRight    = config.ExposureTimeRight;
         _pauseX3BoardSensor   = config.PauseX3BoardSensor;
         _pauseX11BoardSensor  = config.PauseX11BoardSensor;
-        _qcToleranceValue               = config.QcToleranceValue;
-        _qcToleranceMeanIntensity       = config.QcToleranceMeanIntensity;
-        _qcToleranceDistanceToRoiCenter = config.QcToleranceDistanceToRoiCenter;
         IsAdmin = isAdmin;
 
         _lightTest = lightTest;
@@ -202,9 +178,6 @@ public sealed class LightSettingsViewModel : ObservableObject
         config.ExposureTimeRight   = ExposureTimeRight;
         config.PauseX3BoardSensor  = PauseX3BoardSensor;
         config.PauseX11BoardSensor = PauseX11BoardSensor;
-        config.QcToleranceValue               = QcToleranceValue;
-        config.QcToleranceMeanIntensity       = QcToleranceMeanIntensity;
-        config.QcToleranceDistanceToRoiCenter = QcToleranceDistanceToRoiCenter;
         config.Save();
     }
 }

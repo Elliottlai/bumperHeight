@@ -16,6 +16,7 @@ public enum Permission
     OpenResultFolder,
     SlcReset,
     ToggleLightGateBypass,
+    RecipeSwitch,
 
     // ── 進階設定 ──
     PositionSettings,

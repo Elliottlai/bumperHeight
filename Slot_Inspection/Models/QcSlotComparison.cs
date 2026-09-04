@@ -18,6 +18,9 @@ public sealed class QcSlotComparison
     public double CurrentDistanceToRoiCenter { get; init; }
     public double DeltaDistanceToRoiCenter => CurrentDistanceToRoiCenter - BaselineDistanceToRoiCenter;
 
-    /// <summary>任一欄位超出對應容差即為 true；驅動 DataGridRow 紅色高亮。</summary>
+    /// <summary>任一欄位與基準的差距超出對應容許範圍即為 true；驅動 DataGridRow 紅色高亮。</summary>
     public bool ExceedsTolerance { get; init; }
+
+    /// <summary>給畫面直接讀的白話判定文字。</summary>
+    public string Verdict => ExceedsTolerance ? "⚠ 偏離基準" : "✔ 正常";
 }

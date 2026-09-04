@@ -30,6 +30,16 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="BorderBrush" Value="#AAA"/>
+            <!-- 只有 Permission.PositionSettings（不只 RecipeSwitch）才能編輯座標本身；
+                 DataTemplate 內的 DataContext 是各筆 AxisPositionEntry，要往上找到 Window 的
+                 DataContext（PositionSettingsViewModel）才能讀到 CannotEditCoordinates。 -->
+            <Setter Property="IsReadOnly" Value="{Binding DataContext.CannotEditCoordinates, RelativeSource={RelativeSource AncestorType=Window}}"/>
+            <Style.Triggers>
+                <Trigger Property="IsReadOnly" Value="True">
+                    <Setter Property="Background" Value="#EEEEEE"/>
+                    <Setter Property="Foreground" Value="#777"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
         <!-- 奇偶行底色 DataTemplate 在 ItemsControl 中套用 -->
     </Window.Resources>
@@ -53,24 +63,16 @@
                             Click="BtnLoadRecipe_Click"
                             ToolTip="把所選Recipe的座標與演算法參數套用到目前生效中的設定（會覆蓋目前設定）。"/>
                     <Button Content="備份／建立" Width="84" Margin="6,0,0,0" Background="#1E8449" Foreground="White"
-                            Click="BtnNewRecipe_Click"
+                            Click="BtnNewRecipe_Click" IsEnabled="{Binding CanEditCoordinates}"
                             ToolTip="立即把『目前生效中』的座標與全部演算法參數JSON，存成一份新的Recipe備份（同名會覆蓋）。"/>
                     <Button Content="刪除" Width="64" Margin="6,0,0,0" Background="#C0392B" Foreground="White"
-                            Click="BtnDeleteRecipe_Click"
+                            Click="BtnDeleteRecipe_Click" IsEnabled="{Binding CanEditCoordinates}"
                             ToolTip="刪除所選的Recipe備份（不影響目前生效中的設定）。"/>
-                    <Button Content="📌 存為QC基準" Margin="16,0,0,0" Padding="6,0" Background="#D9EAD3"
-                            Click="BtnSaveQcBaseline_Click"
-                            Visibility="{Binding CanUseQcRecipe, Converter={StaticResource BoolToVisConverter}}"
-                            ToolTip="把目前量測結果存為所選 Recipe 的 QC 比對基準（會覆蓋既有基準）。"/>
-                    <Button Content="🔍 QC 比對" Margin="6,0,0,0" Padding="6,0" Background="#CFE2F3"
-                            Click="BtnOpenQcComparison_Click"
-                            Visibility="{Binding CanUseQcRecipe, Converter={StaticResource BoolToVisConverter}}"
-                            ToolTip="跟所選 Recipe 的 QC 基準比對目前量測結果。"/>
                     <TextBlock Margin="12,4,0,0" VerticalAlignment="Center" FontSize="12" Foreground="#555"
                                Text="{Binding CurrentRecipeName, StringFormat='目前生效中：{0}'}"/>
                 </WrapPanel>
                 <TextBlock Margin="0,6,0,0" FontSize="11" Foreground="#777" TextWrapping="Wrap"
-                           Text="備份／建立：立即把「目前生效中」的座標設定＋全部演算法參數JSON一起存成一份Recipe（按下去的瞬間就會備份，不是之後才備份）。讀取套用：把所選Recipe的內容覆蓋回目前生效中的設定。若修改座標後忘記備份，按「確認套用」離開時會自動提醒。QC基準／比對：以「參數組合」欄位目前輸入的 Recipe 名稱為對象。"/>
+                           Text="備份／建立：立即把「目前生效中」的座標設定＋全部演算法參數JSON一起存成一份Recipe（按下去的瞬間就會備份，不是之後才備份）。讀取套用：把所選Recipe的內容覆蓋回目前生效中的設定。若修改座標後忘記備份，按「確認套用」離開時會自動提醒。（QC 基準與比對已移到主畫面的「🔍 QC 比對」獨立視窗。）"/>
             </StackPanel>
         </Border>
 

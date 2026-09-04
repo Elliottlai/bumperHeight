@@ -82,7 +82,12 @@ public sealed class InspectionConfig
     public double ValueLimitLow  { get; set; } = 0.0;
     public double ValueLimitHigh { get; set; } = 999.0;
 
-    // -- QC 基準比對容差（與 QC Recipe 基準值比較時，超過即標記異常）--
+    // -- QC 基準比對 --
+    /// <summary>是否啟用 QC 比對：關閉時每輪 RUN 後不自動比對、不寫狀態列訊息、不產生 CSV；
+    /// 「QC 比對」視窗仍可手動按「重新比對」查看。</summary>
+    public bool QcCompareEnabled { get; set; } = true;
+
+    // 與 QC 基準值比較時，任一項差距超過對應允許範圍即標記「偏離基準」
     public double QcToleranceValue { get; set; } = 0.05;
     public double QcToleranceMeanIntensity { get; set; } = 5.0;
     public double QcToleranceDistanceToRoiCenter { get; set; } = 0.1;

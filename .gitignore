@@ -8,6 +8,10 @@
 /AI演算法整合資料/
 /Slot_Inspection/Lib/BumperFlatDetection_backup_*/
 
+# 非程式資料/：廠商交付原始資料、現場問題 log、給客服的更新包、規格書…等等非程式檔案，
+# 只在本機保留，不進 git（裡面的 AI演算法整合資料 子資料夾就有 2.5GB，且含超過 100MB 的單檔）。
+/非程式資料/
+
 # Lib/BumperFlatDetection 是實際整合進主程式的私有依賴（供 BumperFlatDetectionLoadContext 動態載入），
 # 只有 BumperFlatDetection.dll / SegmentationNative.dll 是廠商實際交付、不可重建的演算法本體才進 git，
 # 其餘都是可從 NuGet/官方安裝檔重新取得的通用原生執行期 DLL（Emgu.CV、CUDA、cuDNN、onnxruntime、

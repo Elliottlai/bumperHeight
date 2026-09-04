@@ -13,19 +13,20 @@ public static class QcComparisonResultWriter
     private static readonly object _csvLock = new();
 
     private const string CsvHeader =
-        "Timestamp,Barcode,RecipeName,Area,SlotName,BaselineValue,CurrentValue,DeltaValue," +
+        "Timestamp,Barcode,RecipeName,CarrierSide,Area,SlotName,BaselineValue,CurrentValue,DeltaValue," +
         "BaselineMeanIntensity,CurrentMeanIntensity,DeltaMeanIntensity," +
         "BaselineDistanceToRoiCenter,CurrentDistanceToRoiCenter,DeltaDistanceToRoiCenter,Result";
 
     /// <summary>把一次 QC 比對結果寫成一份獨立 CSV：每個 Slot 一行，最後補一行整體 SUMMARY。</summary>
-    public static void Write(string barcode, string recipeName, IReadOnlyList<QcSlotComparison> rows)
+    public static void Write(string barcode, string recipeName, string carrierSide, IReadOnlyList<QcSlotComparison> rows)
     {
         if (rows.Count == 0) return;
 
         var now = DateTime.Now;
         string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Results", "QcCompare", now.ToString("yyyyMMdd"));
         Directory.CreateDirectory(dir);
-        string csvPath = Path.Combine(dir, $"{SanitizeFileName(barcode)}_{now:yyyy-MM-ddTHH-mm-ss}.csv");
+        string sideTag = string.IsNullOrWhiteSpace(carrierSide) ? "NA" : SanitizeFileName(carrierSide);
+        string csvPath = Path.Combine(dir, $"{SanitizeFileName(barcode)}_{sideTag}_{now:yyyy-MM-ddTHH-mm-ss}.csv");
 
         lock (_csvLock)
         {
@@ -34,7 +35,7 @@ public static class QcComparisonResultWriter
 
             foreach (var r in rows)
                 sw.WriteLine(string.Join(",",
-                    CsvEscape(now.ToString("yyyy-MM-dd HH:mm:ss")), CsvEscape(barcode), CsvEscape(recipeName),
+                    CsvEscape(now.ToString("yyyy-MM-dd HH:mm:ss")), CsvEscape(barcode), CsvEscape(recipeName), CsvEscape(carrierSide),
                     CsvEscape(r.Area), CsvEscape(r.Name),
                     r.BaselineValue.ToString("F3"), r.CurrentValue.ToString("F3"), r.DeltaValue.ToString("F3"),
                     r.BaselineMeanIntensity.ToString("F1"), r.CurrentMeanIntensity.ToString("F1"), r.DeltaMeanIntensity.ToString("F1"),
@@ -43,9 +44,9 @@ public static class QcComparisonResultWriter
 
             int exceedCount = rows.Count(r => r.ExceedsTolerance);
             sw.WriteLine(string.Join(",",
-                CsvEscape(now.ToString("yyyy-MM-dd HH:mm:ss")), CsvEscape(barcode), CsvEscape(recipeName),
+                CsvEscape(now.ToString("yyyy-MM-dd HH:mm:ss")), CsvEscape(barcode), CsvEscape(recipeName), CsvEscape(carrierSide),
                 "SUMMARY", "", "", "", "", "", "", "", "", "", "",
-                CsvEscape($"共{rows.Count}個Slot，{exceedCount}個超差 → {(exceedCount > 0 ? "NG" : "OK")}")));
+                CsvEscape($"共{rows.Count}個Slot，{exceedCount}個偏離基準 → {(exceedCount > 0 ? "NG" : "OK")}")));
         }
     }
 

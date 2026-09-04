@@ -1,0 +1,177 @@
+<Window x:Class="Slot_Inspection.Views.QcInspectionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="QC 比對" Height="680" Width="1000"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="BorderBrush" Value="#CCC"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="3"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Margin" Value="0,0,0,8"/>
+            <Setter Property="Background" Value="#FAFAFA"/>
+        </Style>
+        <Style x:Key="Caption" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#666"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
+        <Style x:Key="NumBox" TargetType="TextBox">
+            <Setter Property="Width" Value="80"/>
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="Margin" Value="4,0,16,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 目前這一輪的狀態 -->
+        <Border Grid.Row="0" Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Margin="0,0,0,8" FontSize="11" Foreground="#666" TextWrapping="Wrap"
+                       Text="這個畫面把「每一輪的量測結果」拿去跟「當初用良品板存下來的基準」逐 Slot 相比。差距太大代表機台狀態可能變了（相機鬆動、鏡頭髒、光源衰減…）。R 板、L 板各有一份基準，系統依這一片的側別自動選用。"/>
+            <WrapPanel>
+                <StackPanel Margin="0,0,28,0">
+                    <TextBlock Text="生效 Recipe" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="{Binding RecipeName, TargetNullValue=（無）, FallbackValue=（無）}" FontWeight="Bold" FontSize="14"/>
+                </StackPanel>
+                <StackPanel Margin="0,0,28,0">
+                    <TextBlock Text="載台側別" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="{Binding CarrierSide, TargetNullValue=？, FallbackValue=？}" FontWeight="Bold" FontSize="14"/>
+                </StackPanel>
+                <StackPanel Margin="0,0,28,0">
+                    <TextBlock Text="條碼" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="{Binding Barcode, TargetNullValue=-, FallbackValue=-}" FontSize="14"/>
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock Text="上次 RUN" Style="{StaticResource Caption}"/>
+                    <TextBlock Text="{Binding LastRunAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}, TargetNullValue=-, FallbackValue=-}" FontSize="14"/>
+                </StackPanel>
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- R / L 基準狀態 + 存基準 -->
+        <Border Grid.Row="1" Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,3">
+                        <TextBlock Text="R 側基準：" Width="70" Foreground="#444"/>
+                        <TextBlock Text="{Binding BaselineRInfo}" FontWeight="Bold"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="L 側基準：" Width="70" Foreground="#444"/>
+                        <TextBlock Text="{Binding BaselineLInfo}" FontWeight="Bold"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <Button Content="📌 用目前這片存為基準"
+                            Command="{Binding SaveBaselineCommand}"
+                            Padding="10,6" Background="#D9EAD3" FontWeight="Bold"
+                            ToolTip="把目前這一輪量測結果，存成生效 Recipe「目前偵測到側別（R/L）」的 QC 基準。要建立完整基準需 R、L 各跑一片良品各存一次。（僅 Engineer 以上）"/>
+                    <TextBlock Style="{StaticResource Caption}" HorizontalAlignment="Right" Margin="0,3,0,0" TextAlignment="Right"
+                               Text="依當下偵測到的 R/L 自動決定存哪一份&#x0a;（存基準僅 Engineer 以上）"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 比對標題列 -->
+        <Border Grid.Row="2" Style="{StaticResource Card}" Background="#F0F4F8">
+            <DockPanel>
+                <CheckBox DockPanel.Dock="Left" Content="啟用 QC 比對" FontWeight="Bold"
+                          VerticalAlignment="Center" Margin="0,0,14,0"
+                          IsChecked="{Binding QcCompareEnabled, Mode=TwoWay}"
+                          IsEnabled="{Binding CanUseQcRecipe}"
+                          ToolTip="關閉時：每輪 RUN 後不自動比對、不寫主畫面狀態列、不產生 CSV。此視窗仍可按「🔄 重新比對」手動查看。"/>
+                <TextBlock DockPanel.Dock="Right" FontWeight="Bold" FontSize="13"
+                           VerticalAlignment="Center"
+                           Text="{Binding ExceedCount, StringFormat=偏離基準 {0} 個}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#C00000"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ExceedCount}" Value="0">
+                                    <Setter Property="Foreground" Value="#2E7D32"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <TextBlock Text="{Binding ComparisonHeader}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+
+        <!-- 比對明細表 -->
+        <DataGrid Grid.Row="3" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
+                  IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal" AlternatingRowBackground="#F5F5F5">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ExceedsTolerance}" Value="True">
+                            <Setter Property="Background" Value="#E60000"/>
+                            <Setter Property="Foreground" Value="White"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="區域" Binding="{Binding Area}" Width="50"/>
+                <DataGridTextColumn Header="Slot" Binding="{Binding Name}" Width="90"/>
+                <DataGridTextColumn Header="判定" Binding="{Binding Verdict}" Width="100"/>
+                <DataGridTextColumn Header="Value 基準" Binding="{Binding BaselineValue, StringFormat=F3}" Width="90"/>
+                <DataGridTextColumn Header="Value 目前" Binding="{Binding CurrentValue, StringFormat=F3}" Width="90"/>
+                <DataGridTextColumn Header="Value Δ" Binding="{Binding DeltaValue, StringFormat=F3}" Width="90"/>
+                <DataGridTextColumn Header="亮度 基準" Binding="{Binding BaselineMeanIntensity, StringFormat=F1}" Width="90"/>
+                <DataGridTextColumn Header="亮度 目前" Binding="{Binding CurrentMeanIntensity, StringFormat=F1}" Width="90"/>
+                <DataGridTextColumn Header="亮度 Δ" Binding="{Binding DeltaMeanIntensity, StringFormat=F1}" Width="90"/>
+                <DataGridTextColumn Header="位置 基準" Binding="{Binding BaselineDistanceToRoiCenter, StringFormat=F3}" Width="90"/>
+                <DataGridTextColumn Header="位置 目前" Binding="{Binding CurrentDistanceToRoiCenter, StringFormat=F3}" Width="90"/>
+                <DataGridTextColumn Header="位置 Δ" Binding="{Binding DeltaDistanceToRoiCenter, StringFormat=F3}" Width="90"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- 允許範圍（容差）：Operator 只能看，欄位與儲存鈕停用（僅 Engineer 以上可改） -->
+        <Border Grid.Row="4" Style="{StaticResource Card}" Margin="0,8,0,8">
+          <StackPanel>
+            <WrapPanel>
+                <TextBlock Text="允許範圍" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <TextBlock Text="Value (mm²)" VerticalAlignment="Center"/>
+                <TextBox Style="{StaticResource NumBox}" IsEnabled="{Binding CanEditQc}"
+                         Text="{Binding QcToleranceValue, UpdateSourceTrigger=LostFocus}"/>
+                <TextBlock Text="亮度" VerticalAlignment="Center"/>
+                <TextBox Style="{StaticResource NumBox}" IsEnabled="{Binding CanEditQc}"
+                         Text="{Binding QcToleranceMeanIntensity, UpdateSourceTrigger=LostFocus}"/>
+                <TextBlock Text="位置偏移" VerticalAlignment="Center"/>
+                <TextBox Style="{StaticResource NumBox}" IsEnabled="{Binding CanEditQc}"
+                         Text="{Binding QcToleranceDistanceToRoiCenter, UpdateSourceTrigger=LostFocus}"/>
+                <Button Content="儲存並重新比對" Command="{Binding SaveTolerancesCommand}" Padding="8,4"/>
+            </WrapPanel>
+            <TextBlock Margin="0,6,0,0" Style="{StaticResource Caption}" TextWrapping="Wrap"
+                       Text="某個 Slot 只要「目前值 − 基準值」的差距（Value／亮度／位置任一項）超過上面設定的允許範圍，就會被判為「偏離基準」、整列變紅。數字設大＝比較寬鬆，設小＝比較敏感。（存基準／改允許範圍僅 Engineer 以上）"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 底部 -->
+        <DockPanel Grid.Row="5">
+            <Button DockPanel.Dock="Right" Content="開啟報表資料夾" Command="{Binding OpenReportFolderCommand}" Padding="8,4" Margin="6,0,0,0"/>
+            <Button DockPanel.Dock="Right" Content="🔄 重新比對" Command="{Binding RefreshCommand}" Padding="8,4"/>
+            <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" Foreground="#2E7D32" FontWeight="Bold"/>
+        </DockPanel>
+    </Grid>
+</Window>

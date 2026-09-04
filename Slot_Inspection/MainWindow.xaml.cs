@@ -40,6 +40,12 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
+    // 「📋 其他」下拉裡的動作按鈕按下後就把選單收起來（可勾選的項目不收，方便連續切換）
+    private void MoreMenuAction_Click(object sender, RoutedEventArgs e)
+    {
+        MoreMenuToggle.IsChecked = false;
+    }
+
     // ── 閒置逾時鎖定：任何滑鼠/鍵盤操作都重置計時器 ──
     private void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {

@@ -35,11 +35,12 @@ public partial class RolePermissionWindow : Window
         (Permission.OpenResultFolder, "開啟結果資料夾"),
         (Permission.SlcReset, "SLC Reset"),
         (Permission.ToggleLightGateBypass, "上料/下料模式切換"),
+        (Permission.RecipeSwitch, "Recipe 切換（僅選擇/讀取套用，不含座標調整、不含備份/刪除）"),
     ];
 
     private static readonly (Permission Permission, string DisplayName)[] AdvancedDefs =
     [
-        (Permission.PositionSettings, "Recipe 切換（含座標調整）"),
+        (Permission.PositionSettings, "Recipe 切換＋座標調整（進階，含備份/建立/刪除）"),
         (Permission.LightSettings, "光源設定"),
         (Permission.CropSettings, "裁切設定"),
         (Permission.AxisSettleDelay, "ZL/ZR 安定延遲"),

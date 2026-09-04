@@ -1,16 +1,27 @@
 using Machine.Core.Enums;
 using Machine.Core.Interfaces;
 using Machine.Core.Models.Axis.DeltaRS485;
+using NLog;
+using System.Diagnostics;
 
 namespace Machine.Core
 {
     /// <summary>
-    /// Delta ASDA-B3 RS485 ¶b±±¨î¾¹ ¡X ¹ê§@ IAxis ¤¶­±
-    /// Ãş§O¦WºÙ cAxis_RS485 ¹ïÀ³ AxisCardType.RS485 = 3¡A
-    /// ¨Ñ cMachineManager.LoadAxises() ¤Ï®g¸ü¤J®É¦Û°Ê°t¹ï¡C
+    /// Delta ASDA-B3 RS485 ï¿½bï¿½ï¿½ï¿½î¾¹ ï¿½X ï¿½ï¿½@ IAxis ï¿½ï¿½ï¿½ï¿½
+    /// ï¿½ï¿½ï¿½Oï¿½Wï¿½ï¿½ cAxis_RS485 ï¿½ï¿½ï¿½ï¿½ AxisCardType.RS485 = 3ï¿½A
+    /// ï¿½ï¿½ cMachineManager.LoadAxises() ï¿½Ï®gï¿½ï¿½ï¿½Jï¿½É¦Û°Ê°tï¿½ï¿½C
     /// </summary>
     public class cAxis_RS485 : IAxis, IDisposable
     {
+        private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+        // è¨ºæ–·ç”¨ï¼šEMO è§¸ç™¼æ™‚ StopAllAxesImmediate æœƒå°æ‰€æœ‰è»¸åŒæ™‚ä¸‹ MotStopï¼Œå¦‚æœåŒä¸€æ™‚é–“
+        // RUN æµç¨‹æ­£åœ¨å°åŒä¸€è»¸è¼ªè©¢ Wait()ï¼Œå…©é‚Šæœƒæ¶ AsdaB3Controller å…§éƒ¨çš„ lockâ€”â€”å¦‚æœå‰›å¥½
+        // å¡é€² Modbus é€¾æ™‚é‡è©¦ï¼Œå…¶ä¸­ä¸€é‚Šå°±æœƒè¢«å¡ä½å¾ˆä¹…ï¼Œä¸”å¡ä½çš„åœ°æ–¹ä¸æœƒæª¢æŸ¥ CancellationTokenï¼Œ
+        // å°è‡´å–æ¶ˆè¨Šè™Ÿå»¶é²å¾ˆä¹…æ‰ç”Ÿæ•ˆï¼ˆæ‡·ç–‘è·Ÿã€ŒEMO Reset å¾Œåˆå§‹åŒ–æŒ‰ä¸å‹•ã€æœ‰é—œï¼‰ã€‚é€™è£¡è¨˜éŒ„æ¯æ¬¡
+        // Wait()/MotStop() å¯¦éš›èŠ±è²»çš„æ™‚é–“ï¼Œè¶…é SlowCallThresholdMs å°±å¯«ä¸€ç­† logï¼Œæ­£å¸¸æƒ…æ³ä¸‹
+        // æ‡‰è©²åªè¦å¹¾å msï¼Œå¦‚æœå¡ä½æœƒé è¶…éé€™å€‹é–€æª»ï¼Œæ–¹ä¾¿äº‹å¾Œå¾ log ç›´æ¥ç¢ºèªæ˜¯ä¸æ˜¯å¡åœ¨é€™è£¡ã€‚
+        private const int SlowCallThresholdMs = 100;
+
         private readonly ModbusRtuClient _modbus;
         private readonly AsdaB3Controller _controller;
         private bool _isConnected;
@@ -44,26 +55,26 @@ namespace Machine.Core
         public double SoftwarePLimit { get; set; }
 
         // ============================
-        //  RS485 ³s½u³]©w
+        //  RS485 ï¿½sï¿½uï¿½]ï¿½w
         // ============================
 
-        /// <summary>COM Port ¦WºÙ¡A¨Ò¦p "COM12"</summary>
+        /// <summary>COM Port ï¿½Wï¿½Ù¡Aï¿½Ò¦p "COM12"</summary>
         public string PortName { get; set; } = "COM3";
 
-        /// <summary>Àj²v¡A¹w³] 38400</summary>
+        /// <summary>ï¿½jï¿½vï¿½Aï¿½wï¿½] 38400</summary>
         public int BaudRate { get; set; } = 38400;
 
-        /// <summary>Modbus ¯¸¸¹¡A¹w³] 1</summary>
+        /// <summary>Modbus ï¿½ï¿½ï¿½ï¿½ï¿½Aï¿½wï¿½] 1</summary>
         public byte SlaveId { get; set; } = 1;
 
-        /// <summary>PUU/mm Âà´«¤ñ¡]¹ïÀ³ Scale ªº­Ë¼Æ¡^</summary>
+        /// <summary>PUU/mm ï¿½à´«ï¿½ï¿½]ï¿½ï¿½ï¿½ï¿½ Scale ï¿½ï¿½ï¿½Ë¼Æ¡^</summary>
         public double PuuPerMm
         {
             get => _controller.PuuPerMm;
             set => _controller.PuuPerMm = value;
         }
 
-        /// <summary>¨ì¦ì¹O®É (ms)</summary>
+        /// <summary>ï¿½ï¿½ï¿½Oï¿½ï¿½ (ms)</summary>
         public int InPositionTimeout
         {
             get => _controller.InPositionTimeout;
@@ -71,28 +82,28 @@ namespace Machine.Core
         }
 
         // ============================
-        //  ¥Dµ{¦¡·s¼W¥\¯à¡Gµ´¹ï½s½X¾¹ & ·Ù¨®
+        //  ï¿½Dï¿½{ï¿½ï¿½ï¿½sï¿½Wï¿½\ï¿½ï¿½Gï¿½ï¿½ï¿½ï¿½sï¿½Xï¿½ï¿½ & ï¿½Ù¨ï¿½
         // ============================
 
-        /// <summary>µ´¹ï®y¼Ğ¬O§_¥¿±`</summary>
+        /// <summary>ï¿½ï¿½ï¿½ï¿½yï¿½Ğ¬Oï¿½_ï¿½ï¿½ï¿½`</summary>
         public bool AbsOk => _controller.AbsOk();
 
-        /// <summary>Åª¨úµ´¹ï½s½X¾¹ª¬ºAºX¼Ğ</summary>
+        /// <summary>Åªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½sï¿½Xï¿½ï¿½ï¿½ï¿½ï¿½Aï¿½Xï¿½ï¿½</summary>
         public AbsoluteStatusFlags AbsoluteStatus => _controller.ReadAbsoluteStatus();
 
-        /// <summary>­««Øµ´¹ï­ìÂI</summary>
+        /// <summary>ï¿½ï¿½ï¿½Øµï¿½ï¿½ï¿½ï¿½ï¿½I</summary>
         public void RebuildAbsoluteOrigin() => _controller.RebuildAbsoluteOrigin();
 
-        /// <summary>·Ù¨®±±¨î (true=ÄÀ©ñ, false=Âê©w)</summary>
+        /// <summary>ï¿½Ù¨ï¿½ï¿½ï¿½ï¿½ï¿½ (true=ï¿½ï¿½ï¿½ï¿½, false=ï¿½ï¿½w)</summary>
         public void SetBrake(bool release) => _controller.SetBrake(release);
 
-        /// <summary>§å¦¸Åª¨úÅX°Ê¾¹§Ö·Ó</summary>
+        /// <summary>ï¿½å¦¸Åªï¿½ï¿½ï¿½Xï¿½Ê¾ï¿½ï¿½Ö·ï¿½</summary>
         public DriverSnapshot ReadSnapshot() => _controller.ReadSnapshot();
 
-        /// <summary>ÅX°Ê¾¹ª¬ºAºX¼Ğ</summary>
+        /// <summary>ï¿½Xï¿½Ê¾ï¿½ï¿½ï¿½ï¿½Aï¿½Xï¿½ï¿½</summary>
         public DriverStatusFlags DriverStatus => _controller.ReadDriverStatus();
 
-        /// <summary>¨ú±o©³¼h±±¨î¾¹¡]¶i¶¥¥Î³~¡^</summary>
+        /// <summary>ï¿½ï¿½ï¿½oï¿½ï¿½ï¿½hï¿½ï¿½ï¿½î¾¹ï¿½]ï¿½iï¿½ï¿½ï¿½Î³~ï¿½^</summary>
         public AsdaB3Controller Controller => _controller;
 
         public cAxis_RS485()
@@ -102,10 +113,10 @@ namespace Machine.Core
         }
 
         // ============================
-        //  ³s½u / Â_½u¡]¥Dµ{¦¡©I¥s¡^
+        //  ï¿½sï¿½u / ï¿½_ï¿½uï¿½]ï¿½Dï¿½{ï¿½ï¿½ï¿½Iï¿½sï¿½^
         // ============================
 
-        /// <summary>«Ø¥ß RS485 ³s½u¨Ãªì©l¤ÆÅX°Ê¾¹</summary>
+        /// <summary>ï¿½Ø¥ï¿½ RS485 ï¿½sï¿½uï¿½Ãªï¿½lï¿½ï¿½ï¿½Xï¿½Ê¾ï¿½</summary>
         public void Connect()
         {
             _modbus.Connect(PortName, BaudRate, SlaveId);
@@ -114,7 +125,7 @@ namespace Machine.Core
             _isConnected = true;
         }
 
-        /// <summary>Â_½u</summary>
+        /// <summary>ï¿½_ï¿½u</summary>
         public void Disconnect()
         {
             _controller.Dispose();
@@ -122,12 +133,17 @@ namespace Machine.Core
         }
 
         // ============================
-        //  IAxis ¹ê§@
+        //  IAxis ï¿½ï¿½@
         // ============================
 
         public void MotStop(bool isImmediate = false)
         {
+            var sw = Stopwatch.StartNew();
             _controller.Stop();
+            sw.Stop();
+            if (sw.ElapsedMilliseconds >= SlowCallThresholdMs)
+                _logger.Warn($"[AxisDiag] {Name}({PortName}) MotStop è€—æ™‚ {sw.ElapsedMilliseconds}msï¼ˆé–€æª» {SlowCallThresholdMs}msï¼Œ" +
+                    "åé•·å¯èƒ½æ˜¯ Modbus é€¾æ™‚é‡è©¦ï¼Œè·Ÿå…¶ä»–åŸ·è¡Œç·’åŒæ™‚å­˜å–åŒä¸€è»¸æœ‰é—œï¼‰");
         }
 
         public bool MotMoveAbs(double Pos)
@@ -147,7 +163,12 @@ namespace Machine.Core
 
         public bool Wait()
         {
+            var sw = Stopwatch.StartNew();
             var status = _controller.ReadDriverStatus();
+            sw.Stop();
+            if (sw.ElapsedMilliseconds >= SlowCallThresholdMs)
+                _logger.Warn($"[AxisDiag] {Name}({PortName}) Wait()/ReadDriverStatus è€—æ™‚ {sw.ElapsedMilliseconds}ms" +
+                    $"ï¼ˆé–€æª» {SlowCallThresholdMs}msï¼Œåé•·å¯èƒ½æ˜¯ Modbus é€¾æ™‚é‡è©¦ï¼Œè·Ÿå…¶ä»–åŸ·è¡Œç·’åŒæ™‚å­˜å–åŒä¸€è»¸æœ‰é—œï¼‰");
             bool inPos = status.HasFlag(DriverStatusFlags.TargetPositionReached);
             bool zeroSpd = status.HasFlag(DriverStatusFlags.ZeroSpeed);
             return inPos && zeroSpd;
@@ -196,30 +217,30 @@ namespace Machine.Core
 
         public void SetStrVel(double Value)
         {
-            // Delta PR mode ¤£¤ä´©¿W¥ß±Ò°Ê³t«×¡A©¿²¤
+            // Delta PR mode ï¿½ï¿½ï¿½ä´©ï¿½Wï¿½ß±Ò°Ê³tï¿½×¡Aï¿½ï¿½ï¿½ï¿½
         }
 
         public void SetAccTime(double Value)
         {
-            _controller.AccelerationTime = (int)(Value * 1000); // ¬í ¡÷ ms
+            _controller.AccelerationTime = (int)(Value * 1000); // ï¿½ï¿½ ï¿½ï¿½ ms
             _controller.ApplySettings();
         }
 
         public void SetDecTime(double Value)
         {
-            _controller.DecelerationTime = (int)(Value * 1000); // ¬í ¡÷ ms
+            _controller.DecelerationTime = (int)(Value * 1000); // ï¿½ï¿½ ï¿½ï¿½ ms
             _controller.ApplySettings();
         }
 
         public void SetCurve(CurveType Curve)
         {
             this.Curve = Curve;
-            // Delta ASDA-B3 PR mode ¤£¤ä´©¤Á´«¥[´î³t¦±½u«¬¦¡
+            // Delta ASDA-B3 PR mode ï¿½ï¿½ï¿½ä´©ï¿½ï¿½ï¿½ï¿½ï¿½[ï¿½ï¿½tï¿½ï¿½ï¿½uï¿½ï¿½ï¿½ï¿½
         }
 
         public void SetTrigger(double Position, int CompareMethods)
         {
-            // Delta RS485 ¤£¤ä´©µwÅé trigger/compare
+            // Delta RS485 ï¿½ï¿½ï¿½ä´©ï¿½wï¿½ï¿½ trigger/compare
         }
 
         public void ResetError()
@@ -249,7 +270,7 @@ namespace Machine.Core
 
         public bool GetTrigger()
         {
-            return false; // Delta RS485 ¤£¤ä´©µwÅé trigger
+            return false; // Delta RS485 ï¿½ï¿½ï¿½ä´©ï¿½wï¿½ï¿½ trigger
         }
 
         public bool GetEmergency()
@@ -260,8 +281,8 @@ namespace Machine.Core
 
         public void SetPosition(double Pos)
         {
-            // Delta µ´¹ï½s½X¾¹¼Ò¦¡¤U³q±`¤£»İ­n¤â°Ê³]©w¦ì¸m
-            // ¦p»İ­«³]­ìÂI¥i©I¥s RebuildAbsoluteOrigin()
+            // Delta ï¿½ï¿½ï¿½ï¿½sï¿½Xï¿½ï¿½ï¿½Ò¦ï¿½ï¿½Uï¿½qï¿½`ï¿½ï¿½ï¿½İ­nï¿½ï¿½Ê³]ï¿½wï¿½ï¿½m
+            // ï¿½pï¿½İ­ï¿½ï¿½]ï¿½ï¿½ï¿½Iï¿½iï¿½Iï¿½s RebuildAbsoluteOrigin()
         }
 
         public void MotPrevious()
