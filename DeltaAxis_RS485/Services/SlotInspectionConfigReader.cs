@@ -43,9 +43,13 @@ public static class SlotInspectionConfigReader
         return new SlotInspectionSafetySnapshot
         {
             KnownYPositions = knownYPositions,
-            // R組、L組取較小值：DeltaAxis_RS485沒有PLC無法判斷目前是哪一板，取較保守（較容易先觸發警告）的門檻
+            // R組、L組取較小值：DeltaAxis_RS485沒有PLC無法判斷目前是哪一板，取較保守（較容易先觸發警告/阻擋）的門檻
             ZLCameraHeightLimit = Math.Min(inspectionConfig.CameraHeightZL_R, inspectionConfig.CameraHeightZL_L),
             ZRCameraHeightLimit = Math.Min(inspectionConfig.CameraHeightZR_R, inspectionConfig.CameraHeightZR_L),
+            ZLSafeHeightCeiling = Math.Min(inspectionConfig.ZLSafeHeight_R, inspectionConfig.ZLSafeHeight_L),
+            ZRSafeHeightCeiling = Math.Min(inspectionConfig.ZRSafeHeight_R, inspectionConfig.ZRSafeHeight_L),
+            ZSafeTolerance = inspectionConfig.ZSafeTolerance > 0 ? inspectionConfig.ZSafeTolerance : 1.0,
+            SourceFolder = Path.GetFullPath(configFolderPath),
         };
     }
 }

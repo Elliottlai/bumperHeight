@@ -14,8 +14,13 @@
             <Button Content="全部斷線" Command="{Binding DisconnectAllCommand}" />
             <Separator />
             <TextBlock Text="Slot_Inspection Config路徑：" VerticalAlignment="Center" Margin="8,0,4,0" />
-            <TextBox Text="{Binding SlotInspectionConfigPath}" Width="320" VerticalAlignment="Center" />
+            <TextBox Text="{Binding SlotInspectionConfigPath, UpdateSourceTrigger=PropertyChanged}" Width="320"
+                     VerticalAlignment="Center"
+                     ToolTip="留白則自動尋找（環境變數 SLOT_INSPECTION_CONFIG → 上次成功路徑 → exe 旁 → 開發機相對路徑 → 機台網路路徑）。讀取成功後會自動填成實際採用的絕對路徑。" />
             <Button Content="讀取安全設定" Command="{Binding LoadSafetyConfigCommand}" Margin="4,0,0,0" />
+            <CheckBox Content="自動跟隨主程式變更" IsChecked="{Binding AutoFollowSlotInspectionConfig}"
+                      VerticalAlignment="Center" Margin="8,0,0,0"
+                      ToolTip="勾選後，主程式存檔修改 InspectionConfig.json / SlotPositions.json 時，本工具會自動重新載入安全設定（約 1 秒延遲）。" />
         </ToolBar>
 
         <!-- 底部狀態列 -->
