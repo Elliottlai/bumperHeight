@@ -466,6 +466,7 @@ public sealed class MainViewModel : ObservableObject
     public ICommand OpenUserManagementCommand { get; }
     public ICommand OpenAuditLogCommand { get; }
     public ICommand OpenRolePermissionCommand { get; }
+    public ICommand OpenMaterialRecipeMapCommand { get; }
     public ICommand LogoutCommand { get; }
     /// <summary>鎖定畫面上的「重新登入」按鈕：LoginWindow被使用者直接關掉/取消時，用來再叫出一次登入視窗。</summary>
     public ICommand RetryLoginCommand { get; }
@@ -795,6 +796,9 @@ public sealed class MainViewModel : ObservableObject
 
         // 角色權限設定：僅Admin
         OpenRolePermissionCommand = new RelayCommand(OnOpenRolePermission, () => IsAdmin);
+
+        // 料號設定表：僅Admin
+        OpenMaterialRecipeMapCommand = new RelayCommand(OnOpenMaterialRecipeMap, () => IsAdmin);
 
         // 登出：鎖定畫面＋彈出LoginWindow要求重新登入，不結束程式
         LogoutCommand = new RelayCommand(OnLogout);
@@ -2705,6 +2709,16 @@ public sealed class MainViewModel : ObservableObject
     private void OnOpenRolePermission()
     {
         var win = new Views.RolePermissionWindow(CurrentUser, this)
+        {
+            Owner = Application.Current.MainWindow
+        };
+        win.ShowDialog();
+    }
+
+    /// <summary>開啟料號設定表編輯視窗（僅Admin可執行，由CanExecute保證）。</summary>
+    private void OnOpenMaterialRecipeMap()
+    {
+        var win = new Views.MaterialRecipeMapWindow(CurrentUser)
         {
             Owner = Application.Current.MainWindow
         };

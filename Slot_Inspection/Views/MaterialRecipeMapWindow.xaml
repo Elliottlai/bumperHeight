@@ -1,0 +1,98 @@
+<Window x:Class="Slot_Inspection.Views.MaterialRecipeMapWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="料號設定表"
+        Width="640" Height="600" MinWidth="560" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 對應清單 -->
+        <ListView x:Name="LstMap" Grid.Row="0" Margin="0,0,0,10"
+                  SelectionChanged="LstMap_SelectionChanged">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="料號"   Width="200" DisplayMemberBinding="{Binding MaterialNo}"/>
+                    <GridViewColumn Header="側別"   Width="60"  DisplayMemberBinding="{Binding Side}"/>
+                    <GridViewColumn Header="Recipe" Width="300" DisplayMemberBinding="{Binding RecipeDisplay}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <!-- 新增 -->
+        <Border Grid.Row="1" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Padding="10" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="新增料號對應" FontWeight="Bold" FontSize="12" Margin="0,0,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="料號："  VerticalAlignment="Center" Margin="0,3"/>
+                    <TextBox   Grid.Row="0" Grid.Column="1" x:Name="TxtMaterialNo" Margin="0,3" VerticalAlignment="Center"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="側別："  VerticalAlignment="Center" Margin="0,3"/>
+                    <ComboBox  Grid.Row="1" Grid.Column="1" x:Name="CmbAddSide" Width="70" HorizontalAlignment="Left" Margin="0,3">
+                        <ComboBoxItem>R</ComboBoxItem>
+                        <ComboBoxItem>L</ComboBoxItem>
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Recipe：" VerticalAlignment="Center" Margin="0,3"/>
+                    <ComboBox  Grid.Row="2" Grid.Column="1" x:Name="CmbAddRecipe" Margin="0,3"/>
+
+                    <Button Grid.Row="2" Grid.Column="3" x:Name="BtnAdd" Content="新增" Width="88" Margin="12,3,0,3"
+                            Background="#2E86C1" Foreground="White" Click="BtnAdd_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- 修改 / 刪除 -->
+        <Border Grid.Row="2" Background="#F0F0F0" BorderBrush="#CCC" BorderThickness="1" Padding="10" Margin="0,0,0,10">
+            <StackPanel>
+                <TextBlock Text="修改 / 刪除選中列" FontWeight="Bold" FontSize="12" Margin="0,0,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="側別："  VerticalAlignment="Center" Margin="0,3"/>
+                    <ComboBox  Grid.Row="0" Grid.Column="1" x:Name="CmbEditSide" Width="70" HorizontalAlignment="Left" Margin="0,3">
+                        <ComboBoxItem>R</ComboBoxItem>
+                        <ComboBoxItem>L</ComboBoxItem>
+                    </ComboBox>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Recipe：" VerticalAlignment="Center" Margin="0,3"/>
+                    <ComboBox  Grid.Row="1" Grid.Column="1" x:Name="CmbEditRecipe" Margin="0,3"/>
+
+                    <Button Grid.Row="0" Grid.Column="3" x:Name="BtnUpdate" Content="套用修改" Width="88" Margin="12,3,0,3"
+                            Click="BtnUpdate_Click"/>
+                    <Button Grid.Row="1" Grid.Column="3" x:Name="BtnDelete" Content="刪除選中" Width="88" Margin="12,3,0,3"
+                            Background="#C0392B" Foreground="White" Click="BtnDelete_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="TxtError" Grid.Row="3" Foreground="#C0392B" FontSize="12" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

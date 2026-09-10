@@ -276,6 +276,10 @@
                         <Button Content="🔐 角色權限設定" Command="{Binding OpenRolePermissionCommand}"
                                 FontSize="13" Padding="10,5" Margin="0,0,6,0"
                                 Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"/>
+                        <Button Content="🏷 料號設定" Command="{Binding OpenMaterialRecipeMapCommand}"
+                                FontSize="13" Padding="10,5" Margin="0,0,6,0"
+                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                                ToolTip="編輯料號 → 側別 → Recipe 對應表（Config/MaterialRecipeMap.json）"/>
                         <Button Content="🚪 登出" Command="{Binding LogoutCommand}"
                                 FontSize="13" Padding="10,5"/>
                     </StackPanel>
