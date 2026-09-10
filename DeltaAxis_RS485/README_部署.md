@@ -202,6 +202,36 @@ DeltaAxis 會照 `0` 算 → 變成「Z 幾乎要完全歸零才准移動 Y」�
 
 ---
 
+## 7.5 各軸「定位控制目標上限」（改設定檔）
+
+「定位控制」的目標位置可以設一個**上限**：輸入的目標超過上限時，
+
+- 「移動」按鈕旁邊會即時出現一行**紅字**「超過上限 XXX mm」
+- 「移動」按鈕會**變灰不能按**（打字當下就變灰）
+- Jog 若會讓位置超過上限，也會被擋下不動（狀態列寫原因）
+
+這個上限**只能改設定檔，介面上不提供修改**（避免現場誤觸放寬）。
+
+檔案：`<DeltaAxis_RS485.exe 旁>\DeltaAxisSettings.json`，裡面的 `AxisTargetUpperLimitMm` 段：
+
+```json
+{
+  "AxisTargetUpperLimitMm": {
+    "Y軸": 496.0,
+    "X軸": null,
+    "ZL軸": null,
+    "ZR軸": null
+  }
+}
+```
+
+- 數字 = 該軸上限（mm）
+- `null` = 該軸不限制
+- 第一次執行程式時會自動寫出這段範本（Y 軸帶行程極限 496mm，其餘 `null`），照著改就好
+- **改完存檔 → 重開 DeltaAxis 才生效**
+
+---
+
 ## 8. 疑難排解
 
 | 症狀 | 原因 / 處理 |
@@ -220,7 +250,7 @@ DeltaAxis 會照 `0` 算 → 變成「Z 幾乎要完全歸零才准移動 Y」�
 | 檔案 | 路徑 | 說明 |
 |---|---|---|
 | DeltaAxis 主程式 | `DeltaAxis_RS485\bin\Debug\net8.0-windows\DeltaAxis_RS485.exe` | 建置輸出 |
-| DeltaAxis 自己的小設定 | `<DeltaAxis.exe 旁>\DeltaAxisSettings.json` | 記住上次 Config 路徑、自動跟隨偏好；可安全刪除（會重建） |
+| DeltaAxis 自己的小設定 | `<DeltaAxis.exe 旁>\DeltaAxisSettings.json` | 記住上次 Config 路徑、自動跟隨偏好、各軸定位上限（見 7.5）；可安全刪除（會重建，但軸上限會回到範本值） |
 | 主程式安全設定來源 | `<主程式資料夾>\Config\InspectionConfig.json`、`SlotPositions.json` | DeltaAxis 讀取的對象 |
 | 尋找 Config 的邏輯 | `DeltaAxis_RS485\Services\SlotInspectionConfigLocator.cs` | 第 3 節那張順序表的實作 |
 | 讀取 + 自動跟隨的邏輯 | `DeltaAxis_RS485\ViewModels\MainViewModel.cs`（`LoadSafetyConfig` / `ArmConfigWatcher`） | — |

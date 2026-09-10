@@ -116,6 +116,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         foreach (var cfg in configs)
             Axes.Add(new AxisViewModel(cfg));
 
+        LoadAxisTargetUpperLimits();
+
         if (Axes.Count > 0)
             SelectedAxis = Axes[0];
 
@@ -412,6 +414,26 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         return (true, string.Empty);
     }
 
+    /// <summary>
+    /// 從 DeltaAxisSettings.json 讀各軸的「定位控制目標上限」套用到對應軸。
+    /// 介面上不提供修改，只能直接編輯 json；檔案第一次沒有這段時，寫一份範本進去讓現場好編。
+    /// </summary>
+    private void LoadAxisTargetUpperLimits()
+    {
+        var limits = _settings.AxisTargetUpperLimitMm;
+
+        // 第一次執行（整段都還沒有）→ 寫一份範本：Y 軸帶行程極限 496mm，其餘留 null（不限制）
+        if (limits.Count == 0)
+        {
+            foreach (var ax in Axes)
+                limits[ax.Config.Name] = ax.Config.Name == "Y軸" ? 496.0 : (double?)null;
+            _settings.Save();
+        }
+
+        foreach (var ax in Axes)
+            ax.TargetUpperLimitMm = limits.TryGetValue(ax.Config.Name, out var lim) ? lim : null;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
@@ -434,7 +456,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             _reloadDebounce?.Dispose();
             _reloadDebounce = null;
         }
-        foreach (var ax in Axes) ax.Dispose();
+        foreach (var ax in Axes)
+            ax.Dispose();
         GC.SuppressFinalize(this);
     }
 }

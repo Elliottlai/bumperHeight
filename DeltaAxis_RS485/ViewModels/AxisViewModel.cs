@@ -62,7 +62,41 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     //  移動目標
     // ============================
     private double _targetPositionMm;
-    public double TargetPositionMm { get => _targetPositionMm; set => SetField(ref _targetPositionMm, value); }
+    public double TargetPositionMm
+    {
+        get => _targetPositionMm;
+        set { if (SetField(ref _targetPositionMm, value)) RaiseTargetUpperLimitState(); }
+    }
+
+    /// <summary>
+    /// 定位控制的目標上限（mm）。移動 / Jog 的目標位置超過這個值就會被擋下（不移動），
+    /// 且介面會在「移動」按鈕旁顯示紅字提示。null＝不限制。
+    /// 只由 MainViewModel 從設定檔（DeltaAxisSettings.json）依軸名載入，介面上不提供修改。
+    /// </summary>
+    private double? _targetUpperLimitMm;
+    public double? TargetUpperLimitMm
+    {
+        get => _targetUpperLimitMm;
+        set { if (SetField(ref _targetUpperLimitMm, value)) RaiseTargetUpperLimitState(); }
+    }
+
+    private void RaiseTargetUpperLimitState()
+    {
+        OnPropertyChanged(nameof(IsTargetOverUpperLimit));
+        OnPropertyChanged(nameof(TargetUpperLimitMessage));
+        // 讓「移動」按鈕在打字當下就即時反映可否按（不用等游標離開欄位觸發 RequerySuggested）
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>目前輸入的目標位置是否超過設定檔給的上限。</summary>
+    public bool IsTargetOverUpperLimit
+        => _targetUpperLimitMm is double lim && _targetPositionMm > lim;
+
+    /// <summary>超過上限時要顯示在「移動」按鈕旁的紅字；沒超過時為空字串。</summary>
+    public string TargetUpperLimitMessage
+        => IsTargetOverUpperLimit
+            ? $"超過上限 {_targetUpperLimitMm!.Value:0.###} mm"
+            : "";
 
     // ============================
     //  狀態
@@ -234,7 +268,8 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
         DisconnectCommand = new RelayCommand(DoDisconnect, () => IsConnected && !IsMoving);
         ServoOnCommand = new RelayCommand(DoServoOn, () => IsConnected && !IsServoOn && !IsMoving);
         ServoOffCommand = new RelayCommand(DoServoOff, () => IsConnected && IsServoOn && !IsMoving);
-        MoveToPositionCommand = new RelayCommand(DoMoveToPosition, () => IsConnected && IsServoOn && !IsMoving);
+        MoveToPositionCommand = new RelayCommand(DoMoveToPosition,
+            () => IsConnected && IsServoOn && !IsMoving && !IsTargetOverUpperLimit);
         HomingCommand = new RelayCommand(DoHoming, () => IsConnected && IsServoOn && !IsMoving);
         ClearAlarmCommand = new RelayCommand(DoClearAlarm, () => IsConnected && !IsMoving);
         ApplySettingsCommand = new RelayCommand(DoApplySettings, () => IsConnected && !IsMoving);
@@ -478,6 +513,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     private void DoMoveToPosition()
     {
         if (!RunPreMoveCheck()) return;
+        if (!WithinTargetUpperLimit(TargetPositionMm)) return;
         if (!ConfirmTargetSafety(TargetPositionMm)) return;
         RunSafe(() =>
         {
@@ -612,6 +648,7 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
     {
         if (!RunPreMoveCheck()) return;
         double target = CurrentPositionMm + incrementMm;
+        if (!WithinTargetUpperLimit(target)) return;
         if (!ConfirmTargetSafety(target)) return;
         RunSafe(() =>
         {
@@ -621,6 +658,20 @@ public class AxisViewModel : INotifyPropertyChanged, IDisposable
             IsMoving = true;
             StatusMessage = $"Jog {incrementMm:+0.000;-0.000} mm → {target:F3} mm";
         });
+    }
+
+    /// <summary>
+    /// 檢查目標位置是否在使用者設定的上限內。
+    /// 未設上限（null）直接通過；超過上限則寫 StatusMessage 並回傳 false（呼叫端不移動）。
+    /// </summary>
+    private bool WithinTargetUpperLimit(double targetMm)
+    {
+        if (_targetUpperLimitMm is double lim && targetMm > lim)
+        {
+            StatusMessage = $"目標 {targetMm:F3} mm 超過設定上限 {lim:F3} mm，已阻擋";
+            return false;
+        }
+        return true;
     }
 
     /// <summary>

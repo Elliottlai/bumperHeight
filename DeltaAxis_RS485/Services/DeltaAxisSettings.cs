@@ -16,6 +16,14 @@ public sealed class DeltaAxisSettings
     /// <summary>主程式存檔修改設定檔時，是否自動重新載入（預設開）。</summary>
     public bool AutoFollowSlotInspectionConfig { get; set; } = true;
 
+    /// <summary>
+    /// 各軸「定位控制」的目標上限（mm），key＝軸名（例如「Y軸」）。
+    /// 值為數字＝該軸上限；值為 null 或沒有該 key＝不限制。
+    /// 移動 / Jog 目標超過就會被擋下，且介面會在「移動」按鈕旁顯示紅字。
+    /// 這是給現場人員直接編輯 DeltaAxisSettings.json 用的，介面上不提供修改；改完存檔、重開程式生效。
+    /// </summary>
+    public Dictionary<string, double?> AxisTargetUpperLimitMm { get; set; } = new();
+
     private static readonly string FilePath =
         Path.Combine(AppContext.BaseDirectory, "DeltaAxisSettings.json");
 

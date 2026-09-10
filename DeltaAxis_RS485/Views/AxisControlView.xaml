@@ -132,12 +132,25 @@
                             </WrapPanel>
               <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="目標 (mm):" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <TextBox Text="{Binding TargetPositionMm, UpdateSourceTrigger=LostFocus}"
+                <TextBox Text="{Binding TargetPositionMm, UpdateSourceTrigger=PropertyChanged}"
                          Width="120" Margin="0,0,8,0"
                          GotFocus="NumericTextBox_GotFocus"
                          PreviewMouseLeftButtonDown="NumericTextBox_PreviewMouseLeftButtonDown" />
                 <Button Content="移動" Command="{Binding MoveToPositionCommand}"
-                        Width="80" Margin="0,0,4,0" /> 
+                        Width="80" Margin="0,0,8,0" />
+                <TextBlock Text="{Binding TargetUpperLimitMessage}"
+                           Foreground="Red" FontWeight="Bold" VerticalAlignment="Center">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Visibility" Value="Collapsed" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsTargetOverUpperLimit}" Value="True">
+                          <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
               </StackPanel>
               <StackPanel>
                 <TextBlock Text="Jog:" Margin="0,0,0,4" FontWeight="Bold" />
