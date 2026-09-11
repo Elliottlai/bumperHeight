@@ -58,6 +58,9 @@ public sealed class PositionSettingsViewModel : ObservableObject
 
     private InspectionConfig? _config;
 
+    /// <summary>目前生效的設定實例（由 LoadFrom 傳入，即 MachineController.Config）。供「讀取 Recipe」直接套用用。</summary>
+    public InspectionConfig? Config => _config;
+
     /// <summary>目前登入的使用者，由 MainViewModel.OnPositionSettings 設定，供Recipe操作寫Audit Log用。</summary>
     public UserAccount? CurrentUser { get; set; }
 
@@ -142,35 +145,8 @@ public sealed class PositionSettingsViewModel : ObservableObject
         return data;
     }
 
-    /// <summary>把一份 AxisRecipeData 套用到目前編輯畫面（用於「讀取」Recipe）。</summary>
-    public void ApplyRecipeData(AxisRecipeData data)
-    {
-        for (int i = 0; i < YPositions_R.Count && i < data.YPositions_R.Length; i++)
-            YPositions_R[i].Value = data.YPositions_R[i];
-        for (int i = 0; i < YPositions_L.Count && i < data.YPositions_L.Length; i++)
-            YPositions_L[i].Value = data.YPositions_L[i];
-
-        if (ZLPositions_R.Count >= 2)
-        {
-            ZLPositions_R[0].Value = data.CameraHeightZL_R;
-            ZLPositions_R[1].Value = data.ZLSafeHeight_R;
-        }
-        if (ZLPositions_L.Count >= 2)
-        {
-            ZLPositions_L[0].Value = data.CameraHeightZL_L;
-            ZLPositions_L[1].Value = data.ZLSafeHeight_L;
-        }
-        if (ZRPositions_R.Count >= 2)
-        {
-            ZRPositions_R[0].Value = data.CameraHeightZR_R;
-            ZRPositions_R[1].Value = data.ZRSafeHeight_R;
-        }
-        if (ZRPositions_L.Count >= 2)
-        {
-            ZRPositions_L[0].Value = data.CameraHeightZR_L;
-            ZRPositions_L[1].Value = data.ZRSafeHeight_L;
-        }
-    }
+    // 「讀取 Recipe」原本用 ApplyRecipeData 把值塞進編輯欄位、再靠 ApplyTo 於按確定時寫回，
+    // 已改為 Services.RecipeService.Apply 直接完整套用＋存檔，之後由 LoadFrom 重載欄位顯示。
 
     /// <summary>從 InspectionConfig 與 SlotPositionTable 載入目前值。</summary>
     public void LoadFrom(InspectionConfig config)

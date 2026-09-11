@@ -44,16 +44,23 @@ public partial class PositionSettingsWindow : Window
         }
 
         if (MessageBox.Show(
-                $"讀取「{name}」將覆蓋目前生效中的軸座標與演算法參數設定，建議先確認目前設定已備份。是否繼續？",
+                $"讀取「{name}」將立即覆蓋目前生效中的軸座標與演算法參數設定，建議先確認目前設定已備份。是否繼續？",
                 "確認讀取", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
 
+        if (vm.Config == null)
+        {
+            MessageBox.Show("內部錯誤：設定尚未載入，無法套用 Recipe。", "讀取失敗", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
         try
         {
-            vm.ApplyRecipeData(AxisRecipeManager.Load(name));
-            bool hasAlgFiles = AxisRecipeManager.LoadAlgFiles(name);
-            vm.CurrentRecipeName = name;
-            vm.IsDirty = false; // 剛套用完的數值跟Recipe內容一致，不需要立刻又被提醒備份
+            // 座標／高度／演算法檔／名稱全部立即套用並存檔（跟「掃碼自動切換」共用同一套邏輯）
+            bool hasAlgFiles = RecipeService.Apply(name, vm.Config);
+            // 把剛套用的值重新載回編輯欄位顯示（LoadFrom 內會一併把 IsDirty 歸零、更新 CurrentRecipeName）
+            vm.LoadFrom(vm.Config);
+            vm.SelectedRecipeName = name;
             if (vm.CurrentUser != null)
                 AuditLogger.Write(vm.CurrentUser.Username, vm.CurrentUser.Role, $"讀取 Recipe「{name}」");
 
