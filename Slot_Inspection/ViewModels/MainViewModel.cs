@@ -2644,7 +2644,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var win = new Views.WebApiTestWindow();
             try { win.Owner = Application.Current.MainWindow; } catch { /* Owner 設定失敗不影響開啟 */ }
-            win.LoadFrom(_mesClient);
+            win.LoadFrom(_mesClient, IsSimulationMode);
             bool saved = win.ShowDialog() == true;
 
             // 儲存後：依 IsEnabled 決定是否重連

@@ -146,19 +146,35 @@ public class CimApiClient
     // ═══════════════════════════════════════════════════════════
     //  ② 讀碼成功後：QuerySerialNoData
     // ═══════════════════════════════════════════════════════════
-    public async Task<string?> QueryWorkOrderAsync(string equipmentId, string productId)
+    /// <summary>
+    /// 查詢 MES 序號相關資料。null＝完全沒打成（功能關閉／尚未連線／連線例外），
+    /// 非 null 但 Success=false＝MES 有回應但回錯誤（查 ErrorCode/ErrorMessage）。
+    /// </summary>
+    public async Task<QuerySerialNoResult?> QueryWorkOrderAsync(string equipmentId, string productId)
     {
         if (!_isEnabled) { LastStatus = MesConnectionStatus.Disabled; return null; }
         if (_api is null) { WriteLog("WARN", "尚未連線，略過 QueryWorkOrder"); return null; }
         WriteLog("INFO", $"→ QuerySerialNoData | ProductId={productId}");
         try
         {
-            // ★ 呼叫 WebApidll.QuerySerialNoDataAsync()
+            // ★ 呼叫 WebApidll.QuerySerialNoDataAsync()（已回傳解析好的物件，不用自己剖 JSON）
             var resp = await _api.QuerySerialNoDataAsync(equipmentId, productId);
             if (resp == null) { LastStatus = MesConnectionStatus.Disconnected; return null; }
             LastStatus = MesConnectionStatus.Connected;
             WriteLog("INFO", $"← QuerySerialNoData OK");
-            return resp.ToString();
+
+            var msg = resp.ReturnMessage;
+            var data = resp.QueryData;
+            return new QuerySerialNoResult
+            {
+                Success       = msg?.Code == "0",
+                MaterialNo    = data?.MaterialNo,
+                WorkerOrderNo = data?.WorkerOrderNo,
+                LotNo         = data?.LotNo,
+                RfidLotNo     = data?.RfidLotNo,
+                ErrorCode     = msg?.Code,
+                ErrorMessage  = msg?.Message,
+            };
         }
         catch (Exception ex)
         {
@@ -303,6 +319,21 @@ public enum MesConnectionStatus
     Connected,    // 上一次呼叫成功
     Disconnected, // 上一次呼叫失敗
     Disabled      // WebAPI 功能已關閉
+}
+
+/// <summary>
+/// CimApiClient.QueryWorkOrderAsync 的解析結果。
+/// Success=false 時 MaterialNo 等欄位通常是 null，改看 ErrorCode/ErrorMessage。
+/// </summary>
+public sealed class QuerySerialNoResult
+{
+    public bool Success { get; init; }
+    public string? MaterialNo { get; init; }
+    public string? WorkerOrderNo { get; init; }
+    public string? LotNo { get; init; }
+    public string? RfidLotNo { get; init; }
+    public string? ErrorCode { get; init; }
+    public string? ErrorMessage { get; init; }
 }
 
 /// <summary>CimApiClient 持久化設定。</summary>
