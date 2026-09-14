@@ -60,6 +60,22 @@ public class CimApiClient
         set => _isEnabled = value;
     }
 
+    private bool _isOnlineMode = false;
+
+    /// <summary>
+    /// 「掃碼自動切換 Recipe」的 Online/Offline 模式，跟 <see cref="IsEnabled"/> 是獨立的兩個開關：
+    /// IsEnabled 控管「要不要對接 MES」（狀態回報、結果上傳都算），IsOnlineMode 只控管「掃碼後
+    /// 要不要查料號、自動切換 Recipe」——可以只開 IsEnabled（有狀態回報但手動選 Recipe）。
+    /// true＝Online：查不到料號 / MES 連不上（含 IsEnabled=false 的情況）一律擋下 RUN。
+    /// false＝Offline（預設）：完全比照現行手動選 Recipe 的方式，不受這個功能影響。
+    /// 預設 false，避免既有機台升級後在沒設定料號對應表之前就被擋住。
+    /// </summary>
+    public bool IsOnlineMode
+    {
+        get => _isOnlineMode;
+        set => _isOnlineMode = value;
+    }
+
     private static readonly string _logDir = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "WebApiLog");
 
@@ -78,7 +94,7 @@ public class CimApiClient
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_settingsPath)!);
-            var data = new CimApiSettings { BaseUrl = _baseUrl, EquipmentId = _equipmentId, ProductType = _productType, ItemName = _itemName, IsEnabled = _isEnabled };
+            var data = new CimApiSettings { BaseUrl = _baseUrl, EquipmentId = _equipmentId, ProductType = _productType, ItemName = _itemName, IsEnabled = _isEnabled, IsOnlineMode = _isOnlineMode };
             File.WriteAllText(_settingsPath,
                 JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }),
                 Encoding.UTF8);
@@ -106,6 +122,7 @@ public class CimApiClient
             if (!string.IsNullOrWhiteSpace(data.ItemName))
                 _itemName = data.ItemName;
             _isEnabled = data.IsEnabled;
+            _isOnlineMode = data.IsOnlineMode;
         }
         catch (Exception ex)
         {
@@ -344,4 +361,5 @@ internal sealed class CimApiSettings
     public string ProductType { get; set; } = "";
     public string ItemName    { get; set; } = "Height";
     public bool   IsEnabled   { get; set; } = true;
+    public bool   IsOnlineMode { get; set; } = false;
 }

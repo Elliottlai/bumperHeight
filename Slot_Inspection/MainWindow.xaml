@@ -743,6 +743,13 @@
                                   Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
                                   ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="8,0,8,6"
+                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}">
+                        <CheckBox Content="🌐 Online 模式（掃碼自動切換 Recipe）" FontSize="12"
+                                  IsChecked="{Binding IsOnlineMode, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanToggleOnlineMode}"
+                                  ToolTip="勾選＝Online：掃碼後自動查 MES 料號，依「料號設定表」自動切換 Recipe；查不到料號對應／MES 連不上一律擋下 RUN。&#10;取消＝Offline（預設）：完全比照現行手動選 Recipe 的方式，不受影響。&#10;RUN/DryRun 執行中無法切換，需先停止。"/>
+                    </StackPanel>
                     <Separator Margin="4,2"/>
                     <Button Content="✂ 裁切設定" Margin="4,3" Padding="6,4" FontSize="12"
                             HorizontalContentAlignment="Left"

@@ -200,6 +200,7 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(RunStateText));
         OnPropertyChanged(nameof(RunStateKey));
         OnPropertyChanged(nameof(CanToggleSimulationMode));
+        OnPropertyChanged(nameof(CanToggleOnlineMode));
     }
 
     // ═══════════════════════════════════════
@@ -224,6 +225,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsAdmin));
                 OnPropertyChanged(nameof(CanToggleSimulationMode));
                 OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
+                OnPropertyChanged(nameof(CanToggleOnlineMode));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -250,6 +252,7 @@ public sealed class MainViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanToggleSimulationMode));
         OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
+        OnPropertyChanged(nameof(CanToggleOnlineMode));
         CommandManager.InvalidateRequerySuggested();
     }
 
@@ -599,6 +602,35 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>模擬模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
     public bool CanToggleSimulationMode => IsAdmin && !IsRunning && !IsDryRunning;
+
+    /// <summary>
+    /// 「掃碼自動切換 Recipe」Online/Offline 模式開關，持久化於 CimApiSettings.json（跟 MES
+    /// WebAPI 的 IsEnabled 是獨立設定，見 CimApiClient.IsOnlineMode 說明）。
+    /// Online：掃碼後查 MES 料號、依料號設定表自動切換 Recipe，查不到/連不上一律擋下 RUN。
+    /// Offline（預設）：完全比照現行手動選 Recipe 的方式，不受影響。
+    /// </summary>
+    public bool IsOnlineMode
+    {
+        get => _mesClient.IsOnlineMode;
+        set
+        {
+            if (!CanToggleOnlineMode)
+            {
+                OnPropertyChanged(); // 還原 CheckBox 顯示成目前實際值，不接受這次變更
+                return;
+            }
+            if (_mesClient.IsOnlineMode == value) return;
+            _mesClient.IsOnlineMode = value;
+            _mesClient.Save();
+            OnPropertyChanged();
+            CommandManager.InvalidateRequerySuggested();
+            if (CurrentUser != null)
+                AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"MES Online模式切換為{(value ? "開啟" : "關閉")}");
+        }
+    }
+
+    /// <summary>Online 模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
+    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning;
 
     /// <summary>
     /// 模擬模式專用：按 X 鍵循環切換的板子感測狀態（0-3）。
@@ -1851,10 +1883,13 @@ public sealed class MainViewModel : ObservableObject
             Barcode = code;
             StatusMessage = $"✔ 條碼確認：{code}，準備開始量測...";
 
-            // ── MES QuerySerialNoData（非阻塞，失敗不中止流程）──
-            _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
-                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                    TaskScheduler.FromCurrentSynchronizationContext());
+            // ── Online 模式：查 MES 料號、依料號設定表自動切換 Recipe；查不到/連不上會擋下 ──
+            // Offline 模式（預設）直接放行，完全比照現行手動選 Recipe 的方式。
+            if (!await TryAutoSwitchRecipeFromMesAsync(code))
+            {
+                _confirmedBarcode = "";
+                return;
+            }
             // ─────────────────────────────────────────────────────────────
             StatusMessage = "主流程進行中，正在量測各 Slot...";
 
@@ -2726,6 +2761,56 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Online 模式下：查 MES 取得料號 → 查料號設定表 → 需要的話自動切換 Recipe（呼叫
+    /// RecipeService.Apply，跟「Recipe 切換」視窗走同一套邏輯）。
+    /// Offline 模式（IsOnlineMode=false，預設）直接回傳 true，不做任何事，
+    /// 完全比照現行手動選 Recipe 的方式。
+    /// 回傳 true 表示可以繼續往下量測；false 表示已擋下（原因已寫進 StatusMessage），
+    /// 呼叫端應中止流程，不要開始跑 Slot。
+    /// </summary>
+    private async Task<bool> TryAutoSwitchRecipeFromMesAsync(string barcode)
+    {
+        if (!IsOnlineMode) return true;
+
+        var result = await _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, barcode);
+        MesStatus = _mesClient.LastStatus;
+
+        if (result == null || !result.Success || string.IsNullOrWhiteSpace(result.MaterialNo))
+        {
+            string reason = result?.ErrorMessage ?? "MES 連線失敗或尚未啟用 WebAPI 功能";
+            StatusMessage = $"⚠ Online 模式：查詢料號失敗（{reason}），已擋下無法開始檢測";
+            return false;
+        }
+
+        var mapping = MaterialRecipeManager.Find(result.MaterialNo);
+        if (mapping == null)
+        {
+            StatusMessage = $"⚠ Online 模式：料號「{result.MaterialNo}」尚未在料號設定表建立對應，已擋下無法開始檢測";
+            return false;
+        }
+
+        if (!string.Equals(mapping.RecipeName, _machine.Config.CurrentRecipeName, StringComparison.Ordinal))
+        {
+            try
+            {
+                RecipeService.Apply(mapping.RecipeName, _machine.Config);
+                OnPropertyChanged(nameof(CurrentRecipeDisplay));
+                StatusMessage = $"✔ MES 料號「{result.MaterialNo}」→ 已自動切換 Recipe「{mapping.RecipeName}」";
+                if (CurrentUser != null)
+                    AuditLogger.Write(CurrentUser.Username, CurrentUser.Role,
+                        $"Online 模式自動切換 Recipe：料號「{result.MaterialNo}」→「{mapping.RecipeName}」");
+            }
+            catch (Exception ex)
+            {
+                StatusMessage = $"⚠ Online 模式：自動切換 Recipe「{mapping.RecipeName}」失敗（{ex.Message}），已擋下無法開始檢測";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// 登出：要求重新輸入帳號密碼才能繼續操作，不會結束程式、不影響機台連線/運行狀態。
     /// 實際邏輯與閒置逾時自動登出共用 <see cref="LockAndRequireLogin"/>，只是觸發原因不同。
     /// </summary>
@@ -2787,10 +2872,13 @@ public sealed class MainViewModel : ObservableObject
         if (string.IsNullOrEmpty(CarrierSide)) CarrierSide = "L";
         StatusMessage = $"[SIM] 條碼確認：{simBarcode}，CarrierSide={CarrierSide}";
 
-        // ── MES QueryWorkOrder（非阻塞）──────────────────────────────────
-        _ = _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, _confirmedBarcode)
-            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                TaskScheduler.FromCurrentSynchronizationContext());
+        // ── Online 模式：查 MES 料號、依料號設定表自動切換 Recipe；查不到/連不上會擋下 ──
+        // 模擬模式下也走同一套邏輯，方便在沒有真實硬體/MES時先驗證 Online 模式行為。
+        if (!await TryAutoSwitchRecipeFromMesAsync(simBarcode))
+        {
+            _confirmedBarcode = "";
+            return;
+        }
 
         // ── STEP 2：產生假量測資料（共 50 筆）────────────────────────────
         StatusMessage = "[SIM] 產生假量測資料...";
