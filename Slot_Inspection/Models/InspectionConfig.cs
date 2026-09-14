@@ -37,6 +37,16 @@ public sealed class InspectionConfig
     public bool SaveImages { get; set; } = true;
     public string ImageSavePath { get; set; } = @"D:\InspectionImages";
 
+    /// <summary>
+    /// 每個 Slot「拍照＋分析」步驟強制補滿到至少多久（ms），原本寫死在
+    /// MachineController.DryRunCaptureAsync 裡的字面值 2000，改成可調整參數，
+    /// 方便在機台上實測調降、評估對週期時間的影響（見 RunTimingRecorder 的
+    /// [Timing] 統計）。實際處理（取像+分析）已經比這個值長時不會額外等待，
+    /// 只有比較短時才會補滿到這個下限。降低前務必先在實機小幅調降、確認影像
+    /// 品質與光源穩定性沒有問題，不要一次整個拿掉。
+    /// </summary>
+    public int CaptureMinDurationMs { get; set; } = 2000;
+
     /// <summary>右相機曝光時間 (µs)。原本寫死在 MachineController.cs，現改由設定檔控制。</summary>
     public double ExposureTimeRight { get; set; } = 36500.0;
 

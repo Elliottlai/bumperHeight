@@ -24,7 +24,12 @@ public sealed class RunTimingRecorder
     /// 以及「其他」＝總時間扣掉所有已分類階段後的差額（含光閘暫停等待、EnsureZSafe 內部
     /// 額外動作等未被個別計時的部分）。
     /// </summary>
-    public string BuildSummary(int slotCount)
+    /// <param name="slotCount">本次 RUN 完成的 Slot 數，0 表示尚未跑完任何一個 Slot 就結束。</param>
+    /// <param name="configNote">
+    /// 選填：附註目前生效的關鍵設定值（例如拍照下限延遲），寫進同一行摘要，
+    /// 方便事後翻 log 時知道這次 RUN 是用什麼設定跑的。
+    /// </param>
+    public string BuildSummary(int slotCount, string? configNote = null)
     {
         long totalMs = _total.ElapsedMilliseconds;
         long accountedMs = _stages.Values.Sum(v => v.TotalMs);
@@ -33,6 +38,8 @@ public sealed class RunTimingRecorder
         sb.Append($"[Timing] 本次 RUN 總耗時 {totalMs / 1000.0:F1}s");
         if (slotCount > 0)
             sb.Append($"（共 {slotCount} 個 Slot，平均 {totalMs / (double)slotCount / 1000.0:F2}s/Slot）");
+        if (!string.IsNullOrWhiteSpace(configNote))
+            sb.Append($" ｜ 設定：{configNote}");
 
         foreach (var (stage, (ms, count)) in _stages.OrderByDescending(kv => kv.Value.TotalMs))
             sb.Append($" ｜ {stage} 共{ms / 1000.0:F1}s（平均{(count > 0 ? ms / (double)count : 0):F0}ms×{count}次）");

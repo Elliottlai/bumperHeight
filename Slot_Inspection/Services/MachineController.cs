@@ -2106,7 +2106,7 @@ public sealed class MachineController : IDisposable
         {
             // 週期時間統計彙總：無論正常結束或中途發生例外/取消都要輸出，才能評估總耗時
             // 是否超過客戶規定、找出瓶頸階段（只是記錄，不影響任何流程判斷）。
-            try { _logger.Info(timing.BuildSummary(timingSlotCount)); }
+            try { _logger.Info(timing.BuildSummary(timingSlotCount, $"拍照下限延遲{_config.CaptureMinDurationMs}ms")); }
             catch (Exception ex) { _logger.Warn($"[Timing] 彙總輸出失敗：{ex.Message}"); }
 
             // 無論正常結束、中斷、事件發生，光源一定強制關閉
@@ -2386,16 +2386,19 @@ public sealed class MachineController : IDisposable
             progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: images saved");
         }
 
-        // STEP 9: 補足剩餘停留時間（確保整體 ? 2 秒）
-        int remaining = 2000 - StabilizeMs - GrabWaitMs;
+        // STEP 9: 補足剩餘停留時間（確保整體 ≥ _config.CaptureMinDurationMs，預設 2000ms）。
+        // 原本寫死 2000，改成可調整參數（InspectionConfig.CaptureMinDurationMs），
+        // 方便在機台上實測調降、評估對週期時間的影響。
+        int captureMinDurationMs = _config.CaptureMinDurationMs;
+        int remaining = captureMinDurationMs - StabilizeMs - GrabWaitMs;
         if (remaining > 0)
             await Task.Delay(remaining, ct);
 
         // 細部計時：取像(硬體，含 StabilizeMs+GrabWaitMs 固定延遲) / 分析R+L / 強制補滿延遲，
-        // 用來看清楚「2 秒下限」裡有多少是真正在做事、多少是寫死的等待時間。
+        // 用來看清楚「下限」裡有多少是真正在做事、多少是寫死的等待時間。
         _logger.Info($"[Timing] {slotLabel} 拍照+分析細部：取像{swGrab.ElapsedMilliseconds}ms、" +
                      $"分析R+L共{analyzeMsR + analyzeMsL}ms（R={analyzeMsR}ms,L={analyzeMsL}ms）、" +
-                     $"強制補滿延遲{Math.Max(0, remaining)}ms");
+                     $"強制補滿延遲{Math.Max(0, remaining)}ms（下限設定{captureMinDurationMs}ms）");
     }
 
     /// <summary>將 BitmapSource 存成 BMP 檔（用於儲存 ALG 畫線後的影像）。</summary>
