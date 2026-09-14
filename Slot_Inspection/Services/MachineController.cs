@@ -1792,6 +1792,11 @@ public sealed class MachineController : IDisposable
             await DryRunSimAsync(progress, ct, slotProgress);
             return;
         }
+
+        // ── 週期時間統計：評估總耗時是否超過客戶規定、找出瓶頸階段用（見 finally 最後彙總輸出）──
+        var timing = new RunTimingRecorder();
+        int timingSlotCount = 0;
+
         Axes["AxisX"].SetMaxVel(10000);
         Axes["AxisY"].SetMaxVel(10000);
         Axes["AxisZL"].SetMaxVel(6000);
@@ -1947,6 +1952,7 @@ public sealed class MachineController : IDisposable
                     _logger.Info($"▶ 開始移動到第 {currentSlot}/{totalSlots} 個 Slot" +
                                  $"（{slotLabel}，{carrierGroup}，Y 目標={clampedY:F2} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}[📦{carrierGroup}]: 正在移動 Y→{clampedY:F1} mm...");
+                    var swYMove = System.Diagnostics.Stopwatch.StartNew();
                     await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct, $"DryRun-Slot{i + 1}");
                     Axes["AxisY"].MotMoveAbs(clampedY);
 
@@ -1962,6 +1968,7 @@ public sealed class MachineController : IDisposable
                     DryRunCheckAxisState("AxisY", slotLabel);
 
                     double realY = Axes["AxisY"].GetRealPosition();
+                    timing.Add("Y移動", swYMove.ElapsedMilliseconds);
                     _logger.Info($"✔ Slot {i + 1} Y 軸到位" +
                                  $"（目標={clampedY:F2} mm，實際={realY:F2} mm，偏差={(realY - clampedY):+0.00;-0.00;0.00} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ✔ Y 軸到位（實際={realY:F2} mm）");
@@ -1972,6 +1979,7 @@ public sealed class MachineController : IDisposable
                     // STEP 2: ZL + ZR 同時下降至檢測高度（依 X12/X13 選 R組 或 L組 高度）
                     _logger.Info($"▶ Slot {i + 1} ZL/ZR 下降到檢測高度（ZL 目標={zCamZL:F2} mm，ZR 目標={zCamZR:F2} mm，{boardGroup}）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL ↓{zCamZL:F1} mm 、ZR ↓{zCamZR:F1} mm 下降中...");
+                    var swZDown = System.Diagnostics.Stopwatch.StartNew();
                     Axes["AxisZL"].MotMoveAbs(zCamZL);
                     Axes["AxisZR"].MotMoveAbs(zCamZR);
 
@@ -1988,6 +1996,7 @@ public sealed class MachineController : IDisposable
 
                     double realZL = Axes["AxisZL"].GetRealPosition();
                     double realZR = Axes["AxisZR"].GetRealPosition();
+                    timing.Add("Z下降", swZDown.ElapsedMilliseconds);
                     _logger.Info($"✔ Slot {i + 1} ZL/ZR 已到達檢測高度" +
                                  $"（ZL 目標={zCamZL:F2} mm 實際={realZL:F2} mm，" +
                                  $"ZR 目標={zCamZR:F2} mm 實際={realZR:F2} mm）");
@@ -2004,7 +2013,9 @@ public sealed class MachineController : IDisposable
                         SlotInspectionProgress.TargetCollection.AreaA_Row2 => SlotInspectionProgress.TargetCollection.AreaB_Row2,
                         _ => SlotInspectionProgress.TargetCollection.AreaB_Row1
                     };
+                    var swCapture = System.Diagnostics.Stopwatch.StartNew();
                     await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct, target, targetB, slotProgress);
+                    timing.Add("拍照+分析", swCapture.ElapsedMilliseconds);
 
                     // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
                     await CheckPauseAsync(progress, ct);
@@ -2012,6 +2023,7 @@ public sealed class MachineController : IDisposable
                     // STEP 4: ZL + ZR 上升恢復安全高度（依 X12/X13 選 R組 或 L組 安全高度）
                     _logger.Info($"▶ Slot {i + 1} ZL/ZR 上升恢復安全高度（ZL 目標={zSafeZL:F2} mm，ZR 目標={zSafeZR:F2} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ZL+ZR ↑ 升回安全高度...");
+                    var swZUp = System.Diagnostics.Stopwatch.StartNew();
                     Axes["AxisZL"].MotMoveAbs(zSafeZL);
                     Axes["AxisZR"].MotMoveAbs(zSafeZR);
 
@@ -2028,10 +2040,12 @@ public sealed class MachineController : IDisposable
 
                     double safeRealZL = Axes["AxisZL"].GetRealPosition();
                     double safeRealZR = Axes["AxisZR"].GetRealPosition();
+                    timing.Add("Z上升", swZUp.ElapsedMilliseconds);
                     _logger.Info($"✔ Slot {i + 1} ZL/ZR 已恢復安全高度" +
                                  $"（ZL 目標={zSafeZL:F2} mm 實際={safeRealZL:F2} mm，" +
                                  $"ZR 目標={zSafeZR:F2} mm 實際={safeRealZR:F2} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ✔ ZL/ZR 安全高度恢復（ZL={safeRealZL:F2} mm，ZR={safeRealZR:F2} mm）");
+                    timingSlotCount = currentSlot;
                 }
             }
 
@@ -2090,6 +2104,11 @@ public sealed class MachineController : IDisposable
         } // end try
         finally
         {
+            // 週期時間統計彙總：無論正常結束或中途發生例外/取消都要輸出，才能評估總耗時
+            // 是否超過客戶規定、找出瓶頸階段（只是記錄，不影響任何流程判斷）。
+            try { _logger.Info(timing.BuildSummary(timingSlotCount)); }
+            catch (Exception ex) { _logger.Warn($"[Timing] 彙總輸出失敗：{ex.Message}"); }
+
             // 無論正常結束、中斷、事件發生，光源一定強制關閉
             if (_lightHB != null && _lightHB.IsOpen)
             {
@@ -2155,6 +2174,9 @@ public sealed class MachineController : IDisposable
         string slotSide = x12 ? "RSlot" : "LSlot";  // X12→RSlot, X13→LSlot
         _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} → Left={camLeft} Right={camRight} Side={slotSide}");
 
+        // 本次取像＋分析的細部計時（供 _logger 輸出，找瓶頸用；不影響流程判斷）
+        var swGrab = System.Diagnostics.Stopwatch.StartNew();
+
         // STEP 1: 先停止相機，清除 IsGrabing 狀態
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
@@ -2187,6 +2209,8 @@ public sealed class MachineController : IDisposable
         // STEP 7: 讀取 Buffer
         var bufRight = _cameraRight?.GetBufAddress();
         var bufLeft = _cameraLeft?.GetBufAddress();
+        swGrab.Stop();
+        long analyzeMsR = 0, analyzeMsL = 0;
 
         // STEP 8: save BMP - Original_image / Draw_image
         // filename: yyyy-MM-ddTHH-mm-ss_{barcode}_{Camera}_{SlotTag}.bmp
@@ -2230,7 +2254,9 @@ public sealed class MachineController : IDisposable
             // 右相機圖片 → AreaB：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartR = DateTime.Now;
+            var swAnalyzeR = System.Diagnostics.Stopwatch.StartNew();
             var algR = await _bumperAlg.AnalyzeAsync(path, algKeyR, $"{slotLabel}_R", _config.UseNewBumperAlgorithm);
+            analyzeMsR = swAnalyzeR.ElapsedMilliseconds;
             // DetectedArea 已在 BumperAlgService 內換算為 mm²，直接使用
             detectedAreaR = algR.DetectedArea;
             isNgR = detectedAreaR < _config.ValueLimitLow || detectedAreaR > _config.ValueLimitHigh;
@@ -2275,7 +2301,9 @@ public sealed class MachineController : IDisposable
             // 左相機圖片 → AreaA：先呼叫 ALG 畫線，失敗才 fallback 原圖
             string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
             var slotStartL = DateTime.Now;
+            var swAnalyzeL = System.Diagnostics.Stopwatch.StartNew();
             var algL = await _bumperAlg.AnalyzeAsync(path, algKeyL, $"{slotLabel}_L", _config.UseNewBumperAlgorithm);
+            analyzeMsL = swAnalyzeL.ElapsedMilliseconds;
             detectedAreaL = algL.DetectedArea;
             isNgL = detectedAreaL < _config.ValueLimitLow || detectedAreaL > _config.ValueLimitHigh;
             meanIntensityL = algL.MeanIntensity;
@@ -2362,6 +2390,12 @@ public sealed class MachineController : IDisposable
         int remaining = 2000 - StabilizeMs - GrabWaitMs;
         if (remaining > 0)
             await Task.Delay(remaining, ct);
+
+        // 細部計時：取像(硬體，含 StabilizeMs+GrabWaitMs 固定延遲) / 分析R+L / 強制補滿延遲，
+        // 用來看清楚「2 秒下限」裡有多少是真正在做事、多少是寫死的等待時間。
+        _logger.Info($"[Timing] {slotLabel} 拍照+分析細部：取像{swGrab.ElapsedMilliseconds}ms、" +
+                     $"分析R+L共{analyzeMsR + analyzeMsL}ms（R={analyzeMsR}ms,L={analyzeMsL}ms）、" +
+                     $"強制補滿延遲{Math.Max(0, remaining)}ms");
     }
 
     /// <summary>將 BitmapSource 存成 BMP 檔（用於儲存 ALG 畫線後的影像）。</summary>
@@ -2596,6 +2630,7 @@ public sealed class MachineController : IDisposable
         }
 
         progress?.Report($"[Sim] 開始模擬取像，共 {SlotCount} 個 Slot");
+        var simSw = System.Diagnostics.Stopwatch.StartNew();
 
         for (int i = 0; i < SlotCount; i++)
         {
@@ -2635,6 +2670,9 @@ public sealed class MachineController : IDisposable
         }
 
         progress?.Report($"[Sim] 模擬完成，共 {SlotCount} 個 Slot");
+        // 模擬模式的延遲都是寫死的假延遲（每 Slot 固定 300ms），這個總時間僅供驗證「計時功能有沒有正常
+        // 記錄並輸出」，不代表真實機台的週期時間，真正要評估對客戶規定的時間得在實機（DryRunAsync）看。
+        _logger.Info($"[Timing][SIM-僅供功能驗證，非真實週期時間] 模擬空跑總耗時 {simSw.ElapsedMilliseconds / 1000.0:F1}s（{SlotCount} 個 Slot）");
         _logger.Info("===== Dry Run (Sim) Done =====");
     }
 
