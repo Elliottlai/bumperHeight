@@ -123,6 +123,16 @@ namespace Machine.Core
             _controller.PuuPerMm = Scale > 0 ? (1.0 / Scale) : 1000.0;
             _controller.Initialize();
             _isConnected = true;
+
+            // 連線診斷：確認位置讀值正確、正/負極限接在哪個 DI（只讀不寫，失敗不影響連線）
+            try
+            {
+                _logger.Info($"[AxisDiag] {Name}({PortName}) 連線診斷：{_controller.ReadDiagnosticSummary()}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"[AxisDiag] {Name}({PortName}) 連線診斷讀取失敗：{ex.Message}");
+            }
         }
 
         /// <summary>�_�u</summary>

@@ -140,11 +140,42 @@ namespace Machine.Core.Models.Axis.DeltaRS485
             return (DriverStatusFlags)_modbus.ReadRegister(AsdaB3RegisterMap.P0_046_DriverStatus);
         }
 
-        /// <summary>讀取回授位置 PUU (P0.051, 32-bit 多圈絕對位置)</summary>
+        /// <summary>
+        /// 讀取回授位置 PUU（P0.009 監控映射通道 1，32-bit）。
+        /// <see cref="Initialize"/> 每次連線都會把 P0.017 設成 FeedbackPosition_PUU，
+        /// 跟 <see cref="ReadSnapshot"/> 讀回授位置是同一條路。
+        /// 注意：原本讀的是 P0.051（多圈「圈數」，不是位置），實機上永遠讀到 0，
+        /// 導致 Z 軸安全高度檢查全部判定為安全（2026-09-15 log 確認）。
+        /// </summary>
         public int GetFeedbackPositionPuu()
         {
             ThrowIfDisposed();
-            return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_051_MultiTurnPos_Low);
+            return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_009_MappedMonitorValue1);
+        }
+
+        /// <summary>
+        /// 連線診斷用：一次讀出回授位置、DI 整合狀態、DI1~DI8 功能設定，組成一行文字給呼叫端寫 log。
+        /// 用途是確認位置讀值正確、以及正/負極限實際接在哪個 DI、極性為何（極限讀法修正前需要的資料）。
+        /// 只讀不寫，不影響驅動器狀態。
+        /// </summary>
+        public string ReadDiagnosticSummary()
+        {
+            ThrowIfDisposed();
+            int puu = GetFeedbackPositionPuu();
+            int diIntegrated = _modbus.ReadRegister32(AsdaB3RegisterMap.P0_011_MappedMonitorValue3);
+            ushort p0045 = _modbus.ReadRegister(AsdaB3RegisterMap.P0_045_DiStatus);
+
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"位置 P0.009={puu} PUU（={puu / PuuPerMm:F3} mm，PuuPerMm={PuuPerMm}）");
+            sb.Append($"｜DI整合狀態 P0.011=0x{diIntegrated & 0xFFFF:X4}");
+            sb.Append($"｜P0.045=0x{p0045:X4}");
+            sb.Append("｜DI功能設定 ");
+            for (int i = 0; i < 8; i++)
+            {
+                ushort v = _modbus.ReadRegister((ushort)(AsdaB3RegisterMap.P2_010_Di1Function + i * 2));
+                sb.Append($"DI{i + 1}=0x{v:X4}{(i < 7 ? "," : "")}");
+            }
+            return sb.ToString();
         }
 
         /// <summary>讀取目前位置 (mm)</summary>

@@ -42,6 +42,9 @@ namespace Machine.Core.Models.Axis.DeltaRS485
         //  P2 群組 — 擴充 / Absolute
         // ============================
         public const ushort P2_008_WriteProtect = 0x0210;
+
+        /// <summary>P2.010 — DI1 功能設定（DI2~DI8 = 此位址 + 2、+4 … +14，即 P2.011~P2.017）</summary>
+        public const ushort P2_010_Di1Function = 0x0214;
         public const ushort P2_030_AuxFunction = 0x023C;
         public const ushort AuxFunction_NoEepromSave = 5;
         public const ushort P2_071_BuildAbsOrigin = 0x028E;

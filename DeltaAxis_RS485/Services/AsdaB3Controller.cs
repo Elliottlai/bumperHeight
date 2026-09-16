@@ -264,12 +264,17 @@ public class AsdaB3Controller : IServoDriver, IAbsoluteEncoder, IPrMotionControl
         }
     }
 
-    /// <summary>讀取目前多圈位置 (P0.051, 32-bit)</summary>
+    /// <summary>
+    /// 讀取目前回授位置 (P0.009 監控映射通道 1，32-bit)。
+    /// 注意：原本讀的是 P0.051（多圈「圈數」，不是位置），實機上永遠讀到 0；跟主程式
+    /// Machine.Core 的 AsdaB3Controller 同一個修正，也是 <see cref="AxisViewModel.ReadSnapshot"/>
+    /// 用的同一條已驗證路徑。方法名稱沿用 GetMultiTurnPosition 是為了不動到既有呼叫端簽章。
+    /// </summary>
     public int GetMultiTurnPosition()
     {
         ThrowIfDisposed();
 
-        return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_051_MultiTurnPos_Low);
+        return _modbus.ReadRegister32(AsdaB3RegisterMap.P0_009_MappedMonitorValue1);
     }
 
     /// <summary>讀取目前單圈位置 (P0.052, 32-bit)</summary>
