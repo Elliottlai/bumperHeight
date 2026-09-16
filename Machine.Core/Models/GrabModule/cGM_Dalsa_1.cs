@@ -883,9 +883,19 @@ namespace Machine.Core
         int NowLine = 0;
         private ScanDirection m_scanDirection;
 
+        // 自上次 Start() 以來收到幾次「整張影像傳完」事件（XferNotify，EventType 為 EndOfFrame 或 EndOfNLines(FrameHeight)）。
+        // 供呼叫端「收到影像就停止等待」，不必固定等一段時間；刻意用方法不用屬性，避免被序列化進相機設定 JSON。
+        private int _framesSinceStart;
+
+        /// <summary>自上次 <see cref="Start"/> 以來已完整傳入 Buffer 的影像張數（0 = 還沒收到）。</summary>
+        public int GetFramesSinceStart() => Volatile.Read(ref _framesSinceStart);
+
         DateTime reccordTime = DateTime.Now;
         void xfer_XferNotify(object sender, SapXferNotifyEventArgs args)
         {
+            // 不放進 Protect：計數只是原子遞增，不需要等鎖，避免呼叫端輪詢時看到的時間點被鎖延後
+            Interlocked.Increment(ref _framesSinceStart);
+
             Protect(() =>
             {
 
@@ -917,6 +927,7 @@ namespace Machine.Core
                 {
 
                     NowLine = 0;
+                    Interlocked.Exchange(ref _framesSinceStart, 0);
                     m_Xfer.XferNotify += new SapXferNotifyHandler(xfer_XferNotify);
                     if (BufIndex != -1)
                         m_Xfer.Select(0, 0, BufIndex);

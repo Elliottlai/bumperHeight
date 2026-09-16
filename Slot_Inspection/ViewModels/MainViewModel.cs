@@ -623,6 +623,7 @@ public sealed class MainViewModel : ObservableObject
             _mesClient.IsOnlineMode = value;
             _mesClient.Save();
             OnPropertyChanged();
+            OnPropertyChanged(nameof(OnlineModeStatusText));
             CommandManager.InvalidateRequerySuggested();
             if (CurrentUser != null)
                 AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"MES Online模式切換為{(value ? "開啟" : "關閉")}");
@@ -631,6 +632,13 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>Online 模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
     public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning;
+
+    /// <summary>
+    /// Online/Offline 模式的顯示文字，給標題列「機台運行狀態指示燈」下方的醒目提示用——所有角色都
+    /// 看得到目前是哪個模式（會影響 RUN 行為：Online 查不到料號會直接擋下），但只有 Admin 能實際切換。
+    /// 只顯示簡短的 Online/Offline，詳細說明改放在 CheckBox 的 ToolTip（滑鼠停在上面才顯示）。
+    /// </summary>
+    public string OnlineModeStatusText => IsOnlineMode ? "🌐 Online" : "⚪ Offline";
 
     /// <summary>
     /// 模擬模式專用：按 X 鍵循環切換的板子感測狀態（0-3）。
@@ -1793,6 +1801,10 @@ public sealed class MainViewModel : ObservableObject
         {
             var ct = myCts.Token;
 
+            // ── RUN 前置時間（讀條碼、MES 查料號等），供 DryRunAsync 結束的 [Timing] 摘要
+            // 判定「含前置總計」是否超過客戶規定的整批秒數（CycleTimeTargetSec）用 ──
+            var swPreRun = System.Diagnostics.Stopwatch.StartNew();
+
             // ── 模擬模式：跳過所有機台動作，使用假資料直接走 WebAPI 流程 ──
             if (IsSimulationMode)
             {
@@ -1923,7 +1935,10 @@ public sealed class MainViewModel : ObservableObject
                     StatusMessage = report.StatusText;
             });
 
-            await Task.Run(() => _machine.DryRunAsync(statusProgress, ct, _confirmedBarcode, dryRunSlotProgress));
+            long preRunMs = swPreRun.ElapsedMilliseconds;
+            await Task.Run(() => _machine.DryRunAsync(
+                statusProgress, ct, _confirmedBarcode, dryRunSlotProgress,
+                carrierSide: (x12, x13), preRunMs: preRunMs));
 
             // 計算統計並寫入 CSV
             AreaA_Stats.Calculate(AreaA_Row1);

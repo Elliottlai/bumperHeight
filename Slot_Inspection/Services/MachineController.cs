@@ -152,7 +152,8 @@ public sealed class MachineController : IDisposable
     /// 若不安全則記錄詳細 LOG 並詢問使用者是否自動升軸；拒絕則拋出 OperationCanceledException。
     /// </summary>
     /// <param name="caller">呼叫端識別字串，用於 LOG 追蹤（例如 "OnRunInspection-STEP0"）。</param>
-    public async Task EnsureZSafeBeforeYMoveAsync(
+    /// <returns>確認通過當下讀到的 ZL/ZR 實際位置（供 RUN 結束的 [Safety] 統計用，呼叫端可忽略）。</returns>
+    public async Task<(double ZL, double ZR)> EnsureZSafeBeforeYMoveAsync(
         double safeZL, double safeZR,
         IProgress<string>? progress, CancellationToken ct,
         string caller = "Unknown")
@@ -171,7 +172,7 @@ public sealed class MachineController : IDisposable
                 $"▶ Y 軸移動前確認：ZL 與 ZR 均在安全高度，可以移動" +
                 $"（ZL 實際={currentZL:F2} mm，安全上限={safeZL:F2} mm｜" +
                 $"ZR 實際={currentZR:F2} mm，安全上限={safeZR:F2} mm｜來源：{caller}）");
-            return;
+            return (currentZL, currentZR);
         }
 
         // ── LOG：Z 軸超出安全高度，需要先升軸 ──
@@ -242,6 +243,7 @@ public sealed class MachineController : IDisposable
         double okZR = Axes["AxisZR"].GetRealPosition();
         _logger.Info($"✔ ZL/ZR 已升至安全高度（ZL={okZL:F2} mm，ZR={okZR:F2} mm｜來源：{caller}）");
         progress?.Report($"✔ ZL/ZR 已恢復安全高度（ZL={okZL:F2} mm，ZR={okZR:F2} mm）");
+        return (okZL, okZR);
     }
 
     /// <summary>
@@ -799,6 +801,8 @@ public sealed class MachineController : IDisposable
         progress?.Report("Connecting PLC...");
         result.Add(InitPlc());
 
+        await PreloadAiModelAsync(progress);
+
         _logger.Info("===== S00 Init Done =====");
         _logger.Info(result.GetSummary());
         return result;
@@ -843,9 +847,35 @@ public sealed class MachineController : IDisposable
         progress?.Report("Connecting PLC...");
         result.Add(InitPlc());
 
+        await PreloadAiModelAsync(progress);
+
         _logger.Info("===== Devices Init Done =====");
         _logger.Info(result.GetSummary());
         return result;
+    }
+
+    /// <summary>
+    /// 初始化最後一步：預先載入 AI 模型（<see cref="InspectionConfig.PreloadAiModelOnInit"/>），
+    /// 讓程式重開後第一次 RUN 的第一個 Slot 不用再多等 2~3 秒載入模型。
+    /// 放在其他初始化步驟都完成之後才做（載入期間會暫時切換工作目錄，不能跟相機等使用相對路徑的初始化同時進行）。
+    /// 失敗只記 log、不讓初始化失敗：RUN 時第一次分析會照舊再嘗試載入。
+    /// </summary>
+    private async Task PreloadAiModelAsync(IProgress<string>? progress)
+    {
+        if (!_config.UseNewBumperAlgorithm || !_config.PreloadAiModelOnInit)
+            return;
+
+        try
+        {
+            progress?.Report("Loading AI model...");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await _bumperAlg.PreloadNewDetectorAsync();
+            _logger.Info($"[S00] AI 模型預先載入完成，耗時 {sw.ElapsedMilliseconds}ms（已載入過則幾乎為 0）");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[S00] AI 模型預先載入失敗（不影響初始化，RUN 第一次分析時會再嘗試載入）：{ex.Message}");
+        }
     }
 
     /// <summary>
@@ -1776,11 +1806,18 @@ public sealed class MachineController : IDisposable
     /// ├─ STEP 2 : ZL / ZR 回原點（Y 軸保持原位）
     /// └─ STEP 3 : Y 軸移動至待機位置（496 mm）
     /// </summary>
+    /// <param name="carrierSide">
+    /// 呼叫端（OnRunInspection 讀條碼前）已經防抖確認過的載台側別；有傳就直接沿用、不再重判一次（省約 250ms），
+    /// 沒傳（null）才在這裡防抖判斷。
+    /// </param>
+    /// <param name="preRunMs">呼叫端量到的 RUN 前置時間（讀條碼、MES 等，不含等待人工輸入條碼），只用於 [Timing] 摘要與 CSV。</param>
     public async Task DryRunAsync(
         IProgress<string>? progress = null,
         CancellationToken ct = default,
         string barcode = "",
-        IProgress<SlotInspectionProgress>? slotProgress = null)
+        IProgress<SlotInspectionProgress>? slotProgress = null,
+        (bool X12, bool X13)? carrierSide = null,
+        long preRunMs = 0)
     {
         // 清除上一次因中斷而殘留的暫停狀態
         _dryRunPaused = false;
@@ -1796,6 +1833,16 @@ public sealed class MachineController : IDisposable
         // ── 週期時間統計：評估總耗時是否超過客戶規定、找出瓶頸階段用（見 finally 最後彙總輸出）──
         var timing = new RunTimingRecorder();
         int timingSlotCount = 0;
+        bool runCompleted = false;
+        // ── 安全證據統計：證明每次 Y 移動前都有真的確認 Z 安全、軸位置讀值可信（見 finally 的 [Safety] 輸出）──
+        var safety = new RunSafetyStats();
+        _lastLimitState.Clear(); // 每次 RUN 重新記錄一次極限狀態
+        // 背景存檔中的畫線圖（SaveDrawImageInBackground），RUN 結束前在 finally 等全部存完
+        var pendingDrawSaves = new List<Task>();
+        // 本次 RUN 實際生效的優化設定說明（寫進 [Timing] 摘要與 CSV），光源開燈結果確定後才組好
+        string optimizationNote = "";
+        // RUN 期間軸到位輪詢間隔（只影響多快發現已到位，不影響移動前安全確認與 150ms 等待）
+        int movePollMs = Math.Max(10, _config.RunMovePollIntervalMs);
 
         Axes["AxisX"].SetMaxVel(10000);
         Axes["AxisY"].SetMaxVel(10000);
@@ -1914,8 +1961,45 @@ public sealed class MachineController : IDisposable
             _cameraLeft.SetFeatureValue(GMExpandParamter.ExposureTime, _config.ExposureTimeLeft);
 
             // ── 依 X12 / X13 訊號選擇 R組 或 L組 Z 軸高度 ──
-            bool boardX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr) ?? false;  // X12 → R組
-            bool boardX13 = GetPlcXOctal(CarrierRightSensorPlcAddr) ?? false;  // X13 → L組
+            // 每次 RUN 只判斷一次（連續讀值一致才確認，防 PLC 雜訊），Z 高度/安全高度/Y 座標，
+            // 以及每個 Slot 拍照用的相機編號/檔名/ROI/演算法 key 全部共用這一個結果。
+            // （原本這裡是沒防抖的單次讀值，拍照那邊卻是每個 Slot 各自防抖判斷一次，兩邊可能不一致，
+            //   而且每個 Slot 都多花至少 200ms 重判。）
+            // 呼叫端（OnRunInspection 讀條碼前）已經防抖確認過的話直接沿用，不重判第二次。
+            bool boardX12, boardX13;
+            if (carrierSide is { } knownSide)
+            {
+                (boardX12, boardX13) = knownSide;
+                _logger.Info($"[DryRun] 側別沿用 RUN 前置讀條碼前的防抖判斷結果：X12={boardX12} X13={boardX13}");
+            }
+            else
+            {
+                var swSide = System.Diagnostics.Stopwatch.StartNew();
+                (boardX12, boardX13) = await DetermineCarrierSideDebouncedAsync(ct);  // X12 → R組，X13 → L組
+                timing.Add("側別判斷", swSide.ElapsedMilliseconds);
+                _logger.Info($"[DryRun] 側別判斷（防抖，每次 RUN 只判斷一次）：X12={boardX12} X13={boardX13}，耗時 {swSide.ElapsedMilliseconds}ms");
+            }
+
+            // ── 每個 Slot 拍照共用的設定（週期時間優化開關，全部都不會改變馬達動作順序）──
+            // 光源：RUN 開始已經開過燈，預設不再每個 Slot 重設；開燈失敗時才退回每個 Slot 重設。
+            bool reassertLightEachSlot = _config.LightReassertEachSlot || !(on1 && on2);
+            var captureCtx = new RunCaptureContext
+            {
+                Timing = timing,
+                IsRSide = boardX12,
+                ReassertLight = reassertLightEachSlot,
+                PendingDrawSaves = pendingDrawSaves,
+            };
+            optimizationNote =
+                $"拍照下限{_config.CaptureMinDurationMs}ms(扣除實際耗時後補滿)" +
+                $"、到位防振{(_config.EnableAxisSettleDelay ? $"{_config.AxisSettleDelayMs}ms" : "關閉")}" +
+                $"、光源{(reassertLightEachSlot ? (_config.LightReassertEachSlot ? "每Slot重設" : "每Slot重設(開始時開燈失敗)") : "只在開始時設一次")}" +
+                $"、取像等待{(_config.CaptureWaitForFrameEvent ? "收到影像即停(上限300ms)" : "固定300ms")}" +
+                $"、AI分析{(_config.ParallelAiAnalysis ? "左右同時" : "左右依序")}" +
+                $"、畫線圖{(_config.SaveDrawImageInBackground ? "背景存檔" : "同步存檔")}" +
+                $"、到位輪詢{movePollMs}ms" +
+                $"、側別判斷{(carrierSide.HasValue ? "沿用讀條碼前結果" : "每次RUN一次")}";
+            _logger.Info($"[DryRun] 本次 RUN 優化設定：{optimizationNote}");
             double zCamZL = _config.GetCameraHeightZL(boardX12, boardX13);
             double zCamZR = _config.GetCameraHeightZR(boardX12, boardX13);
             double zSafeZL = _config.GetZLSafeHeight(boardX12, boardX13);
@@ -1953,7 +2037,8 @@ public sealed class MachineController : IDisposable
                                  $"（{slotLabel}，{carrierGroup}，Y 目標={clampedY:F2} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}[📦{carrierGroup}]: 正在移動 Y→{clampedY:F1} mm...");
                     var swYMove = System.Diagnostics.Stopwatch.StartNew();
-                    await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct, $"DryRun-Slot{i + 1}");
+                    var (zlAtCheck, zrAtCheck) = await EnsureZSafeBeforeYMoveAsync(zSafeZL, zSafeZR, progress, ct, $"DryRun-Slot{i + 1}");
+                    safety.RecordZSafeCheck(zlAtCheck, zrAtCheck, zSafeZL, zSafeZR);
                     Axes["AxisY"].MotMoveAbs(clampedY);
 
                     // 等 150ms 讓驅動器接收指令並清除舊的到位旗標，
@@ -1962,13 +2047,16 @@ public sealed class MachineController : IDisposable
 
                     bool yArrived = await WaitUntilAsync(
                         () => Axes["AxisY"].Wait(),
-                        _config.MoveTimeout, ct);
+                        _config.MoveTimeout, ct, movePollMs);
                     if (!yArrived)
                         throw new TimeoutException($"{slotLabel} Y 軸移動逾時");
+                    var swYRead = System.Diagnostics.Stopwatch.StartNew();
                     DryRunCheckAxisState("AxisY", slotLabel);
 
                     double realY = Axes["AxisY"].GetRealPosition();
+                    timing.AddDetail("到位後軸狀態/位置讀取", swYRead.ElapsedMilliseconds, RunTimingRecorder.MoveParent);
                     timing.Add("Y移動", swYMove.ElapsedMilliseconds);
+                    safety.RecordArrival("AxisY", clampedY, realY);
                     _logger.Info($"✔ Slot {i + 1} Y 軸到位" +
                                  $"（目標={clampedY:F2} mm，實際={realY:F2} mm，偏差={(realY - clampedY):+0.00;-0.00;0.00} mm）");
                     progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: ✔ Y 軸到位（實際={realY:F2} mm）");
@@ -1988,15 +2076,20 @@ public sealed class MachineController : IDisposable
 
                     bool zDown = await WaitUntilAsync(
                     () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
-                    _config.MoveTimeout, ct);
+                    _config.MoveTimeout, ct, movePollMs);
                     if (!zDown)
                         throw new TimeoutException($"{slotLabel} ZL/ZR 下降逾時");
+                    // 從 ZL/ZR 到位確認這一刻開始計時：拍照前「到位防振等待」要扣掉之後已經經過的時間
+                    var swSinceZArrived = System.Diagnostics.Stopwatch.StartNew();
                     DryRunCheckAxisState("AxisZL", slotLabel);
                     DryRunCheckAxisState("AxisZR", slotLabel);
 
                     double realZL = Axes["AxisZL"].GetRealPosition();
                     double realZR = Axes["AxisZR"].GetRealPosition();
+                    timing.AddDetail("到位後軸狀態/位置讀取", swSinceZArrived.ElapsedMilliseconds, RunTimingRecorder.MoveParent);
                     timing.Add("Z下降", swZDown.ElapsedMilliseconds);
+                    LogReadbackWarning(safety.RecordArrival("AxisZL", zCamZL, realZL, moveFrom: zSafeZL));
+                    LogReadbackWarning(safety.RecordArrival("AxisZR", zCamZR, realZR, moveFrom: zSafeZR));
                     _logger.Info($"✔ Slot {i + 1} ZL/ZR 已到達檢測高度" +
                                  $"（ZL 目標={zCamZL:F2} mm 實際={realZL:F2} mm，" +
                                  $"ZR 目標={zCamZR:F2} mm 實際={realZR:F2} mm）");
@@ -2014,7 +2107,7 @@ public sealed class MachineController : IDisposable
                         _ => SlotInspectionProgress.TargetCollection.AreaB_Row1
                     };
                     var swCapture = System.Diagnostics.Stopwatch.StartNew();
-                    await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, progress, ct, target, targetB, slotProgress);
+                    await DryRunCaptureAsync(slotLabel, currentSlot, totalSlots, i, barcode, captureCtx, swSinceZArrived, progress, ct, target, targetB, slotProgress);
                     timing.Add("拍照+分析", swCapture.ElapsedMilliseconds);
 
                     // ── 光閘檢查：取像完成後，若 X7 觸發則暫停（相機已完成，不繼續下一張）──
@@ -2032,15 +2125,19 @@ public sealed class MachineController : IDisposable
 
                     bool zUp = await WaitUntilAsync(
                         () => Axes["AxisZL"].Wait() && Axes["AxisZR"].Wait(),
-                        _config.MoveTimeout, ct);
+                        _config.MoveTimeout, ct, movePollMs);
                     if (!zUp)
                         throw new TimeoutException($"{slotLabel} ZL/ZR 上升逾時");
+                    var swZUpRead = System.Diagnostics.Stopwatch.StartNew();
                     DryRunCheckAxisState("AxisZL", slotLabel);
                     DryRunCheckAxisState("AxisZR", slotLabel);
 
                     double safeRealZL = Axes["AxisZL"].GetRealPosition();
                     double safeRealZR = Axes["AxisZR"].GetRealPosition();
+                    timing.AddDetail("到位後軸狀態/位置讀取", swZUpRead.ElapsedMilliseconds, RunTimingRecorder.MoveParent);
                     timing.Add("Z上升", swZUp.ElapsedMilliseconds);
+                    LogReadbackWarning(safety.RecordArrival("AxisZL", zSafeZL, safeRealZL, moveFrom: zCamZL));
+                    LogReadbackWarning(safety.RecordArrival("AxisZR", zSafeZR, safeRealZR, moveFrom: zCamZR));
                     _logger.Info($"✔ Slot {i + 1} ZL/ZR 已恢復安全高度" +
                                  $"（ZL 目標={zSafeZL:F2} mm 實際={safeRealZL:F2} mm，" +
                                  $"ZR 目標={zSafeZR:F2} mm 實際={safeRealZR:F2} mm）");
@@ -2099,6 +2196,7 @@ public sealed class MachineController : IDisposable
                 break;
             }
 
+            runCompleted = true;
             progress?.Report($"空跑測試完成 ?  共跑完 {totalSlots} 個 Slot");
             _logger.Info("===== Dry Run Done =====");
         } // end try
@@ -2106,7 +2204,41 @@ public sealed class MachineController : IDisposable
         {
             // 週期時間統計彙總：無論正常結束或中途發生例外/取消都要輸出，才能評估總耗時
             // 是否超過客戶規定、找出瓶頸階段（只是記錄，不影響任何流程判斷）。
-            try { _logger.Info(timing.BuildSummary(timingSlotCount, $"拍照下限延遲{_config.CaptureMinDurationMs}ms")); }
+            // 背景存檔中的畫線圖：RUN 結束前等全部存完（最多 30 秒），避免後續流程/下一次 RUN 時檔案還沒寫完
+            if (pendingDrawSaves.Count > 0)
+            {
+                var swDrawWait = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    await Task.WhenAny(Task.WhenAll(pendingDrawSaves), Task.Delay(TimeSpan.FromSeconds(30)));
+                }
+                catch (Exception ex) { _logger.Warn($"[DryRun] 等待背景畫線圖存檔時發生例外：{ex.Message}"); }
+                int unfinished = pendingDrawSaves.Count(t => !t.IsCompleted);
+                timing.Add("等待背景畫線圖存完", swDrawWait.ElapsedMilliseconds);
+                if (unfinished > 0)
+                    _logger.Warn($"[DryRun] 背景畫線圖存檔等待 30 秒後仍有 {unfinished}/{pendingDrawSaves.Count} 張未完成，會在背景繼續寫入");
+                else
+                    _logger.Info($"[DryRun] 背景畫線圖 {pendingDrawSaves.Count} 張已全部存完（RUN 結束時再等待 {swDrawWait.ElapsedMilliseconds}ms）");
+            }
+
+            timing.Stop();
+            try
+            {
+                string configNote = string.IsNullOrEmpty(optimizationNote)
+                    ? $"拍照下限{_config.CaptureMinDurationMs}ms(扣除實際耗時後補滿)（RUN 在套用拍照設定前就結束）"
+                    : optimizationNote;
+                _logger.Info(timing.BuildSummary(
+                    timingSlotCount, runCompleted, configNote,
+                    _config.CycleTimeBaselineSecPerSlot, _config.CycleTimeTargetSec, preRunMs));
+                _logger.Info(safety.BuildSummary(timingSlotCount));
+
+                string? csvError = RunTimingCsvWriter.Append(
+                    timing, safety, barcode, timingSlotCount, runCompleted,
+                    _config.CaptureMinDurationMs, _config.CycleTimeBaselineSecPerSlot, _config.CycleTimeTargetSec,
+                    preRunMs, configNote);
+                if (csvError != null)
+                    _logger.Warn($"[Timing] 週期時間 CSV 寫入失敗：{csvError}");
+            }
             catch (Exception ex) { _logger.Warn($"[Timing] 彙總輸出失敗：{ex.Message}"); }
 
             // 無論正常結束、中斷、事件發生，光源一定強制關閉
@@ -2139,66 +2271,141 @@ public sealed class MachineController : IDisposable
     /// 正確順序：Stop（清 IsGrabing）→ 光源 ON → Start → 等完整幀 → Stop（DMA 完成）→ 光源 OFF → GetBufAddress() → 存 BMP。
     /// 影像儲存至 D:\CameraLightTest\yyyyMMdd\  （直接使用 ICamera，不透過 CameraManager）
     /// </summary>
+    /// <summary>一次 RUN 裡每個 Slot 拍照共用的設定與累計資料（由 DryRunAsync 在迴圈前建立）。</summary>
+    private sealed class RunCaptureContext
+    {
+        public required RunTimingRecorder Timing { get; init; }
+
+        /// <summary>載台側別：true = R側(X12)，false = L側。</summary>
+        public required bool IsRSide { get; init; }
+
+        /// <summary>是否每個 Slot 拍照前都重新設定光源亮度。</summary>
+        public required bool ReassertLight { get; init; }
+
+        /// <summary>背景存檔中的畫線圖工作，RUN 結束前要等全部完成。</summary>
+        public required List<Task> PendingDrawSaves { get; init; }
+
+        /// <summary>等待相機影像事件逾時的次數（只在第一次寫警告 log，避免每個 Slot 刷屏）。</summary>
+        public int FrameEventTimeouts { get; set; }
+    }
+
+    /// <summary>單一相機這次「存原圖 + AI 分析」的結果。</summary>
+    private sealed record SideAnalysis(
+        string Path, string AlgKey, DateTime StartTime, BumperAlgResult Alg, long SaveMs, long AnalyzeMs);
+
     private async Task DryRunCaptureAsync(
         string slotLabel,
         int currentSlot,
         int totalSlots,
         int slotIndex,
         string barcode ,
+        RunCaptureContext ctx,
+        System.Diagnostics.Stopwatch swSinceZArrived,
         IProgress<string>? progress,
         CancellationToken ct,
         SlotInspectionProgress.TargetCollection targetA = SlotInspectionProgress.TargetCollection.AreaA_Row1,
         SlotInspectionProgress.TargetCollection targetB = SlotInspectionProgress.TargetCollection.AreaB_Row1,
         IProgress<SlotInspectionProgress>? slotProgress = null)
     {
-
-      
+        // 整段計時從這裡開始：「拍照下限」補滿延遲要扣掉這裡之後實際花掉的時間
+        var swSlotCapture = System.Diagnostics.Stopwatch.StartNew();
+        var timing = ctx.Timing;
+        bool isRSide = ctx.IsRSide;
 
         // 影像路徑改由 ImagePathHelper.GetImagePath 統一管理
         int LightChLeft = _config.LightChannelLeft;
         int LightChRight = _config.LightChannelRight;
         int LightPctLeft = _config.LightIntensityLeft;
         int LightPctRight = _config.LightIntensityRight;
-        const int StabilizeMs = 100;  // 光源穩定等待（ms）
-        // Right 相機 ExposureTime=100000μs(100ms)，需等曝光 + Sapera DMA 傳輸完成
-        // 取最長曝光 100ms + 100ms 傳輸緩衝 = 200ms → 再加 100ms 安全餘量 = 300ms
+        const int StabilizeMs = 100;  // 光源重設後的穩定等待（ms），沒有重設光源時不需要
+        // 取像等待上限：舊行為固定等這麼久（當時假設曝光 100ms + 傳輸），
+        // 現在收到相機「整張影像傳完」事件就提早結束，收不到才等滿（跟舊行為一樣）
         const int GrabWaitMs = 300;
 
         // ── 根據 X12 / X13 判斷相機編號與板子側別 ──
         // X12=true → 板子在 R側 → RSlot；Left=C4, Right=C3
         // X13=true → 板子在 L側 → LSlot；Left=C2, Right=C1
-        // 連續讀值一致才確認，避免單次 PLC 雜訊讓某個 Slot 誤判到跟其他 Slot 不同側
-        (bool x12, bool x13) = await DetermineCarrierSideDebouncedAsync(ct);
-        string camLeft = x12 ? "C4" : "C2";   // X12→C4, X13（或預設）→C2
-        string camRight = x12 ? "C3" : "C1";   // X12→C3, X13（或預設）→C1
-        string slotSide = x12 ? "RSlot" : "LSlot";  // X12→RSlot, X13→LSlot
-        _logger.Debug($"[DryRun] {slotLabel} X12={x12} X13={x13} → Left={camLeft} Right={camRight} Side={slotSide}");
-
-        // 本次取像＋分析的細部計時（供 _logger 輸出，找瓶頸用；不影響流程判斷）
-        var swGrab = System.Diagnostics.Stopwatch.StartNew();
+        // 側別由 DryRunAsync 在 RUN 開始時防抖判斷一次後傳進來，跟 Z 高度/Y 座標用的是同一個結果
+        string camLeft = isRSide ? "C4" : "C2";   // X12→C4, X13（或預設）→C2
+        string camRight = isRSide ? "C3" : "C1";   // X12→C3, X13（或預設）→C1
+        string slotSide = isRSide ? "RSlot" : "LSlot";  // X12→RSlot, X13→LSlot
+        _logger.Debug($"[DryRun] {slotLabel} 側別={(isRSide ? "R(X12)" : "L")} → Left={camLeft} Right={camRight} Side={slotSide}");
 
         // STEP 1: 先停止相機，清除 IsGrabing 狀態
         _cameraRight?.Stop();
         _cameraLeft?.Stop();
 
-        // STEP 2: 檢查光源是否開啟，若未開啟則開啟（防呆：避免中途被意外關閉）
-        if (_lightHB != null && _lightHB.IsOpen)
+        // STEP 2: 光源。RUN 開始時已經開燈，而且 RUN 過程中程式不會主動關燈（暫停也不會），
+        // 所以預設不再每個 Slot 重設（光源控制器兩個指令至少要隔 300ms，每次重設都要多等）。
+        // LightReassertEachSlot=true 或 RUN 開始時開燈失敗，才照舊每個 Slot 重設。
+        var swLight = System.Diagnostics.Stopwatch.StartNew();
+        bool lightReassertedThisSlot = false;
+        if (ctx.ReassertLight && _lightHB != null && _lightHB.IsOpen)
         {
-            // 嘗試讀取當前亮度（HighBright 控制器無讀取指令，直接重設確保亮度正確）
+            // HighBright 控制器沒有讀取亮度的指令，只能直接重設確保亮度正確
             bool ch1On = LightSetWithRetry(LightChLeft, LightPctLeft, slotLabel, "ENSURE_ON");
             bool ch2On = LightSetWithRetry(LightChRight, LightPctRight, slotLabel, "ENSURE_ON");
+            lightReassertedThisSlot = true;
             if (!ch1On || !ch2On)
                 _logger.Warn($"[DryRun] {slotLabel} 光源確認/重設失敗  CH{LightChLeft}={ch1On} CH{LightChRight}={ch2On}，{DescribeLightFailureReason(_lightHB?.LastUnexpectedResponse)}");
         }
-        await Task.Delay(StabilizeMs, ct);
+        if (lightReassertedThisSlot)
+            await Task.Delay(StabilizeMs, ct);
+        long lightMs = swLight.ElapsedMilliseconds;
 
-        // STEP 3: 開始取像（m_Xfer.Grab()）
+        // STEP 2.5: 到位防振等待（EnableAxisSettleDelay / AxisSettleDelayMs）：
+        // 從 ZL/ZR 到位確認開始算，至少經過設定時間才開始曝光；中間已經花掉的時間（光閘檢查、光源重設…）會扣掉。
+        var swSettle = System.Diagnostics.Stopwatch.StartNew();
+        int settleTargetMs = _config.EnableAxisSettleDelay ? Math.Max(0, _config.AxisSettleDelayMs) : 0;
+        int settleWaitMs = (int)Math.Max(0, settleTargetMs - swSinceZArrived.ElapsedMilliseconds);
+        if (settleWaitMs > 0)
+            await Task.Delay(settleWaitMs, ct);
+        long settleMs = swSettle.ElapsedMilliseconds;
+        long zArrivedToExposeMs = swSinceZArrived.ElapsedMilliseconds;
+
+        // STEP 3: 開始取像（Snap 單張）
+        var swGrab = System.Diagnostics.Stopwatch.StartNew();
         progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: 相機取像...");
         _cameraRight?.Start();
         _cameraLeft?.Start();
 
-        // STEP 4: 等待曝光完成 + Sapera DMA 把資料寫入 Buffer
-        await Task.Delay(GrabWaitMs, ct);
+        // STEP 4: 等待曝光完成 + Sapera 把資料寫入 Buffer
+        // 兩台相機都支援「整張影像傳完」事件計數時，收到就提早結束；否則（或設定關閉）照舊固定等 GrabWaitMs。
+        string grabWaitNote;
+        if (_config.CaptureWaitForFrameEvent
+            && _cameraRight is cGM_Dalsa_1 frameCamR && _cameraLeft is cGM_Dalsa_1 frameCamL)
+        {
+            bool gotBoth = false;
+            while (swGrab.ElapsedMilliseconds < GrabWaitMs)
+            {
+                if (frameCamR.GetFramesSinceStart() > 0 && frameCamL.GetFramesSinceStart() > 0)
+                {
+                    gotBoth = true;
+                    break;
+                }
+                await Task.Delay(5, ct);
+            }
+            gotBoth = gotBoth || (frameCamR.GetFramesSinceStart() > 0 && frameCamL.GetFramesSinceStart() > 0);
+            if (gotBoth)
+            {
+                grabWaitNote = $"收到影像事件{swGrab.ElapsedMilliseconds}ms";
+            }
+            else
+            {
+                ctx.FrameEventTimeouts++;
+                grabWaitNote = $"⚠未收到影像事件，等滿{GrabWaitMs}ms";
+                if (ctx.FrameEventTimeouts == 1)
+                    _logger.Warn($"[DryRun] {slotLabel} 等待相機影像事件超過 {GrabWaitMs}ms 仍未收齊" +
+                                 $"（R 收到 {frameCamR.GetFramesSinceStart()} 張、L 收到 {frameCamL.GetFramesSinceStart()} 張），" +
+                                 "照舊直接讀取 Buffer（等同舊行為的固定等待）；本次 RUN 之後再發生只計次，不重複記錄。" +
+                                 "若影像出現殘缺或上一片的畫面，請把 CaptureWaitForFrameEvent 設為 false");
+            }
+        }
+        else
+        {
+            await Task.Delay(GrabWaitMs, ct);
+            grabWaitNote = $"固定等{GrabWaitMs}ms";
+        }
 
         // STEP 5: 停止取像（m_Xfer.Abort()）
         _cameraRight?.Stop();
@@ -2210,14 +2417,11 @@ public sealed class MachineController : IDisposable
         var bufRight = _cameraRight?.GetBufAddress();
         var bufLeft = _cameraLeft?.GetBufAddress();
         swGrab.Stop();
-        long analyzeMsR = 0, analyzeMsL = 0;
 
         // STEP 8: save BMP - Original_image / Draw_image
         // filename: yyyy-MM-ddTHH-mm-ss_{barcode}_{Camera}_{SlotTag}.bmp
         // path managed by ImagePathHelper.GetImagePath
- 
         string ts = DateTime.Now.ToString("yyyy-MM-ddTHH-mm-ss");
-        // (timestamp defined above)
         string slotNum = (25 - slotIndex).ToString("D2");                 // 25, 26 ...
         string barcodeId = string.IsNullOrWhiteSpace(barcode) ? "UNKNOWN" : barcode;
         string slotTag = $"{slotSide}{slotNum}";                          // LSlot25 or RSlot25
@@ -2230,9 +2434,7 @@ public sealed class MachineController : IDisposable
         System.Windows.Media.Imaging.BitmapSource? uiImageLeft = null;  // → targetA (AreaA)
         System.Windows.Media.Imaging.BitmapSource? uiImageRight = null;  // → targetB (AreaB)
 
-
-        // Value 換算係數：pixel² → mm²（1 pixel = 0.0069 mm）
-        // DetectedArea 在 BumperAlgService.Analyze() 內已換算為 mm²，此處不再乘係數
+        // DetectedArea 在 BumperAlgService 內已換算為 mm²，此處不再乘係數
         double detectedAreaR = 0.0;
         double detectedAreaL = 0.0;
         bool isNgR = false;
@@ -2244,99 +2446,115 @@ public sealed class MachineController : IDisposable
         IReadOnlyList<System.Drawing.Rectangle> defectBoxesR = [];
         IReadOnlyList<System.Drawing.Rectangle> defectBoxesL = [];
 
-        if (_cameraRight != null && bufRight != null && bufRight.Length > 0 && bufRight[0] != IntPtr.Zero)
+        // 存原圖 → AI 分析（AI 要讀原圖檔，所以原圖一定先存完）。沒有影像時回傳 null。
+        async Task<SideAnalysis?> SaveAndAnalyzeAsync(ICamera? cam, IntPtr[]? buf, string camName, string sideTag)
         {
-            string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
-            DryRunSaveBmp(_cameraRight, bufRight[0], path, _config.GetRoi(camRight));
-            _logger.Info($"[DryRun] {slotLabel} 已存 R({camRight}): {path}");
-            anySaved = true;
+            if (cam == null || buf == null || buf.Length == 0 || buf[0] == IntPtr.Zero)
+                return null;
 
-            // 右相機圖片 → AreaB：先呼叫 ALG 畫線，失敗才 fallback 原圖
-            string algKeyR = _config.GetAlgJsonKeyFromImagePath(path);
-            var slotStartR = DateTime.Now;
-            var swAnalyzeR = System.Diagnostics.Stopwatch.StartNew();
-            var algR = await _bumperAlg.AnalyzeAsync(path, algKeyR, $"{slotLabel}_R", _config.UseNewBumperAlgorithm);
-            analyzeMsR = swAnalyzeR.ElapsedMilliseconds;
-            // DetectedArea 已在 BumperAlgService 內換算為 mm²，直接使用
-            detectedAreaR = algR.DetectedArea;
-            isNgR = detectedAreaR < _config.ValueLimitLow || detectedAreaR > _config.ValueLimitHigh;
-            meanIntensityR = algR.MeanIntensity;
-            distanceToRoiCenterR = algR.DistanceToRoiCenter;
-            defectBoxesR = algR.DefectBoundingBoxes;
-            // 寫入 CSV（FoupID=barcode，BumperPosition=camRight，Layer=純數字，Value 已換算）
+            string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camName}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
+            var swSave = System.Diagnostics.Stopwatch.StartNew();
+            DryRunSaveBmp(cam, buf[0], path, _config.GetRoi(camName));
+            long saveMs = swSave.ElapsedMilliseconds;
+            _logger.Info($"[DryRun] {slotLabel} 已存 {sideTag}({camName}): {path}");
+
+            // 先呼叫 ALG 畫線，失敗才 fallback 原圖（見 FinishSide）
+            string algKey = _config.GetAlgJsonKeyFromImagePath(path);
+            var startTime = DateTime.Now;
+            var swAnalyze = System.Diagnostics.Stopwatch.StartNew();
+            var alg = await _bumperAlg.AnalyzeAsync(path, algKey, $"{slotLabel}_{sideTag}", _config.UseNewBumperAlgorithm);
+            return new SideAnalysis(path, algKey, startTime, alg, saveMs, swAnalyze.ElapsedMilliseconds);
+        }
+
+        // 寫入 CSV（FoupID=barcode，BumperPosition=相機編號，Layer=純數字，Value 已換算）→ 畫線圖存檔 → 準備畫面影像。
+        // 一律在這條流程上依序呼叫（先 R 後 L），CSV 列的順序跟舊行為一樣固定。
+        (double Area, bool IsNg, double Mean, double Dist, IReadOnlyList<System.Drawing.Rectangle> Boxes,
+            System.Windows.Media.Imaging.BitmapSource? UiImage) FinishSide(SideAnalysis a, ICamera cam, IntPtr buf0, string camName, string sideTag)
+        {
+            anySaved = true;
+            double area = a.Alg.DetectedArea;
+            bool isNg = area < _config.ValueLimitLow || area > _config.ValueLimitHigh;
             InspectionResultWriter.WriteSlotResult(
                 barcodeId,
-                detectedAreaR,
-                isNgR,
-                path,
-                bumperPosition: camRight,
+                area,
+                isNg,
+                a.Path,
+                bumperPosition: camName,
                 layer: layerNum,
                 lowerSpec: _config.ValueLimitLow,
                 upperSpec: _config.ValueLimitHigh,
-                processStartTime: slotStartR);
-            if (algR.Success && algR.Image is System.Windows.Media.Imaging.BitmapSource bsR)
-            {
-                uiImageRight = bsR;
-                _logger.Info($"[DryRun] {slotLabel} R ALG 畫線 OK (json={algKeyR}) Area={detectedAreaR:F2}");
+                processStartTime: a.StartTime);
 
-                // save draw image via ImagePathHelper
-                string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camRight}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
-                SaveBitmapSource(bsR, drawPath);
- 
-                _logger.Info($"[DryRun] {slotLabel} R 畫線圖已存: {drawPath}");
+            System.Windows.Media.Imaging.BitmapSource? uiImage;
+            if (a.Alg.Success && a.Alg.Image is System.Windows.Media.Imaging.BitmapSource bs)
+            {
+                uiImage = bs;
+                _logger.Info($"[DryRun] {slotLabel} {sideTag} ALG 畫線 OK (json={a.AlgKey}) Area={area:F2}");
+
+                string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camName}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
+                if (_config.SaveDrawImageInBackground)
+                {
+                    // bs 在 BumperAlgService 已 Freeze，可以安全交給背景執行緒編碼存檔；SaveBitmapSource 內部失敗只記 log
+                    ctx.PendingDrawSaves.Add(Task.Run(() => SaveBitmapSource(bs, drawPath)));
+                    _logger.Info($"[DryRun] {slotLabel} {sideTag} 畫線圖背景存檔中: {drawPath}");
+                }
+                else
+                {
+                    SaveBitmapSource(bs, drawPath);
+                    _logger.Info($"[DryRun] {slotLabel} {sideTag} 畫線圖已存: {drawPath}");
+                }
             }
             else
             {
-                _logger.Warn($"[DryRun] {slotLabel} R ALG 失敗({algR.Message})，顯示原圖");
-                uiImageRight = BufferToBitmapSource(_cameraRight, bufRight[0], _config.GetRoi(camRight));
+                _logger.Warn($"[DryRun] {slotLabel} {sideTag} ALG 失敗({a.Alg.Message})，顯示原圖");
+                uiImage = BufferToBitmapSource(cam, buf0, _config.GetRoi(camName));
             }
+            return (area, isNg, a.Alg.MeanIntensity, a.Alg.DistanceToRoiCenter, a.Alg.DefectBoundingBoxes, uiImage);
         }
-        if (_cameraLeft != null && bufLeft != null && bufLeft.Length > 0 && bufLeft[0] != IntPtr.Zero)
+
+        // 左右兩張：預設依序（先右後左，跟舊行為一樣）；ParallelAiAnalysis=true 時「存原圖+AI 分析」兩張同時進行，
+        // 兩張都分析完才依序寫 CSV / 存畫線圖，所以 CSV 列順序不變。
+        var swSaveAnalyzePhase = System.Diagnostics.Stopwatch.StartNew();
+        long finishMs = 0;
+        SideAnalysis? anaR, anaL;
+        if (_config.ParallelAiAnalysis)
         {
-            string path = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}.bmp", ImagePathHelper.ImageType.Original);
-            DryRunSaveBmp(_cameraLeft, bufLeft[0], path, _config.GetRoi(camLeft));
-            _logger.Info($"[DryRun] {slotLabel} 已存 L({camLeft}): {path}");
-            anySaved = true;
+            var taskR = Task.Run(() => SaveAndAnalyzeAsync(_cameraRight, bufRight, camRight, "R"));
+            var taskL = Task.Run(() => SaveAndAnalyzeAsync(_cameraLeft, bufLeft, camLeft, "L"));
+            await Task.WhenAll(taskR, taskL);
+            anaR = taskR.Result;
+            anaL = taskL.Result;
 
-            // 左相機圖片 → AreaA：先呼叫 ALG 畫線，失敗才 fallback 原圖
-            string algKeyL = _config.GetAlgJsonKeyFromImagePath(path);
-            var slotStartL = DateTime.Now;
-            var swAnalyzeL = System.Diagnostics.Stopwatch.StartNew();
-            var algL = await _bumperAlg.AnalyzeAsync(path, algKeyL, $"{slotLabel}_L", _config.UseNewBumperAlgorithm);
-            analyzeMsL = swAnalyzeL.ElapsedMilliseconds;
-            detectedAreaL = algL.DetectedArea;
-            isNgL = detectedAreaL < _config.ValueLimitLow || detectedAreaL > _config.ValueLimitHigh;
-            meanIntensityL = algL.MeanIntensity;
-            distanceToRoiCenterL = algL.DistanceToRoiCenter;
-            defectBoxesL = algL.DefectBoundingBoxes;
-            // 寫入 CSV（FoupID=barcode，BumperPosition=camLeft，Layer=純數字，Value 已換算）
-            InspectionResultWriter.WriteSlotResult(
-                barcodeId,
-                detectedAreaL,
-                isNgL,
-                path,
-                bumperPosition: camLeft,
-                layer: layerNum,
-                lowerSpec: _config.ValueLimitLow,
-                upperSpec: _config.ValueLimitHigh,
-                processStartTime: slotStartL);
-            if (algL.Success && algL.Image is System.Windows.Media.Imaging.BitmapSource bsL)
+            var swFinish = System.Diagnostics.Stopwatch.StartNew();
+            if (anaR != null)
+                (detectedAreaR, isNgR, meanIntensityR, distanceToRoiCenterR, defectBoxesR, uiImageRight) =
+                    FinishSide(anaR, _cameraRight!, bufRight![0], camRight, "R");
+            if (anaL != null)
+                (detectedAreaL, isNgL, meanIntensityL, distanceToRoiCenterL, defectBoxesL, uiImageLeft) =
+                    FinishSide(anaL, _cameraLeft!, bufLeft![0], camLeft, "L");
+            finishMs += swFinish.ElapsedMilliseconds;
+        }
+        else
+        {
+            anaR = await SaveAndAnalyzeAsync(_cameraRight, bufRight, camRight, "R");
+            if (anaR != null)
             {
-                uiImageLeft = bsL;
-                _logger.Info($"[DryRun] {slotLabel} L ALG 畫線 OK (json={algKeyL}) Area={detectedAreaL:F2}");
-
-                // save draw image via ImagePathHelper
-                string drawPath = ImagePathHelper.GetImagePath(barcodeId, $"{ts}_{barcodeId}_{camLeft}_{slotTag}_draw.bmp", ImagePathHelper.ImageType.Draw);
-                SaveBitmapSource(bsL, drawPath);
- 
-                _logger.Info($"[DryRun] {slotLabel} L 畫線圖已存: {drawPath}");
+                var swFinishR = System.Diagnostics.Stopwatch.StartNew();
+                (detectedAreaR, isNgR, meanIntensityR, distanceToRoiCenterR, defectBoxesR, uiImageRight) =
+                    FinishSide(anaR, _cameraRight!, bufRight![0], camRight, "R");
+                finishMs += swFinishR.ElapsedMilliseconds;
             }
-            else
+
+            anaL = await SaveAndAnalyzeAsync(_cameraLeft, bufLeft, camLeft, "L");
+            if (anaL != null)
             {
-                _logger.Warn($"[DryRun] {slotLabel} L ALG 失敗({algL.Message})，顯示原圖");
-                uiImageLeft = BufferToBitmapSource(_cameraLeft, bufLeft[0], _config.GetRoi(camLeft));
+                var swFinishL = System.Diagnostics.Stopwatch.StartNew();
+                (detectedAreaL, isNgL, meanIntensityL, distanceToRoiCenterL, defectBoxesL, uiImageLeft) =
+                    FinishSide(anaL, _cameraLeft!, bufLeft![0], camLeft, "L");
+                finishMs += swFinishL.ElapsedMilliseconds;
             }
         }
+        long saveAnalyzeMs = Math.Max(0, swSaveAnalyzePhase.ElapsedMilliseconds - finishMs);
 
         // 即時更新 UI 圖像：左相機 → AreaA，右相機 → AreaB
         if (slotProgress != null)
@@ -2386,19 +2604,38 @@ public sealed class MachineController : IDisposable
             progress?.Report($"({currentSlot}/{totalSlots}) {slotLabel}: images saved");
         }
 
-        // STEP 9: 補足剩餘停留時間（確保整體 ≥ _config.CaptureMinDurationMs，預設 2000ms）。
-        // 原本寫死 2000，改成可調整參數（InspectionConfig.CaptureMinDurationMs），
-        // 方便在機台上實測調降、評估對週期時間的影響。
+        // STEP 9: 補足剩餘停留時間（確保整段 ≥ _config.CaptureMinDurationMs，預設 2000ms）。
+        // 從進入本方法開始算，扣掉實際已經花掉的時間，不夠才補。
+        // （修正前是「下限 − 固定 400ms」，沒扣掉存檔/AI 分析實際花的時間，每個 Slot 永遠多等 1600ms。）
+        // 這段等待發生在 Z 軸已停止、還沒開始上升之間，縮短它不會改變馬達動作順序：
+        // 之後 Z 上升仍要等到位，Y 移動前仍要通過 Z 安全確認。
         int captureMinDurationMs = _config.CaptureMinDurationMs;
-        int remaining = captureMinDurationMs - StabilizeMs - GrabWaitMs;
+        long workMs = swSlotCapture.ElapsedMilliseconds;
+        int remaining = (int)Math.Max(0, captureMinDurationMs - workMs);
         if (remaining > 0)
             await Task.Delay(remaining, ct);
+        long padMs = swSlotCapture.ElapsedMilliseconds - workMs;
 
-        // 細部計時：取像(硬體，含 StabilizeMs+GrabWaitMs 固定延遲) / 分析R+L / 強制補滿延遲，
-        // 用來看清楚「下限」裡有多少是真正在做事、多少是寫死的等待時間。
-        _logger.Info($"[Timing] {slotLabel} 拍照+分析細部：取像{swGrab.ElapsedMilliseconds}ms、" +
-                     $"分析R+L共{analyzeMsR + analyzeMsL}ms（R={analyzeMsR}ms,L={analyzeMsL}ms）、" +
-                     $"強制補滿延遲{Math.Max(0, remaining)}ms（下限設定{captureMinDurationMs}ms）");
+        // 細部計時：用來看清楚這段停留裡，多少是真正在做事、多少是純等待。
+        long grabMs = swGrab.ElapsedMilliseconds;
+        long otherWorkMs = Math.Max(0, workMs - lightMs - settleMs - grabMs - saveAnalyzeMs);
+        timing.AddDetail("光源重設", lightMs);
+        timing.AddDetail("到位防振等待", settleMs);
+        timing.AddDetail("取像", grabMs);
+        timing.AddDetail("存原圖+AI分析", saveAnalyzeMs);
+        timing.AddDetail("寫CSV/畫線圖/畫面更新", otherWorkMs);
+        timing.AddDetail("補滿延遲", padMs);
+
+        string SideDetail(string tag, SideAnalysis? a) =>
+            a == null ? $"{tag} 無影像" : $"{tag} 存圖{a.SaveMs}ms/AI{a.AnalyzeMs}ms";
+        _logger.Info($"[Timing] {slotLabel} 拍照+分析細部：" +
+                     $"Z到位→開始曝光{zArrivedToExposeMs}ms（防振補等{settleMs}ms）、" +
+                     $"光源重設{lightMs}ms{(lightReassertedThisSlot ? "" : "(略過)")}、" +
+                     $"取像{grabMs}ms（{grabWaitNote}）、" +
+                     $"存原圖+AI分析{saveAnalyzeMs}ms（{(_config.ParallelAiAnalysis ? "左右同時" : "左右依序")}：" +
+                     $"{SideDetail("R", anaR)}，{SideDetail("L", anaL)}）、" +
+                     $"寫CSV/畫線圖/畫面更新{otherWorkMs}ms、" +
+                     $"實際工作共{workMs}ms、補滿延遲{padMs}ms（下限{captureMinDurationMs}ms）→ 本段合計{swSlotCapture.ElapsedMilliseconds}ms");
     }
 
     /// <summary>將 BitmapSource 存成 BMP 檔（用於儲存 ALG 畫線後的影像）。</summary>
@@ -2494,6 +2731,18 @@ public sealed class MachineController : IDisposable
         }
     }
 
+    /// <summary><see cref="RunSafetyStats.RecordArrival"/> 回傳警告文字時寫進 log（null 表示沒問題，不寫）。</summary>
+    private static void LogReadbackWarning(string? warning)
+    {
+        if (warning != null)
+            _logger.Warn(warning);
+    }
+
+    // 各軸上一次讀到的正/負極限狀態，只在狀態「有變化」時才寫 log。
+    // 原因：極限讀值目前讀的暫存器還沒經實機確認（2026-09-15 log 顯示每軸每個 Slot 都回報正負極限同時觸發，
+    // 研判是假訊號），每 Slot 都寫會刷掉真正重要的警告。改成變化才寫，真的觸發/解除仍然會留下紀錄。
+    private readonly Dictionary<string, (bool P, bool N)> _lastLimitState = new();
+
     /// <summary>空跑：檢查軸狀態（警報/極限），有問題就拋例外或記 log</summary>
     private void DryRunCheckAxisState(string axisName, string context)
     {
@@ -2504,10 +2753,25 @@ public sealed class MachineController : IDisposable
             throw new InvalidOperationException($"{axisName} 於 {context} 發生警報");
         }
         Alarms.Clear($"AxisAlarm:{axisName}");
-        if (axis.GetPLimit())
-            _logger.Warn($"[DryRun] {axisName} 正極限觸發 ({context})");
-        if (axis.GetNLimit())
-            _logger.Warn($"[DryRun] {axisName} 負極限觸發 ({context})");
+
+        bool pLimit = axis.GetPLimit();
+        bool nLimit = axis.GetNLimit();
+        bool hadPrev = _lastLimitState.TryGetValue(axisName, out var prev);
+        if (!hadPrev || prev.P != pLimit)
+        {
+            if (pLimit)
+                _logger.Warn($"[DryRun] {axisName} 正極限觸發 ({context})（狀態不變時不再重複記錄）");
+            else if (hadPrev)
+                _logger.Info($"[DryRun] {axisName} 正極限解除 ({context})");
+        }
+        if (!hadPrev || prev.N != nLimit)
+        {
+            if (nLimit)
+                _logger.Warn($"[DryRun] {axisName} 負極限觸發 ({context})（狀態不變時不再重複記錄）");
+            else if (hadPrev)
+                _logger.Info($"[DryRun] {axisName} 負極限解除 ({context})");
+        }
+        _lastLimitState[axisName] = (pLimit, nLimit);
     }
 
     /// <summary>

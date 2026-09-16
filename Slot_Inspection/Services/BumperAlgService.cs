@@ -440,6 +440,14 @@ public sealed class BumperAlgService
         return (isNg, detectedArea, meanIntensity, distanceToRoiCenter, defectBoxes);
     }
 
+    /// <summary>
+    /// 預先載入 AI 模型（初始化時呼叫），避免第一次分析才載入、拖慢第一個 Slot。
+    /// 已載入過會直接返回；載入失敗會拋例外，由呼叫端決定是否只記 log。
+    /// 注意：載入期間會暫時切換整個程式的工作目錄（見 <see cref="EnsureNewDetectorReadyAsync"/>），
+    /// 不要跟其他使用相對路徑的初始化步驟（例如相機 .ccf）同時執行。
+    /// </summary>
+    public async Task PreloadNewDetectorAsync() => await EnsureNewDetectorReadyAsync();
+
     /// <summary>釋放AI演算法（BumperFlatDetection）已載入的模型資源，供 MachineController.Dispose() 呼叫。</summary>
     public void DisposeNewDetector()
     {

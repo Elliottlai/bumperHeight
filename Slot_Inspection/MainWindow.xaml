@@ -229,38 +229,79 @@
                         <TextBlock Text="Slot Inspection" Foreground="#2E75B6" FontSize="36" FontWeight="Bold" VerticalAlignment="Center"/>
                     </StackPanel>
 
-                    <!-- 機台運行狀態指示燈：未連線(灰)/待命中(綠)/運行中(藍)/暫停中-光閘(黃)/異常(紅) -->
-                    <!-- 不設定固定Width，框線會依RunStateText實際文字長度自動縮放 -->
-                    <!-- 異常時滑鼠移到燈號上可看到目前有哪些具名原因造成紅燈，不用回頭翻log -->
-                    <Border DockPanel.Dock="Right" HorizontalAlignment="Right" Background="#FFFFFF" BorderBrush="#999" BorderThickness="1"
-                            CornerRadius="6" Padding="16,6"
-                            ToolTip="{Binding ActiveAlarms, Converter={StaticResource AlarmListToTooltipConverter}}"
-                            ToolTipService.ShowOnDisabled="True">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Ellipse Width="20" Height="20" VerticalAlignment="Center" Margin="0,0,10,0">
-                                <Ellipse.Style>
-                                    <Style TargetType="Ellipse">
-                                        <Setter Property="Fill" Value="#999999"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Ready">
-                                                <Setter Property="Fill" Value="#00B050"/>
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Running">
-                                                <Setter Property="Fill" Value="#2E86C1"/>
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Paused">
-                                                <Setter Property="Fill" Value="#FFC000"/>
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding RunStateKey}" Value="Alarm">
-                                                <Setter Property="Fill" Value="#E60000"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Ellipse.Style>
-                            </Ellipse>
-                            <TextBlock Text="{Binding RunStateText}" FontSize="26" FontWeight="Bold" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Border>
+                    <!-- 機台運行狀態指示燈（縮小）＋ Online/Offline 模式（新增，擺在下方，較顯眼）：
+                         整組垂直排列，右對齊，維持原本「緊靠帳號按鈕右側」的位置 -->
+                    <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- 機台運行狀態指示燈：未連線(灰)/待命中(綠)/運行中(藍)/暫停中-光閘(黃)/異常(紅) -->
+                        <!-- 不設定固定Width，框線會依RunStateText實際文字長度自動縮放 -->
+                        <!-- 異常時滑鼠移到燈號上可看到目前有哪些具名原因造成紅燈，不用回頭翻log -->
+                        <Border HorizontalAlignment="Right" Background="#FFFFFF" BorderBrush="#999" BorderThickness="1"
+                                CornerRadius="6" Padding="12,4"
+                                ToolTip="{Binding ActiveAlarms, Converter={StaticResource AlarmListToTooltipConverter}}"
+                                ToolTipService.ShowOnDisabled="True">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Ellipse Width="14" Height="14" VerticalAlignment="Center" Margin="0,0,7,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="#999999"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RunStateKey}" Value="Ready">
+                                                    <Setter Property="Fill" Value="#00B050"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding RunStateKey}" Value="Running">
+                                                    <Setter Property="Fill" Value="#2E86C1"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding RunStateKey}" Value="Paused">
+                                                    <Setter Property="Fill" Value="#FFC000"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding RunStateKey}" Value="Alarm">
+                                                    <Setter Property="Fill" Value="#E60000"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                                <TextBlock Text="{Binding RunStateText}" FontSize="16" FontWeight="Bold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Online/Offline 模式：全員看得到目前狀態（顏色一眼分辨），僅 Admin 能切換。
+                             Online＝橘底提醒「查不到料號會擋下 RUN」；Offline＝灰底，跟現行手動選 Recipe 一樣不受影響。 -->
+                        <!-- 固定寬度：Online/Offline 文字長度不同，打勾/取消勾選時如果不固定寬度，
+                             這個 Border 會跟著縮放，把旁邊的帳號按鈕一起擠著左右移動 -->
+                        <Border HorizontalAlignment="Right" CornerRadius="6" Padding="8,3" Margin="0,4,0,0" Width="108">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="#5D6D7E"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsOnlineMode}" Value="True">
+                                            <Setter Property="Background" Value="#E67E22"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <!-- 說明文字寫給非開發人員看：不用術語，直接講「開了會怎樣、關了會怎樣」 -->
+                                <!-- Admin：直接勾選切換 -->
+                                <CheckBox Content="{Binding OnlineModeStatusText}"
+                                          FontSize="12" FontWeight="Bold" Foreground="White"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          IsChecked="{Binding IsOnlineMode, Mode=TwoWay}"
+                                          IsEnabled="{Binding CanToggleOnlineMode}"
+                                          Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                                          ToolTipService.InitialShowDelay="0"
+                                          ToolTip="打勾(Online)：掃碼自動換檢測設定，查不到就不給做。&#10;取消(Offline)：跟現在一樣自己選。&#10;檢測中不能改。"/>
+                                <!-- 非 Admin：唯讀顯示目前狀態，不能切換，但一樣可以停在上面看說明 -->
+                                <TextBlock Text="{Binding OnlineModeStatusText}"
+                                           FontSize="12" FontWeight="Bold" Foreground="White"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}, ConverterParameter=invert}"
+                                           ToolTipService.ShowOnDisabled="True"
+                                           ToolTipService.InitialShowDelay="0"
+                                           ToolTip="Online：自動換檢測設定，查不到不給做。&#10;Offline：跟平常一樣手動選。&#10;僅 Admin 能切換。"/>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
 
                     <!-- 帳號相關按鈕：緊靠在狀態燈左側，不影響狀態燈本身的位置 -->
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
@@ -743,13 +784,7 @@
                                   Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
                                   ToolTip="勾選=全模擬(Debug-Sim)，取消=實機模式(可空跑)。RUN/DryRun執行中無法切換，需先停止。"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="8,0,8,6"
-                                Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}">
-                        <CheckBox Content="🌐 Online 模式（掃碼自動切換 Recipe）" FontSize="12"
-                                  IsChecked="{Binding IsOnlineMode, Mode=TwoWay}"
-                                  IsEnabled="{Binding CanToggleOnlineMode}"
-                                  ToolTip="勾選＝Online：掃碼後自動查 MES 料號，依「料號設定表」自動切換 Recipe；查不到料號對應／MES 連不上一律擋下 RUN。&#10;取消＝Offline（預設）：完全比照現行手動選 Recipe 的方式，不受影響。&#10;RUN/DryRun 執行中無法切換，需先停止。"/>
-                    </StackPanel>
+                    <!-- Online 模式勾選框已移到底部機台狀態列（隨時看得到目前是 Online 還是 Offline），這裡不再重複放 -->
                     <Separator Margin="4,2"/>
                     <Button Content="✂ 裁切設定" Margin="4,3" Padding="6,4" FontSize="12"
                             HorizontalContentAlignment="Left"
