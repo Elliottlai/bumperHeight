@@ -1437,11 +1437,37 @@ public sealed class MachineController : IDisposable
             _plc?.SetY(0, true);
 
             // ── Step 0：先讓 ZL / ZR 升至安全高度，避免碰撞 ──
+            // 2026-09-16 撞機事故根因：這裡原本固定用 _config.ZLSafeHeight / ZRSafeHeight，
+            // 這兩個屬性只是舊版單一數值遷移用的相容欄位（get => ZLSafeHeight_R / ZRSafeHeight_R），
+            // 永遠只會回傳「R 組」的安全高度，不管載台目前實際是哪一側。當時 L 側在席、
+            // R 組 ZL 安全高度(26.00mm) 比 L 組自己的檢測高度(24.30mm) 還深，Home 一按，
+            // Step 0 就直接把 ZL 下令降到比拍照位置還深的地方，撞到板子、鏡片歪掉。
+            // 改成依目前 X12/X13 側別抓對應那一側的安全高度；讀不到側別時，兩側取較安全
+            // （較高，即數字較小）的那個，跟 CheckZSafeForYMoveHardGate 同一套保守原則。
             progress?.Report("ZL / ZR 上升至安全高度...");
             if (Axes.TryGetValue("AxisZL", out var zl) && Axes.TryGetValue("AxisZR", out var zr))
             {
-                zl.MotMoveAbs(_config.ZLSafeHeight);
-                zr.MotMoveAbs(_config.ZRSafeHeight);
+                bool? homeX12 = GetPlcXOctal(CarrierLeftSensorPlcAddr);
+                bool? homeX13 = GetPlcXOctal(CarrierRightSensorPlcAddr);
+                double homeSafeZL, homeSafeZR;
+                string homeSideNote;
+                if (homeX12.HasValue && homeX13.HasValue)
+                {
+                    homeSafeZL = _config.GetZLSafeHeight(homeX12.Value, homeX13.Value);
+                    homeSafeZR = _config.GetZRSafeHeight(homeX12.Value, homeX13.Value);
+                    homeSideNote = homeX12.Value ? "R組(X12)" : (homeX13.Value ? "L組(X13)" : "L組(預設)");
+                }
+                else
+                {
+                    // 讀不到側別：兩側取較安全（較高，數字較小）的高度，不要用錯邊的高度下降撞機
+                    homeSafeZL = Math.Min(_config.ZLSafeHeight_R, _config.ZLSafeHeight_L);
+                    homeSafeZR = Math.Min(_config.ZRSafeHeight_R, _config.ZRSafeHeight_L);
+                    homeSideNote = "側別未知，取兩側較高者";
+                }
+                _logger.Info($"[Home] Step0 安全高度依側別選定：{homeSideNote} → ZL目標={homeSafeZL:F2}mm ZR目標={homeSafeZR:F2}mm");
+
+                zl.MotMoveAbs(homeSafeZL);
+                zr.MotMoveAbs(homeSafeZR);
                 // 等 150ms 讓驅動器清除上一次的 InPosition 旗標，避免 Wait() 提早回傳 true
                 await Task.Delay(150, ct);
                 bool zlzrUp = await WaitUntilAsync(
@@ -1449,7 +1475,7 @@ public sealed class MachineController : IDisposable
                     _config.MoveTimeout, ct);
                 if (!zlzrUp)
                     return DeviceInitResult.Fail(name, "ZL/ZR 上升至安全高度逾時");
-                _logger.Info("ZL/ZR 已上升至安全高度");
+                _logger.Info($"ZL/ZR 已上升至安全高度（ZL 實際={zl.GetRealPosition():F2}mm，ZR 實際={zr.GetRealPosition():F2}mm）");
             }
 
             // ── Step 1：先 home X, ZL, ZR（不含 Y） ──
