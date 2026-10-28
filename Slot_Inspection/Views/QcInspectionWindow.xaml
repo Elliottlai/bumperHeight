@@ -119,10 +119,15 @@
         <!-- 比對明細表 -->
         <DataGrid Grid.Row="3" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
                   IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column"
-                  GridLinesVisibility="Horizontal" AlternatingRowBackground="#F5F5F5">
+                  GridLinesVisibility="Horizontal" AlternationCount="2">
             <DataGrid.RowStyle>
                 <Style TargetType="DataGridRow">
                     <Style.Triggers>
+                        <!-- 隔列淺灰底改用 Trigger 實作，且必須排在「偏離變紅」前面：
+                             DataGrid.AlternatingRowBackground 會蓋掉下面的紅底，造成白字配淺灰底看不見 -->
+                        <Trigger Property="AlternationIndex" Value="1">
+                            <Setter Property="Background" Value="#F5F5F5"/>
+                        </Trigger>
                         <DataTrigger Binding="{Binding ExceedsTolerance}" Value="True">
                             <Setter Property="Background" Value="#E60000"/>
                             <Setter Property="Foreground" Value="White"/>
