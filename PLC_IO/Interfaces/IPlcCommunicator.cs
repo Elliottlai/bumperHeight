@@ -17,6 +17,12 @@ public interface IPlcCommunicator : IDisposable
     /// </summary>
     bool IsXDataFresh { get; }
 
+    /// <summary>
+    /// 距離上一次成功解析 X 訊框已經過了多少毫秒（尚未解析過則回傳 long.MaxValue）。
+    /// 純診斷用：log 裡記下來，可以分辨「PLC 回報給電腦就已經很慢」還是「資料很新、是程式自己慢」。
+    /// </summary>
+    long XDataAgeMs { get; }
+
     /// <summary>�ݪ����p�ƭȡ]�q�T���ʫ��С^</summary>
     long DogValue { get; }
 

@@ -96,6 +96,9 @@ public sealed class FxPlcCommunicator : IPlcCommunicator, IPlcSimulator, IComman
     private static readonly TimeSpan XDataFreshWindow = TimeSpan.FromSeconds(2);
     private DateTime _lastXParseUtc = DateTime.MinValue;
     public bool IsXDataFresh => DateTime.UtcNow - _lastXParseUtc < XDataFreshWindow;
+    public long XDataAgeMs => _lastXParseUtc == DateTime.MinValue
+        ? long.MaxValue
+        : (long)(DateTime.UtcNow - _lastXParseUtc).TotalMilliseconds;
 
     public long DogValue => _dogValue;
 

@@ -17,7 +17,7 @@ public static class BoardSensorTraceLogger
     /// <summary>
     /// 記錄一次 X3/X11 原始訊號變化。呼叫端負責判斷「有沒有變化才呼叫」。
     /// </summary>
-    public static void Write(bool x3, bool x11)
+    public static void Write(bool x3, bool x11, string? extra = null)
     {
         try
         {
@@ -25,6 +25,7 @@ public static class BoardSensorTraceLogger
             string filePath = Path.Combine(LogDir, $"BoardSensorTrace_{DateTime.Now:yyyyMMdd}.log");
 
             string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} | X3={x3,-5} | X11={x11,-5}";
+            if (!string.IsNullOrEmpty(extra)) line += " | " + extra;
             File.AppendAllText(filePath, line + Environment.NewLine, Encoding.UTF8);
         }
         catch (Exception writeEx)

@@ -347,6 +347,17 @@ public sealed class MachineController : IDisposable
     }
 
     /// <summary>
+    /// 診斷用：PLC X 訊框距離上次成功解析過了多少毫秒；PLC 未連線回傳 -1。不影響任何控制邏輯。
+    /// </summary>
+    public long GetPlcXDataAgeMs()
+    {
+        var plc = _plc;
+        if (plc == null || !plc.IsConnected) return -1;
+        try { return plc.XDataAgeMs; }
+        catch (ObjectDisposedException) { return -1; }
+    }
+
+    /// <summary>
     /// 以 PLC 八進位位址設定 Y 輸出點狀態。
     /// </summary>
     public void SetPlcYOctal(int plcOctalAddr, bool value)

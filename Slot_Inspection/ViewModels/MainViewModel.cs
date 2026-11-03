@@ -64,6 +64,20 @@ public sealed class MainViewModel : ObservableObject
     private readonly System.Diagnostics.Stopwatch _x1x2Stopwatch = new();
     private static readonly TimeSpan DryRunTriggerDuration = TimeSpan.FromMilliseconds(500);
     private DateTime _runStartTime;  // 主流程開始時間（用於 MES 上傳 ProcessStartTime）
+
+    // ── 穩定性測試（B 方案：同一片板子連續重複量測）──
+    // 只靠 UI 執行緒讀寫，不需要鎖。重啟後一律回到關閉，刻意不存檔（理由同 SimulationMode）。
+    private bool _isAutoRunEnabled;
+    private int _autoRunRound;                 // 已「正常完成」的輪數
+    private double _autoRunDurationHours = 12; // 要連續跑幾小時；0 = 不限時間，持續到按 STOP 或異常
+    // 連續運轉計時碼表：第一輪開始時 Restart。刻意不用 DateTime.Now 相減——Windows 自動校時或有人改系統時間，
+    // 會讓 12 小時的計時跳動；Stopwatch 只量「經過了多久」，不受系統時間影響。
+    private readonly System.Diagnostics.Stopwatch _autoRunClock = new();
+    private bool _autoRunDiskCheckWarned;      // 讀不到磁碟空間的警告只記一次
+    private const long AutoRunMinFreeDiskBytes = 5L * 1024 * 1024 * 1024; // 結果磁碟剩餘空間低於 5 GB 就不再起跑
+    private string? _autoRunFirstBarcode;      // 第一輪的條碼，之後每輪讀到的都要一樣，不同代表板子被換過
+    private bool _autoRunRoundOk;              // 本輪是否走完「主流程完成」那一行（唯一允許接續下一輪的條件）
+    private const int AutoRunGapSeconds = 3;   // 輪與輪之間的倒數秒數，讓現場有機會介入
     private bool _prevX10 = false; // X10 上一次狀態（預設 0，保留供未來使用）
     private bool _isLightGateBlocked; // X7=LOW：光閘遮斷中（UI 綁定用，只能透過 IsLightGateBlocked 的 setter 寫入）
     // 背景執行緒（LightGateWatchLoop）自己的、同步更新的遮斷狀態，專供防抖分支判斷用，
@@ -101,17 +115,39 @@ public sealed class MainViewModel : ObservableObject
     private DateTime _emoDiagLastLogTime = DateTime.MinValue;
     private static readonly TimeSpan EmoDiagHeartbeatInterval = TimeSpan.FromSeconds(2);
     // X3/X11 板子放置雷射感測
-    private bool _isBoardMisplaced;
-    private int _boardMisplacedCount;
-    private int _boardPlacedCount;
+    private bool _isBoardMisplaced; // 畫面綁定用，只能透過 IsBoardMisplaced 的 setter 寫入（UI 執行緒）
+    // 板子感測（X3/X11）跟光閘 X7、EMO 一樣改成獨立背景 Thread（見 BoardSensorWatchLoop/OnBoardSensorTickCore），
+    // 原本掛在 UI 執行緒 _plcTimer 上，每 500ms 一次＋連續 3 次才確認，實測手遮雷射要 1~1.5 秒以上才會停，
+    // 而且偵測到後只取消流程、沒有直接煞停軸，跟光閘「瞬間停」差很多。原因跟 EMO/光閘完全一樣，見上面說明。
+    private Thread? _boardSensorWatchThread;
+    private volatile bool _boardSensorWatchRunning;
+    private static readonly TimeSpan BoardSensorPollInterval = TimeSpan.FromMilliseconds(100);
+    // 背景執行緒自己同步維護的「已確認未放好」狀態，專供防抖分支判斷用，不可改用 _isBoardMisplaced
+    // （那個只會透過 BeginInvoke 非同步更新，UI 忙碌時會延遲，理由同光閘 _lightGateBlockedConfirmed）。
+    // UI 的 OnPlcTick 也會讀它來決定要不要重新跳提示視窗，所以是 volatile。
+    private volatile bool _boardMisplacedConfirmed;
+    // 套用 Admin 個別停用後，X3/X11 各自「是否算異常」，由背景執行緒更新，供提示視窗顯示觸發原因
+    private volatile bool _boardX3Effective;
+    private volatile bool _boardX11Effective;
+    // 觸發/解除防抖改用牆鐘時間（不數 tick 次數）。
+    // 觸發門檻 200ms：10/8 現場實測 500ms 時，用便條紙輕遮約 300ms 的短遮蔽不會停；輪詢是每 100ms 一次，
+    // 實際要遮到「門檻＋約 100ms」才會觸發，所以 200ms 約等於遮 300ms 就停，同時仍能濾掉單次（100ms）瞬間跳動。
+    // 10/8 當天 22 次 RUN（約 40 分鐘）正常運轉期間沒有出現無故的短脈衝，但樣本有限，縮短後需再跑長時間運轉確認無誤停。
+    // 解除門檻維持 500ms，避免手剛拿開訊號還在抖就立刻恢復。
+    private DateTime? _boardMisplacedSince; // 目前這段連續「未放好」從何時開始（未觸發狀態下用）
+    private DateTime? _boardOkSince;        // 已觸發後，目前這段連續「正常」從何時開始（觸發狀態下用）
+    private static readonly TimeSpan BoardMisplacedTriggerDuration = TimeSpan.FromMilliseconds(200);
+    private static readonly TimeSpan BoardPlacedClearDuration      = TimeSpan.FromMilliseconds(500);
+    // X3/X11 訊號歷史（純背景執行緒內部使用）：每輪詢（100ms）記一筆，最多保留 20 筆≈2 秒，觸發時由背景執行緒組成文字再交給 UI
+    private readonly Queue<(DateTime Time, bool X3Raw, bool X11Raw, bool RawMisplaced, double GapMs, long PlcAgeMs)> _boardSignalHistory = new();
+    private const int BoardHistorySize = 20;
+    // 診斷用（不影響判斷）：量背景輪詢實際間隔、期間最大間隔，用來確認背景 Thread 自己有沒有被拖慢
+    private DateTime _boardLastLoopTime = DateTime.MinValue;
+    private double _boardMaxGapMsSinceFirst;
+    private const double BoardLoopGapWarnMs = 300; // 正常約 100ms，超過就寫 Warn
     // 提示視窗目前是否開著：只在 MessageBox 顯示期間為 true，用來防止巢狀訊息泵期間 tick 持續疊出視窗。
     // 人員按「確定」關掉視窗後會變回 false，下一次 tick 若板子仍未放妥就會立刻重新跳出提示，直到板子放好為止。
     private bool _boardMisplacedDialogOpen;
-    private const int BoardMisplacedDebounceCount = 3; // 需連續 N 次（×500ms）才確認未放好
-    private const int BoardPlacedDebounceCount = 3;    // 需連續 N 次（×500ms）才確認放好
-    // X3/X11 訊號歷史：每次 Tick 都記錄，最多保留 10 筆，確認觸發時一起寫 log（做法比照 X7）
-    private readonly Queue<(DateTime Time, bool X3Raw, bool X11Raw, bool RawMisplaced, int MisplacedCount, int PlacedCount)> _boardSignalHistory = new();
-    private const int BoardHistorySize = 10;
     // X3/X11 原始訊號上一次記錄的值（用於偵測變化，寫入持續追蹤 log；null=尚未記錄過）
     private bool? _prevX3RawLogged;
     private bool? _prevX11RawLogged;
@@ -446,6 +482,71 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 穩定性測試 開關（B 方案：RUN 正常完成後，隔幾秒自動對同一片板子再跑一輪）。
+    /// 只能透過 <see cref="ToggleAutoRunCommand"/> 開啟；任何異常（STOP／EMO／光閘／板子感測／例外／逾時／
+    /// 讀碼失敗／條碼改變）都會呼叫 <see cref="DisableAutoRun"/> 自動關閉。
+    /// 執行中手動關閉＝「這一輪跑完就停」，不會中途打斷。
+    /// </summary>
+    public bool IsAutoRunEnabled
+    {
+        get => _isAutoRunEnabled;
+        private set
+        {
+            if (SetProperty(ref _isAutoRunEnabled, value))
+            {
+                OnPropertyChanged(nameof(AutoRunStatusText));
+                OnPropertyChanged(nameof(AutoRunButtonText));
+                OnPropertyChanged(nameof(CanEditAutoRunRounds));
+                OnPropertyChanged(nameof(CanToggleOnlineMode));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+
+    /// <summary>設定要連續跑幾小時（可填小數，例如 0.5）；0 = 不限時間，持續到按 STOP 或異常為止。</summary>
+    public double AutoRunDurationHours
+    {
+        get => _autoRunDurationHours;
+        set
+        {
+            double clamped = double.IsNaN(value) ? 0 : Math.Clamp(value, 0, 168);
+            if (SetProperty(ref _autoRunDurationHours, clamped))
+                OnPropertyChanged(nameof(AutoRunStatusText));
+        }
+    }
+
+    /// <summary>已達設定的連續運轉時間 → true。不限時間（0）時永遠 false。</summary>
+    private bool IsAutoRunTimeUp =>
+        AutoRunDurationHours > 0 &&
+        _autoRunClock.Elapsed >= TimeSpan.FromHours(AutoRunDurationHours);
+
+    /// <summary>穩定性測試 已經完成至少一輪 → 目前這輪是「對同一片板子的重複量測」（讀碼失敗不等人輸入、不上傳 MES）。</summary>
+    private bool IsAutoRunRepeatRound => IsAutoRunEnabled && _autoRunRound >= 1;
+
+    private static string FormatHms(TimeSpan t) => $"{(int)t.TotalHours}:{t.Minutes:D2}:{t.Seconds:D2}";
+
+    /// <summary>穩定性測試 開啟後不允許再改時間設定（避免執行中被改動），關閉後才能編輯。</summary>
+    public bool CanEditAutoRunRounds => !IsAutoRunEnabled;
+
+    public string AutoRunButtonText => IsAutoRunEnabled ? "🔁 穩定性測試 ON" : "🔁 穩定性測試 OFF";
+
+    /// <summary>畫面右下角的 穩定性測試 狀態文字；未啟用時為空字串（畫面上會隱藏）。</summary>
+    public string AutoRunStatusText
+    {
+        get
+        {
+            if (!IsAutoRunEnabled) return "";
+            // 還沒開始第一輪（只是先開啟開關）時碼表沒跑，Elapsed 自然是 0
+            var elapsed = _autoRunClock.Elapsed;
+            string timeText = AutoRunDurationHours > 0
+                ? $"{FormatHms(elapsed)} / {FormatHms(TimeSpan.FromHours(AutoRunDurationHours))}"
+                : $"{FormatHms(elapsed)}（不限時間）";
+            return $"🔁 穩定性測試 已完成 {_autoRunRound} 輪｜{timeText}";
+        }
+    }
+
+    public ICommand ToggleAutoRunCommand { get; }
     public ICommand StartCommand { get; }
     public ICommand StopCommand { get; }
     public ICommand RunCommand { get; }
@@ -631,7 +732,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>Online 模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
-    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning;
+    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning && !IsAutoRunEnabled;
 
     /// <summary>
     /// Online/Offline 模式的顯示文字，給標題列「機台運行狀態指示燈」下方的醒目提示用——所有角色都
@@ -810,6 +911,10 @@ public sealed class MainViewModel : ObservableObject
         // 條碼 TextBox Enter 確認
         ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
 
+        // 穩定性測試：關閉隨時可按；開啟需要權限，且 Online 模式下不允許（重複上傳同一條碼的 MES 結果會造成重複紀錄）
+        ToggleAutoRunCommand = new RelayCommand(OnToggleAutoRun,
+            () => HasPermission(Permission.AutoRun) && (IsAutoRunEnabled || !IsOnlineMode));
+
         // 暫停光閘 toggle
         ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => !IsRunning && !IsDryRunning && HasPermission(Permission.ToggleLightGateBypass));
 
@@ -854,6 +959,8 @@ public sealed class MainViewModel : ObservableObject
         {
             CurrentDate = DateTime.Now.ToString("yyyy/MM/dd");
             CurrentTime = DateTime.Now.ToString("HH:mm:ss");
+            // 穩定性測試 的「已運轉時間」每秒跟著時鐘刷新（一輪約 2 分鐘，不刷新的話右下角會看起來卡住）
+            if (IsAutoRunEnabled) OnPropertyChanged(nameof(AutoRunStatusText));
         };
 
         // 異常燈號的單一事實來源在 _machine.Alarms；這裡只負責在它變動時刷新 UI 綁定的唯讀屬性。
@@ -879,6 +986,13 @@ public sealed class MainViewModel : ObservableObject
         _idleTimer.Tick += (_, _) =>
         {
             _idleTimer.Stop();
+            // 穩定性測試 進行中是無人操作的正常狀態，不鎖畫面（否則登入視窗會在量測途中彈出）；
+            // 開啟 穩定性測試 本身需要權限，且任何異常都會自動關閉它，之後才恢復正常的閒置鎖定。
+            if (IsAutoRunEnabled)
+            {
+                _idleTimer.Start();
+                return;
+            }
             LockAndRequireLogin("閒置逾時，自動登出");
         };
         ResetIdleTimer();
@@ -919,6 +1033,16 @@ public sealed class MainViewModel : ObservableObject
             Priority = ThreadPriority.AboveNormal,
         };
         _lightGateWatchThread.Start();
+
+        // 板子感測（X3/X11）獨立 Thread，見上面 _boardSensorWatchThread 欄位的說明。
+        _boardSensorWatchRunning = true;
+        _boardSensorWatchThread = new Thread(BoardSensorWatchLoop)
+        {
+            IsBackground = true,
+            Name = "BoardSensorWatch",
+            Priority = ThreadPriority.AboveNormal,
+        };
+        _boardSensorWatchThread.Start();
 
         // ★ 登入成功後非同步連線 MES（不阻塞 UI）
         _ = InitMesAsync();
@@ -1364,8 +1488,246 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 每 500ms 輪詢一次 PLC 板子感測等訊號（EMO 已移到獨立的 <see cref="EmoWatchLoop"/>，
-    /// 光閘 X7 已移到獨立的 <see cref="LightGateWatchLoop"/>，都不再共用這個 UI 執行緒計時器）。
+    /// <see cref="_boardSensorWatchThread"/> 的主迴圈，架構跟 <see cref="LightGateWatchLoop"/> 完全對稱。
+    /// </summary>
+    private void BoardSensorWatchLoop()
+    {
+        while (_boardSensorWatchRunning)
+        {
+            try
+            {
+                OnBoardSensorTickCore();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "[BoardSensor] 背景輪詢例外");
+            }
+
+            Thread.Sleep(BoardSensorPollInterval);
+        }
+    }
+
+    /// <summary>
+    /// 板子放置雷射感測（X3/X11，任一 true = 未放好）專用快速輪詢，實際跑在 <see cref="_boardSensorWatchThread"/>
+    /// 這個獨立 background Thread，做法比照 <see cref="OnLightGateTickCore"/>：
+    /// 讀 X3/X11＋牆鐘時間防抖＋偵測到時的取消流程/強制煞停都直接在這裡完成，不等 UI 執行緒；
+    /// 只有真的發生「觸發」或「解除」狀態轉換時，才用 BeginInvoke（非阻塞）切回 UI 執行緒套用畫面狀態。
+    /// </summary>
+    private void OnBoardSensorTickCore()
+    {
+        var now = DateTime.Now;
+        double loopGapMs = _boardLastLoopTime == DateTime.MinValue
+            ? 0 : (now - _boardLastLoopTime).TotalMilliseconds;
+        _boardLastLoopTime = now;
+
+        // x3/x11 一律保留「感測器實際原始值」供歷史/追蹤 log 還原真實時間軸；
+        // x3Eff/x11Eff 才是套用 Admin 個別停用設定後、真正用於誤放判斷的值。
+        // readingValid=false 代表這次 PLC 斷線，或連線沒斷但讀取已經停止更新（GetPlcXOctal 回傳 null），
+        // 此時凍結現有狀態、不更新任何計時、不觸發任何轉換——絕不能把「讀不到」當成「板子正常」。
+        bool x3 = false, x11 = false;
+        bool readingValid;
+        if (IsSimulationMode)
+        {
+            // 模擬模式：依 _simBoardState 決定 x3/x11（bit0=1 → X3 異常；bit1=1 → X11 異常），
+            // 刻意不跳過防抖，直接走跟真實 PLC 一模一樣的判斷邏輯。
+            x3  = (_simBoardState & 1) != 0;
+            x11 = (_simBoardState & 2) != 0;
+            readingValid = true;
+        }
+        else
+        {
+            bool? rawX3  = _machine.GetPlcXOctal(3);
+            bool? rawX11 = _machine.GetPlcXOctal(11);
+            readingValid = rawX3 != null && rawX11 != null;
+            if (readingValid)
+            {
+                x3  = rawX3!.Value;
+                x11 = rawX11!.Value;
+            }
+        }
+
+        bool x3Eff  = x3  && !_machine.Config.PauseX3BoardSensor;
+        bool x11Eff = x11 && !_machine.Config.PauseX11BoardSensor;
+        bool rawMisplaced = x3Eff || x11Eff;
+        long plcAgeMs = IsSimulationMode ? 0 : _machine.GetPlcXDataAgeMs();
+
+        if (loopGapMs > BoardLoopGapWarnMs)
+            _logger.Warn($"[BoardSensor] 背景輪詢間隔異常：{loopGapMs:F0}ms（正常約 {BoardSensorPollInterval.TotalMilliseconds:F0}ms） " +
+                         $"(X3={x3} X11={x11} PLC資料年齡={plcAgeMs}ms)");
+
+        if (readingValid)
+        {
+            // 每輪詢都將原始訊號存入歷史佇列，純背景執行緒內部狀態
+            _boardSignalHistory.Enqueue((now, x3, x11, rawMisplaced, loopGapMs, plcAgeMs));
+            if (_boardSignalHistory.Count > BoardHistorySize)
+                _boardSignalHistory.Dequeue();
+
+            // 持續追蹤：只要 X3/X11 原始值跟上次「有效讀值」不同，立刻寫一行 log，
+            // 不受防抖/確認狀態、也不受 Run 狀態影響。時間戳來自這條不被 UI 拖慢的背景 Thread，
+            // 比以前掛在 UI 計時器上時更接近訊號真正變化的時間。
+            if (x3 != _prevX3RawLogged || x11 != _prevX11RawLogged)
+            {
+                BoardSensorTraceLogger.Write(x3, x11,
+                    $"loopGap={loopGapMs:F0}ms | PLC資料年齡={plcAgeMs}ms | Run={IsRunning || IsDryRunning}");
+                _prevX3RawLogged = x3;
+                _prevX11RawLogged = x11;
+            }
+        }
+
+        // Admin 暫停板子感測中：完全略過確認/觸發判斷，強制視為正常，不卡 RUN。
+        // 訊號歷史與持續追蹤 log 在上面已經照常記錄，僅套用判斷結果的邏輯被跳過。
+        if (IsBoardSensorBypassActive)
+        {
+            _boardMisplacedSince = null;
+            _boardOkSince = null;
+            _boardMaxGapMsSinceFirst = 0;
+            if (_boardMisplacedConfirmed)
+            {
+                _boardMisplacedConfirmed = false;
+                Application.Current?.Dispatcher?.BeginInvoke(() => IsBoardMisplaced = false);
+            }
+            return;
+        }
+
+        if (!readingValid) return;
+
+        _boardX3Effective  = x3Eff;
+        _boardX11Effective = x11Eff;
+
+        // 用 _boardMisplacedConfirmed（背景執行緒自己同步維護），不要用 _isBoardMisplaced（見欄位說明）。
+        bool misplaced = _boardMisplacedConfirmed; // 預設維持現狀，只有下面滿足對應門檻才轉換
+
+        if (!_boardMisplacedConfirmed)
+        {
+            // 目前是「正常」狀態：要持續未放好滿 BoardMisplacedTriggerDuration 才確認觸發
+            if (rawMisplaced)
+            {
+                _boardMisplacedSince ??= now;
+                if (loopGapMs > _boardMaxGapMsSinceFirst) _boardMaxGapMsSinceFirst = loopGapMs;
+                if (now - _boardMisplacedSince.Value >= BoardMisplacedTriggerDuration)
+                    misplaced = true;
+            }
+            else
+            {
+                _boardMisplacedSince = null;
+                _boardMaxGapMsSinceFirst = 0;
+            }
+        }
+        else
+        {
+            // 目前是「未放好」狀態：要持續正常滿 BoardPlacedClearDuration 才確認解除
+            if (!rawMisplaced)
+            {
+                _boardOkSince ??= now;
+                if (now - _boardOkSince.Value >= BoardPlacedClearDuration)
+                    misplaced = false;
+            }
+            else
+            {
+                _boardOkSince = null;
+            }
+        }
+
+        if (misplaced == _boardMisplacedConfirmed)
+            return; // 沒有狀態轉換，不用切回 UI 執行緒，避免每 100ms 都排一次空的 BeginInvoke
+
+        // 立刻同步更新，不等 UI 執行緒的 BeginInvoke——下一輪輪詢（100ms 後）才不會讀到舊值。
+        _boardMisplacedConfirmed = misplaced;
+
+        bool wasRunning = false;
+        string historyText = "";
+        if (misplaced)
+        {
+            wasRunning = IsRunning || IsDryRunning;
+
+            // 診斷摘要：從第一次讀到未放好，到確認觸發，總共花了多久、中間輪詢最大間隔多少
+            double sinceFirstMs = _boardMisplacedSince is { } firstT ? (now - firstT).TotalMilliseconds : -1;
+            string summary =
+                $"首次讀到未放好→確認觸發={sinceFirstMs:F0}ms（防抖門檻={BoardMisplacedTriggerDuration.TotalMilliseconds:F0}ms），" +
+                $"期間最大輪詢間隔={_boardMaxGapMsSinceFirst:F0}ms，PLC資料年齡={plcAgeMs}ms，Run={wasRunning}";
+            _logger.Warn($"[BoardTrigger] {summary}");
+
+            // 組合訊號歷史文字（在背景執行緒組好再交給 UI，佇列只有這條 Thread 碰，沒有跨執行緒競爭）
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine(summary);
+            sb.AppendLine($"--- 觸發前 X3/X11 訊號歷史（最多 {BoardHistorySize} 筆，每筆約 {BoardSensorPollInterval.TotalMilliseconds:F0}ms）---");
+            int idx = 1;
+            foreach (var entry in _boardSignalHistory)
+            {
+                sb.AppendLine(
+                    $"  [{idx++:D2}] {entry.Time:HH:mm:ss.fff} | X3={entry.X3Raw,-5} | X11={entry.X11Raw,-5} | rawMisplaced={entry.RawMisplaced,-5} | Δ={entry.GapMs:F0}ms | PLC資料年齡={entry.PlcAgeMs}ms");
+            }
+            historyText = sb.ToString();
+
+            if (wasRunning)
+            {
+                // 跟光閘一致：安全動作（取消流程＋強制煞停）直接在背景執行緒做，不等 UI 執行緒排隊。
+                // CancellationToken.Cancel() 是幂等操作，StopAllAxesImmediate 內部有自己的序列化保護。
+                _cts?.Cancel();
+                var stopSw = System.Diagnostics.Stopwatch.StartNew();
+                _ = Task.Run(() =>
+                {
+                    _machine.StopAllAxesImmediate("X3/X11 板子感測未放妥");
+                    _logger.Info($"[BoardTrigger] 強制煞停完成，耗時 {stopSw.ElapsedMilliseconds}ms（自確認觸發起算）");
+                });
+            }
+        }
+
+        // 轉換完成，清空計時器，讓下一次觸發/解除從頭重新累積。
+        _boardMisplacedSince = null;
+        _boardOkSince = null;
+        _boardMaxGapMsSinceFirst = 0;
+
+        // 其餘 UI 綁定狀態（IsBoardMisplaced、StatusMessage、提示視窗、IsInitialized）一定要切回 UI 執行緒，
+        // 用 BeginInvoke（非阻塞）而不是 Invoke——理由跟 EMO/光閘完全一樣：Invoke 會讓這條專屬背景 Thread
+        // 在 UI 執行緒卡住時被拖著一起卡死，獨立執行緒的保護就整個失效。
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+
+        dispatcher.BeginInvoke(() =>
+            ApplyBoardSensorState(misplaced, wasRunning, x3, x11, x3Eff, x11Eff, historyText));
+    }
+
+    /// <summary>
+    /// 套用板子感測狀態轉換對應的 UI 綁定狀態／提示／log，只由 <see cref="OnBoardSensorTickCore"/>
+    /// 透過 Dispatcher.BeginInvoke 呼叫，只在真的發生「觸發」或「解除」轉換時才會被呼叫。
+    /// </summary>
+    private void ApplyBoardSensorState(bool misplaced, bool wasRunning, bool x3, bool x11,
+        bool x3Eff, bool x11Eff, string historyText)
+    {
+        if (misplaced)
+        {
+            // 套用當下若使用者剛好啟用了暫停板子感測，就不要再把 RUN 擋下來（背景下一輪會自行清除狀態）
+            if (IsBoardSensorBypassActive) return;
+
+            IsBoardMisplaced = true;
+            StatusMessage = "⚠ 板子未放妥（雷射感測 X3/X11），請確認板子正確放置後再繼續";
+            _logger.Warn($"板子未放妥 (X3={x3} X11={x11})，Run 已禁用");
+
+            if (wasRunning)
+            {
+                IsInitialized = false;
+                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})，流程已取消，等待板子放置\n" + historyText);
+            }
+            else
+            {
+                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})\n" + historyText);
+            }
+
+            ShowBoardMisplacedDialog(x3Eff, x11Eff);
+        }
+        else
+        {
+            IsBoardMisplaced = false;
+            _logger.Info($"板子放妥確認 (X3={x3} X11={x11})，Run 已恢復");
+            StatusMessage = "✔ 板子放妥確認，Run 已恢復";
+        }
+    }
+
+    /// <summary>
+    /// 每 500ms 輪詢一次 PLC 等訊號（EMO 已移到獨立的 <see cref="EmoWatchLoop"/>，
+    /// 光閘 X7 已移到獨立的 <see cref="LightGateWatchLoop"/>，板子感測 X3/X11 已移到獨立的
+    /// <see cref="BoardSensorWatchLoop"/>，都不再共用這個 UI 執行緒計時器）。
     /// X1+X2 兩個訊號同時為 true 且持續 0.5 秒後，自動觸發空跑程式。
     /// </summary>
     private void OnPlcTick(object? sender, EventArgs e)
@@ -1400,127 +1762,14 @@ public sealed class MainViewModel : ObservableObject
         // X7 光閘：已改成跟 EMO 一樣的獨立背景 Thread（見 LightGateWatchLoop/OnLightGateTickCore），
         // 不再掛在這個共用的 UI 執行緒 _plcTimer 上，這裡不需要再處理。
 
-        // ─── X3/X11 板子放置雷射感測（任一 true = 未放好）───
-        // x3/x11 一律保留「感測器實際原始值」供歷史/追蹤 log 還原真實時間軸；
-        // x3Effective/x11Effective 才是套用 Admin 個別停用設定後、真正用於誤放判斷的值。
-        bool x3 = false, x11 = false, x3Effective = false, x11Effective = false;
-        bool rawMisplaced = false, boardMisplacedConfirmed = false, boardOkConfirmed = false;
-        bool boardReadingValid = false; // true 表示這次 x3/x11 是實際讀到的值，可信任、可寫入持續追蹤 log
-
-        if (IsSimulationMode)
-        {
-            // 模擬模式：依 _simBoardState 決定 x3/x11，跳過防抖立即生效
-            // bit0=1 → X3 異常；bit1=1 → X11 異常（0=正常,1=X3,2=X11,3=兩者）
-            x3  = (_simBoardState & 1) != 0;
-            x11 = (_simBoardState & 2) != 0;
-            x3Effective  = x3  && !_machine.Config.PauseX3BoardSensor;
-            x11Effective = x11 && !_machine.Config.PauseX11BoardSensor;
-            rawMisplaced            = x3Effective || x11Effective;
-            boardMisplacedConfirmed = rawMisplaced;
-            boardOkConfirmed        = !rawMisplaced;
-            _boardMisplacedCount = 0;
-            _boardPlacedCount    = 0;
-            boardReadingValid = true;
-        }
-        else
-        {
-            bool? rawX3  = _machine.GetPlcXOctal(3);
-            bool? rawX11 = _machine.GetPlcXOctal(11);
-
-            if (rawX3 == null || rawX11 == null)
-            {
-                // PLC 斷線：凍結現有狀態，不更新計數器、不觸發任何轉換
-                // 若板子本來就未放好，警報繼續保持；若本來正常，也不會誤觸發
-                _boardMisplacedCount = 0;
-                _boardPlacedCount    = 0;
-                // boardMisplacedConfirmed / boardOkConfirmed 維持 false（宣告時預設值）→ 兩個分支都不進入
-            }
-            else
-            {
-                x3  = rawX3.Value;
-                x11 = rawX11.Value;
-                x3Effective  = x3  && !_machine.Config.PauseX3BoardSensor;
-                x11Effective = x11 && !_machine.Config.PauseX11BoardSensor;
-                rawMisplaced = x3Effective || x11Effective;
-
-                if (rawMisplaced) { _boardMisplacedCount++; _boardPlacedCount = 0; }
-                else              { _boardPlacedCount++;    _boardMisplacedCount = 0; }
-
-                boardMisplacedConfirmed = _boardMisplacedCount >= BoardMisplacedDebounceCount;
-                boardOkConfirmed        = _boardPlacedCount    >= BoardPlacedDebounceCount;
-                boardReadingValid = true;
-            }
-        }
-
-        // 每次 Tick 都將原始訊號與當下 count 存入歷史佇列（最多 BoardHistorySize 筆）
-        _boardSignalHistory.Enqueue((DateTime.Now, x3, x11, rawMisplaced, _boardMisplacedCount, _boardPlacedCount));
-        if (_boardSignalHistory.Count > BoardHistorySize)
-            _boardSignalHistory.Dequeue();
-
-        // 持續追蹤：只要 X3/X11 原始值跟上次「有效讀值」不同，立刻寫一行 log，
-        // 不受防抖/確認狀態、也不受 Run 狀態影響，藉此還原完整的 true/false 時間軸。
-        if (boardReadingValid && (x3 != _prevX3RawLogged || x11 != _prevX11RawLogged))
-        {
-            BoardSensorTraceLogger.Write(x3, x11);
-            _prevX3RawLogged = x3;
-            _prevX11RawLogged = x11;
-        }
-
-        // Admin 暫停板子感測中：完全略過確認/觸發判斷，強制視為正常，不卡 RUN。
-        // 訊號歷史與持續追蹤 log 在上面已經照常記錄，僅此段套用判斷結果的邏輯被跳過。
-        if (IsBoardSensorBypassActive)
-        {
-            if (_isBoardMisplaced)
-            {
-                IsBoardMisplaced = false;
-            }
-        }
-        // 正常 → 未放好（初次確認觸發）
-        else if (boardMisplacedConfirmed && !_isBoardMisplaced)
-        {
-            IsBoardMisplaced = true;
-            StatusMessage = "⚠ 板子未放妥（雷射感測 X3/X11），請確認板子正確放置後再繼續";
-            _logger.Warn($"板子未放妥 (X3={x3} X11={x11})，Run 已禁用");
-
-            // 組合前 N 筆 X3/X11 訊號歷史一併寫入 log，方便判斷是穩定 false 還是抖動
-            var boardHistorySb = new System.Text.StringBuilder();
-            boardHistorySb.AppendLine($"--- 觸發前 X3/X11 訊號歷史（最多 {BoardHistorySize} 筆，門檻={BoardMisplacedDebounceCount}）---");
-            int boardIdx = 1;
-            foreach (var entry in _boardSignalHistory)
-            {
-                string trigger = (entry.RawMisplaced && entry.MisplacedCount >= BoardMisplacedDebounceCount) ? " ✅ 本筆觸發" : "";
-                boardHistorySb.AppendLine(
-                    $"  [{boardIdx++:D2}] {entry.Time:HH:mm:ss.fff} | X3={entry.X3Raw,-5} | X11={entry.X11Raw,-5} | rawMisplaced={entry.RawMisplaced,-5} | misplacedCount={entry.MisplacedCount} placedCount={entry.PlacedCount}{trigger}");
-            }
-
-            if (IsRunning || IsDryRunning)
-            {
-                _cts?.Cancel();
-                IsInitialized = false;
-                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})，流程已取消，等待板子放置\n" + boardHistorySb);
-            }
-            else
-            {
-                CancelEventLogger.Write("板子感測X3/X11", $"板子未放妥 (X3={x3} X11={x11})\n" + boardHistorySb);
-            }
-
-            ShowBoardMisplacedDialog(x3Effective, x11Effective);
-        }
-        // 已在警報中且板子仍未放妥：人員把提示視窗關掉卻沒有移動 / 重放產品
-        // → 每次 tick 都重新跳出提示，直到板子確實放好（boardOkConfirmed）為止。
+        // ─── X3/X11 板子放置雷射感測 ───
+        // 偵測、防抖、煞停都已搬到獨立背景 Thread（見 BoardSensorWatchLoop/OnBoardSensorTickCore），
+        // 不再掛在這個共用的 UI 執行緒計時器上。這裡只負責一件事：已經在警報中、板子仍未放妥，
+        // 人員把提示視窗關掉卻沒有移動 / 重放產品 → 每次 tick 都重新跳出提示，直到板子確實放好為止。
         // ShowBoardMisplacedDialog 內部用 _boardMisplacedDialogOpen 擋掉「視窗還開著就再疊一個」的情況，
         // 所以這裡放心每個 tick 都呼叫，實際上只會在使用者按掉上一個視窗後才再彈。
-        else if (boardMisplacedConfirmed && _isBoardMisplaced)
-        {
-            ShowBoardMisplacedDialog(x3Effective, x11Effective);
-        }
-        // 未放好 → 正常（訊號穩定回到正常後解除）
-        else if (boardOkConfirmed && _isBoardMisplaced)
-        {
-            IsBoardMisplaced = false;
-            _logger.Info($"板子放妥確認 (X3={x3} X11={x11})，Run 已恢復");
-            StatusMessage = "✔ 板子放妥確認，Run 已恢復";
-        }
+        if (!IsBoardSensorBypassActive && _isBoardMisplaced && _boardMisplacedConfirmed)
+            ShowBoardMisplacedDialog(_boardX3Effective, _boardX11Effective);
 
         // PLC/位置狀態變動可能影響按鈕可用性（例如 Z 到位），通知 WPF 重新查詢 CanExecute
         System.Windows.Input.CommandManager.InvalidateRequerySuggested();
@@ -1783,6 +2032,9 @@ public sealed class MainViewModel : ObservableObject
         _machine.Alarms.Clear("LightGateX7");
         _machine.Alarms.Clear("RunException");
         _runStartTime = DateTime.Now;
+        _autoRunRoundOk = false; // 只有走到「主流程完成」才會被設成 true，穩定性測試 據此決定要不要接續下一輪
+        if (IsAutoRunEnabled && _autoRunRound == 0)
+            _autoRunClock.Restart(); // 連續運轉計時從第一輪真正開始算起
 
         // X10 邊緣偵測狀態重置（X7 改為電平觸發，不需 _prevX7）
         _prevX10 = false;
@@ -1809,6 +2061,9 @@ public sealed class MainViewModel : ObservableObject
             if (IsSimulationMode)
             {
                 await RunSimulationAsync(ct);
+                // 模擬流程在 Recipe 切換被擋下時會清空條碼後提早返回，以此判斷是否「正常完成」
+                if (!string.IsNullOrEmpty(_confirmedBarcode) && !ct.IsCancellationRequested)
+                    CompleteAutoRunRound(AreaA_Stats.Result == "OK" && AreaB_Stats.Result == "OK");
                 return;
             }
 
@@ -1866,6 +2121,15 @@ public sealed class MainViewModel : ObservableObject
             StatusMessage = "正在讀取條碼，請稍候...";
             string? code = await _machine.TriggerReadBarcodeAsync(statusProgress, ct);
 
+            if (string.IsNullOrEmpty(code) && IsAutoRunRepeatRound)
+            {
+                // 穩定性測試 的第二輪起讀不到條碼：不等人手動輸入（無人看管會永遠卡著），直接停下來
+                Barcode = "";
+                DisableAutoRun("穩定性測試 讀碼失敗",
+                    "⚠ 穩定性測試 已停止：條碼讀取失敗，請確認板子位置後手動 RUN");
+                return;
+            }
+
             if (string.IsNullOrEmpty(code))
             {
                 Barcode = "";
@@ -1888,6 +2152,24 @@ public sealed class MainViewModel : ObservableObject
                 finally
                 {
                     _barcodeTcs = null;
+                }
+            }
+
+            // 穩定性測試 是「同一片板子重複量測」：第一輪記下條碼，之後每輪都必須一樣。
+            // 條碼不同代表板子被換過（或讀錯），繼續自動跑會把新板子當成舊板子重複量測，直接停下。
+            if (IsAutoRunEnabled)
+            {
+                if (_autoRunFirstBarcode == null)
+                {
+                    _autoRunFirstBarcode = code;
+                }
+                else if (_autoRunFirstBarcode != code)
+                {
+                    _confirmedBarcode = "";
+                    string firstCode = _autoRunFirstBarcode; // DisableAutoRun 會清掉它，先留一份給訊息用
+                    DisableAutoRun($"穩定性測試 條碼改變（{firstCode} → {code}）",
+                        $"⚠ 穩定性測試 已停止：條碼與第一輪不同（{firstCode} → {code}），疑似換過板子");
+                    return;
                 }
             }
 
@@ -1953,29 +2235,44 @@ public sealed class MainViewModel : ObservableObject
             var endTime2     = DateTime.Now;
             var bumperListRun = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
                 CarrierSide, LowerLimit, UpperLimit, _runStartTime, endTime2);
-            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
-                    bumperListRun,
-                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"))
-                            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                                TaskScheduler.FromCurrentSynchronizationContext());
+            // 穩定性測試 的第二輪起是對同一片板子重複量測，不再上傳 MES，避免同一條碼產生重複紀錄
+            // （第一輪仍照常上傳；Online 模式下本來就不允許開啟 穩定性測試）
+            if (IsAutoRunRepeatRound)
+            {
+                _logger.Info($"[AutoRun] 第 {_autoRunRound + 1} 輪為重複量測，略過 MES 結果上傳");
+            }
+            else
+            {
+                _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                        bumperListRun,
+                        _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                        endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+                    .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                        TaskScheduler.FromCurrentSynchronizationContext());
+            }
 
-                        StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
+            StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
 
-                        // ── MES 上報 Idle（RUN 成功完成）──
-                        _ = _mesClient.ReportIdleAsync()
-                            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                                TaskScheduler.FromCurrentSynchronizationContext());
-                    }
+            // ── MES 上報 Idle（RUN 成功完成）──
+            _ = _mesClient.ReportIdleAsync()
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+
+            // 穩定性測試：記錄本輪正常完成、累計輪數（實際是否接續下一輪在 finally 之後決定）。
+            // 若流程尾端剛好被取消（STOP／安全訊號）卻沒丟出例外，不能算「正常完成」，交給 finally 關閉。
+            if (!ct.IsCancellationRequested) CompleteAutoRunRound(pass);
+        }
         catch (OperationCanceledException oce)
         {
             IsInitialized = false;
+            DisableAutoRun("穩定性測試 因流程被取消而停止");
             StatusMessage = $"⏹ {DescribeOperatorFacingError("主流程已由使用者取消")}，請執行原點賦歸後再繼續 RUN";
             CancelEventLogger.Write("OnRunInspection", "主流程被取消（OperationCanceledException）", oce);
         }
         catch (Exception ex)
         {
             IsInitialized = false;
+            DisableAutoRun("穩定性測試 因流程例外而停止");
             StatusMessage = $"✘ {DescribeOperatorFacingError($"主流程發生錯誤：{ex.Message}")}，請執行原點賦歸後再繼續 RUN";
             System.Diagnostics.Debug.WriteLine(ex);
             CancelEventLogger.Write("OnRunInspection", $"主流程例外：{ex.Message}", ex);
@@ -1990,8 +2287,211 @@ public sealed class MainViewModel : ObservableObject
             IsDryRunning = false;
             if (ReferenceEquals(_cts, myCts)) _cts = null;
             myCts.Dispose();
+
+            // 穩定性測試：沒走到「主流程完成」（逾時、讀碼失敗、Recipe 被擋…各種提早 return）一律不接續，直接關閉。
+            // 這段要在 CompleteAutoRunRound 之後判斷，所以放在 finally 而不是各個 return 前面分別處理。
+            if (IsAutoRunEnabled)
+            {
+                if (_autoRunRoundOk)
+                {
+                    // 用 BeginInvoke 延後排程，不在 finally 裡直接啟動下一輪（避免巢狀訊息泵／遞迴）
+                    Application.Current.Dispatcher.BeginInvoke(new Action(() => _ = RunNextAutoRunRoundAsync()));
+                }
+                else
+                {
+                    DisableAutoRun("穩定性測試 本輪未正常完成");
+                }
+            }
+
             CommandManager.InvalidateRequerySuggested();
         }
+    }
+
+    // ═══════════════════════════════════════
+    //  穩定性測試（B 方案：同一片板子連續重複量測）
+    // ═══════════════════════════════════════
+
+    private void OnToggleAutoRun()
+    {
+        if (IsAutoRunEnabled)
+        {
+            // 執行中關閉＝這一輪跑完就停（不打斷）；非執行中則立即生效
+            DisableAutoRun("使用者手動關閉 穩定性測試");
+            StatusMessage = (IsRunning || IsDryRunning)
+                ? "穩定性測試 已關閉，本輪完成後將停止"
+                : "穩定性測試 已關閉";
+            return;
+        }
+
+        if (IsOnlineMode)
+        {
+            MessageBox.Show("Online 模式下無法使用 穩定性測試（重複量測會對同一條碼重複上傳 MES 結果）。\n請先由 Admin 切換為 Offline 模式。",
+                "穩定性測試", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        string? diskProblem = CheckAutoRunDiskSpace();
+        if (diskProblem != null)
+        {
+            MessageBox.Show($"{diskProblem}\n請先清出空間再開啟 穩定性測試（長時間量測會持續累積影像與報表）。",
+                "穩定性測試", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        string durationText = AutoRunDurationHours > 0
+            ? $"連續 {AutoRunDurationHours:0.##} 小時（從第一輪開始計時，時間到就不再開始新的一輪）"
+            : "不限時間（直到按 STOP 或異常）";
+        var confirm = MessageBox.Show(
+            $"穩定性測試 啟用後，每次 RUN 正常完成會自動對「同一片板子」重複量測，{durationText}。\n\n" +
+            "• 請確認板子已放妥，過程中請勿取放板子或把手伸入機台\n" +
+            "• 第二輪起不會上傳 MES\n" +
+            "• 任何異常（STOP／EMO／光閘／板子感測／逾時／條碼改變）會自動停止\n• 量測結果 OK／NG 不影響測試，會一直跑到設定時間\n\n" +
+            "確定要啟用嗎？",
+            "穩定性測試", MessageBoxButton.YesNo, MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        // 若是在 RUN 執行途中才開啟，這一輪的條碼會在下一次比對前已經確認過；留空讓流程自己記第一輪條碼
+        ResetAutoRunState();
+        // 若 RUN 已在執行中才開啟，第一輪不會再經過「第一輪開始」那行，這裡直接開始計時；否則等第一輪開始時才 Restart
+        if (IsRunning || IsDryRunning) _autoRunClock.Restart();
+        IsAutoRunEnabled = true;
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"開啟 穩定性測試（時間設定：{AutoRunDurationHours:0.##} 小時，0=不限）");
+        StatusMessage = (IsRunning || IsDryRunning)
+            ? "穩定性測試 已開啟，本輪完成後將自動接續"
+            : "穩定性測試 已開啟，請按 RUN 開始第一輪";
+    }
+
+    /// <summary>把輪數、第一輪條碼、計時碼表全部歸零（開啟與關閉時共用，避免兩邊各寫一份漏掉某項）。</summary>
+    private void ResetAutoRunState()
+    {
+        _autoRunRound = 0;
+        _autoRunFirstBarcode = null;
+        _autoRunClock.Reset();
+    }
+
+    /// <summary>
+    /// 關閉 穩定性測試 並清掉計數；重複呼叫無副作用（沒開啟時直接返回，不寫稽核）。
+    /// <paramref name="statusMessage"/> 不為 null 時，關閉成功後一併顯示在狀態列（只在真的有關閉時才顯示）。
+    /// </summary>
+    private void DisableAutoRun(string reason, string? statusMessage = null)
+    {
+        if (!IsAutoRunEnabled) return;
+        IsAutoRunEnabled = false;
+        _logger.Info($"[AutoRun] 關閉：{reason}（已完成 {_autoRunRound} 輪）");
+        AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"{reason}（已完成 {_autoRunRound} 輪）");
+        ResetAutoRunState();
+        OnPropertyChanged(nameof(AutoRunStatusText));
+        if (statusMessage != null) StatusMessage = statusMessage;
+    }
+
+    /// <summary>
+    /// 檢查存放結果（影像／CSV）的磁碟剩餘空間；夠用或無法判斷（例如網路路徑）回傳 null，不夠回傳原因文字。
+    /// 12 小時無人看管時硬碟滿了才出錯很難收拾，所以起跑前先擋。
+    /// </summary>
+    private string? CheckAutoRunDiskSpace()
+    {
+        try
+        {
+            string root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(InspectionResultWriter.ResultsRootDirectory)) ?? "";
+            if (root.Length == 0) return null;
+            var drive = new System.IO.DriveInfo(root);
+            long free = drive.AvailableFreeSpace;
+            if (free < AutoRunMinFreeDiskBytes)
+                return $"磁碟 {drive.Name} 剩餘空間不足（剩 {free / 1024.0 / 1024 / 1024:F1} GB，至少需要 {AutoRunMinFreeDiskBytes / 1024 / 1024 / 1024} GB）";
+        }
+        catch (Exception ex)
+        {
+            // 查不到就不擋（總比誤擋好），但只記一次，避免長跑時每輪、每秒都重複寫 log
+            if (!_autoRunDiskCheckWarned)
+            {
+                _autoRunDiskCheckWarned = true;
+                _logger.Warn(ex, "[AutoRun] 無法讀取磁碟剩餘空間，略過檢查");
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 一輪「正常完成」時呼叫：累計輪數並判斷是否已達設定時間。量測 OK／NG 不影響是否繼續（壓力測試只看機台穩定性）。
+    /// 若需要停止就直接關閉 穩定性測試；沒關閉且 <c>_autoRunRoundOk</c> 為 true，finally 會接著排程下一輪。
+    /// </summary>
+    private void CompleteAutoRunRound(bool pass)
+    {
+        _autoRunRoundOk = true;
+        if (!IsAutoRunEnabled) return;
+
+        _autoRunRound++;
+        OnPropertyChanged(nameof(AutoRunStatusText));
+        _logger.Info($"[AutoRun] 第 {_autoRunRound} 輪完成：{(pass ? "PASS" : "FAIL")}（NG 不會中斷穩定性測試）");
+
+        if (IsAutoRunTimeUp)
+        {
+            int done = _autoRunRound;
+            var elapsed = _autoRunClock.Elapsed;
+            DisableAutoRun($"穩定性測試 已達設定時間 {AutoRunDurationHours:0.##} 小時（實際 {FormatHms(elapsed)}）",
+                $"✔ 穩定性測試 完成：已運轉 {FormatHms(elapsed)}，共 {done} 輪");
+        }
+    }
+
+    /// <summary>
+    /// 輪與輪之間的倒數＋開始條件檢查。倒數期間與起跑前都重新確認安全條件，
+    /// 不符就關閉 穩定性測試（不自己重試，等人處理）。
+    /// </summary>
+    private async Task RunNextAutoRunRoundAsync()
+    {
+        try
+        {
+            for (int sec = AutoRunGapSeconds; sec > 0; sec--)
+            {
+                if (!IsAutoRunEnabled) return;                  // 倒數中被手動關閉
+                if (IsRunning || IsDryRunning) return;          // 別處（例如 X1+X2 長按）已經先起跑，由那一輪自己接續
+
+                string? blocker = GetAutoRunBlocker();
+                if (blocker != null)
+                {
+                    DisableAutoRun($"穩定性測試 起跑條件不符：{blocker}", $"⚠ 穩定性測試 已停止：{blocker}");
+                    return;
+                }
+
+                OnPropertyChanged(nameof(AutoRunStatusText)); // 倒數期間順便刷新已運轉時間
+                StatusMessage = $"🔁 穩定性測試：{sec} 秒後開始第 {_autoRunRound + 1} 輪（按 STOP 可取消）";
+                await Task.Delay(1000);
+            }
+
+            if (!IsAutoRunEnabled) return;
+            if (IsRunning || IsDryRunning) return;
+
+            string? finalBlocker = GetAutoRunBlocker();
+            if (finalBlocker != null)
+            {
+                DisableAutoRun($"穩定性測試 起跑條件不符：{finalBlocker}", $"⚠ 穩定性測試 已停止：{finalBlocker}");
+                return;
+            }
+
+            AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"穩定性測試 自動開始第 {_autoRunRound + 1} 輪");
+            OnRunInspection();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "[AutoRun] 排程下一輪時發生例外");
+            DisableAutoRun("穩定性測試 排程例外");
+        }
+    }
+
+    /// <summary>
+    /// 自動起跑前的條件檢查，回傳 null 代表可以起跑，否則回傳不能跑的原因。
+    /// 沿用手動 RUN 的 CanExecute（EMO／光閘／板子感測／初始化／權限…），再補上 RUN 本身不檢查的「上料模式中」。
+    /// </summary>
+    private string? GetAutoRunBlocker()
+    {
+        if (IsLightGateBypassActive) return "目前為上料模式（光閘保護暫停）";
+        if (IsEmoTriggered || IsEmoAlarmPendingReset) return "EMO 異常尚未解除";
+        if (IsLightGateBlocked) return "光閘遮斷中";
+        if (IsBoardMisplaced) return "板子未放妥";
+        string? diskProblem = CheckAutoRunDiskSpace();
+        if (diskProblem != null) return diskProblem;
+        if (!RunCommand.CanExecute(null)) return "目前不符合 RUN 條件（請確認設備狀態與原點賦歸）";
+        return null;
     }
 
     private async void OnReadBarcode()
@@ -2119,6 +2619,7 @@ public sealed class MainViewModel : ObservableObject
     private void OnStop()
     {
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, "按下 STOP");
+        DisableAutoRun("穩定性測試 因按下 STOP 而停止");
         _cts?.Cancel();
         // 取消 CancellationToken 無法中斷已送出的軸移動指令，必須直接對軸體下 MotStop 才能真正停下來
         _machine.StopAllAxesImmediate("使用者按下 STOP");
@@ -2592,12 +3093,8 @@ public sealed class MainViewModel : ObservableObject
             // 啟用當下立刻解除卡住的狀態，不用等下一次 tick
             IsBoardMisplaced = false;
         }
-        else
-        {
-            // 停用時重置防抖計數，讓下一次 tick 依當下實際訊號重新判斷，不沿用舊的計數殘留
-            _boardMisplacedCount = 0;
-            _boardPlacedCount = 0;
-        }
+        // 停用時不需要手動重置：背景執行緒在暫停期間每輪都會把防抖計時清掉，
+        // 取消暫停後下一輪就會依當下實際訊號從頭重新判斷，不會沿用舊的計時殘留。
 
         StatusMessage = IsBoardSensorBypassActive
             ? "⚠ 暫停板子感測已啟用：X3/X11 雷射感測判斷已忽略，RUN 不受板子放置狀態影響"
@@ -2837,6 +3334,7 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     private void LockAndRequireLogin(string auditReason)
     {
+        DisableAutoRun("穩定性測試 因登出/鎖定而停止");
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, auditReason);
         IsLocked = true;
         ShowLoginWindow();
@@ -2939,12 +3437,20 @@ public sealed class MainViewModel : ObservableObject
         var bumperList = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
             CarrierSide, LowerLimit, UpperLimit, _runStartTime, simEndTime);
         // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
-        _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
-                bumperList,
-                _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"))
-            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                TaskScheduler.FromCurrentSynchronizationContext());
+        // 穩定性測試的第二輪起是對同一片板子重複量測，不再上傳 MES（跟實機流程一致）
+        if (IsAutoRunRepeatRound)
+        {
+            _logger.Info($"[AutoRun][SIM] 第 {_autoRunRound + 1} 輪為重複量測，略過 MES 結果上傳");
+        }
+        else
+        {
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                    bumperList,
+                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
+        }
 
         StatusMessage = $"[SIM] 模擬流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
 
