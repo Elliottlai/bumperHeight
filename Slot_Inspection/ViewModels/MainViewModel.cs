@@ -73,7 +73,8 @@ public sealed class MainViewModel : ObservableObject
     // 連續運轉計時碼表：第一輪開始時 Restart。刻意不用 DateTime.Now 相減——Windows 自動校時或有人改系統時間，
     // 會讓 12 小時的計時跳動；Stopwatch 只量「經過了多久」，不受系統時間影響。
     private readonly System.Diagnostics.Stopwatch _autoRunClock = new();
-    private bool _autoRunDiskCheckWarned;      // 讀不到磁碟空間的警告只記一次
+    private int _autoRunMesQueryFailCount;     // 第二輪起 MES 料號查詢失敗的累計次數（只記錄，不中止）
+    private bool _autoRunDiskCheckWarned;     // 讀不到磁碟空間的警告只記一次
     private const long AutoRunMinFreeDiskBytes = 5L * 1024 * 1024 * 1024; // 結果磁碟剩餘空間低於 5 GB 就不再起跑
     private string? _autoRunFirstBarcode;      // 第一輪的條碼，之後每輪讀到的都要一樣，不同代表板子被換過
     private bool _autoRunRoundOk;              // 本輪是否走完「主流程完成」那一行（唯一允許接續下一輪的條件）
@@ -498,7 +499,6 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(AutoRunStatusText));
                 OnPropertyChanged(nameof(AutoRunButtonText));
                 OnPropertyChanged(nameof(CanEditAutoRunRounds));
-                OnPropertyChanged(nameof(CanToggleOnlineMode));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -521,7 +521,7 @@ public sealed class MainViewModel : ObservableObject
         AutoRunDurationHours > 0 &&
         _autoRunClock.Elapsed >= TimeSpan.FromHours(AutoRunDurationHours);
 
-    /// <summary>穩定性測試 已經完成至少一輪 → 目前這輪是「對同一片板子的重複量測」（讀碼失敗不等人輸入、不上傳 MES）。</summary>
+    /// <summary>穩定性測試 已經完成至少一輪 → 目前這輪是「對同一片板子的重複量測」（讀碼失敗不等人輸入）。</summary>
     private bool IsAutoRunRepeatRound => IsAutoRunEnabled && _autoRunRound >= 1;
 
     private static string FormatHms(TimeSpan t) => $"{(int)t.TotalHours}:{t.Minutes:D2}:{t.Seconds:D2}";
@@ -732,7 +732,7 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>Online 模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
-    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning && !IsAutoRunEnabled;
+    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning;
 
     /// <summary>
     /// Online/Offline 模式的顯示文字，給標題列「機台運行狀態指示燈」下方的醒目提示用——所有角色都
@@ -911,9 +911,9 @@ public sealed class MainViewModel : ObservableObject
         // 條碼 TextBox Enter 確認
         ConfirmBarcodeCommand = new RelayCommand(OnConfirmBarcode);
 
-        // 穩定性測試：關閉隨時可按；開啟需要權限，且 Online 模式下不允許（重複上傳同一條碼的 MES 結果會造成重複紀錄）
+        // 穩定性測試：需要權限；Online／Offline 皆可使用（Online 的 MES 料號查詢規則見 TryAutoSwitchRecipeFromMesAsync）
         ToggleAutoRunCommand = new RelayCommand(OnToggleAutoRun,
-            () => HasPermission(Permission.AutoRun) && (IsAutoRunEnabled || !IsOnlineMode));
+            () => HasPermission(Permission.AutoRun));
 
         // 暫停光閘 toggle
         ToggleLightGateBypassCommand = new RelayCommand(OnToggleLightGateBypass, () => !IsRunning && !IsDryRunning && HasPermission(Permission.ToggleLightGateBypass));
@@ -2235,21 +2235,13 @@ public sealed class MainViewModel : ObservableObject
             var endTime2     = DateTime.Now;
             var bumperListRun = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
                 CarrierSide, LowerLimit, UpperLimit, _runStartTime, endTime2);
-            // 穩定性測試 的第二輪起是對同一片板子重複量測，不再上傳 MES，避免同一條碼產生重複紀錄
-            // （第一輪仍照常上傳；Online 模式下本來就不允許開啟 穩定性測試）
-            if (IsAutoRunRepeatRound)
-            {
-                _logger.Info($"[AutoRun] 第 {_autoRunRound + 1} 輪為重複量測，略過 MES 結果上傳");
-            }
-            else
-            {
-                _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
-                        bumperListRun,
-                        _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                        endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"))
-                    .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                        TaskScheduler.FromCurrentSynchronizationContext());
-            }
+            // 穩定性測試 每一輪都照常上傳 MES（客戶要驗證 MES 上拋功能在長時間運轉下正常，同一條碼重複上傳是預期行為）
+            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                    bumperListRun,
+                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                    endTime2.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                    TaskScheduler.FromCurrentSynchronizationContext());
 
             StatusMessage = $"主流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
 
@@ -2323,13 +2315,6 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        if (IsOnlineMode)
-        {
-            MessageBox.Show("Online 模式下無法使用 穩定性測試（重複量測會對同一條碼重複上傳 MES 結果）。\n請先由 Admin 切換為 Offline 模式。",
-                "穩定性測試", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-
         string? diskProblem = CheckAutoRunDiskSpace();
         if (diskProblem != null)
         {
@@ -2344,7 +2329,10 @@ public sealed class MainViewModel : ObservableObject
         var confirm = MessageBox.Show(
             $"穩定性測試 啟用後，每次 RUN 正常完成會自動對「同一片板子」重複量測，{durationText}。\n\n" +
             "• 請確認板子已放妥，過程中請勿取放板子或把手伸入機台\n" +
-            "• 第二輪起不會上傳 MES\n" +
+            "• 每一輪都會照常上傳 MES 結果與狀態（同一條碼會重複上傳，屬預期行為）\n" +
+            (IsOnlineMode
+                ? "• Online 模式：第一輪查不到料號會擋下；第二輪起每輪仍會查詢 MES，查詢失敗時沿用上一輪 Recipe 繼續並記錄次數\n"
+                : "") +
             "• 任何異常（STOP／EMO／光閘／板子感測／逾時／條碼改變）會自動停止\n• 量測結果 OK／NG 不影響測試，會一直跑到設定時間\n\n" +
             "確定要啟用嗎？",
             "穩定性測試", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -2366,6 +2354,7 @@ public sealed class MainViewModel : ObservableObject
     {
         _autoRunRound = 0;
         _autoRunFirstBarcode = null;
+        _autoRunMesQueryFailCount = 0;
         _autoRunClock.Reset();
     }
 
@@ -2377,7 +2366,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (!IsAutoRunEnabled) return;
         IsAutoRunEnabled = false;
-        _logger.Info($"[AutoRun] 關閉：{reason}（已完成 {_autoRunRound} 輪）");
+        _logger.Info($"[AutoRun] 關閉：{reason}（已完成 {_autoRunRound} 輪，MES 料號查詢失敗累計 {_autoRunMesQueryFailCount} 次）");
         AuditLogger.Write(CurrentUser.Username, CurrentUser.Role, $"{reason}（已完成 {_autoRunRound} 輪）");
         ResetAutoRunState();
         OnPropertyChanged(nameof(AutoRunStatusText));
@@ -3284,12 +3273,24 @@ public sealed class MainViewModel : ObservableObject
     {
         if (!IsOnlineMode) return true;
 
+        // 穩定性測試的第二輪起是「同一片板子」（條碼已核對一致），Recipe 一定跟上一輪相同，
+        // 所以這時查詢失敗不需要擋下：沿用上一輪的 Recipe 繼續，軸位置／高度都不變，不會有撞機風險。
+        // 仍然每輪都查詢，是為了驗證 MES 查詢在長時間運轉下的穩定度，失敗次數會記錄在 log。
+        bool repeatRound = IsAutoRunRepeatRound;
+
         var result = await _mesClient.QueryWorkOrderAsync(_mesClient.EquipmentId, barcode);
         MesStatus = _mesClient.LastStatus;
 
         if (result == null || !result.Success || string.IsNullOrWhiteSpace(result.MaterialNo))
         {
             string reason = result?.ErrorMessage ?? "MES 連線失敗或尚未啟用 WebAPI 功能";
+            if (repeatRound)
+            {
+                _autoRunMesQueryFailCount++;
+                _logger.Warn($"[AutoRun] 第 {_autoRunRound + 1} 輪 MES 料號查詢失敗（{reason}），沿用上一輪 Recipe「{_machine.Config.CurrentRecipeName}」繼續｜累計失敗 {_autoRunMesQueryFailCount} 次");
+                StatusMessage = $"⚠ 穩定性測試：MES 料號查詢失敗（累計 {_autoRunMesQueryFailCount} 次），沿用上一輪 Recipe 繼續";
+                return true;
+            }
             StatusMessage = $"⚠ Online 模式：查詢料號失敗（{reason}），已擋下無法開始檢測";
             return false;
         }
@@ -3303,6 +3304,13 @@ public sealed class MainViewModel : ObservableObject
 
         if (!string.Equals(mapping.RecipeName, _machine.Config.CurrentRecipeName, StringComparison.Ordinal))
         {
+            if (repeatRound)
+            {
+                // 同一片板子 MES 卻回了不同料號：不是正常情況，不在測試中途切換 Recipe，直接停止交給人確認
+                DisableAutoRun($"穩定性測試 MES 回傳的 Recipe 與第一輪不同（{_machine.Config.CurrentRecipeName} → {mapping.RecipeName}）",
+                    $"⚠ 穩定性測試 已停止：MES 回傳的 Recipe「{mapping.RecipeName}」與第一輪「{_machine.Config.CurrentRecipeName}」不同");
+                return false;
+            }
             try
             {
                 RecipeService.Apply(mapping.RecipeName, _machine.Config);
@@ -3437,20 +3445,13 @@ public sealed class MainViewModel : ObservableObject
         var bumperList = BuildBumperResultsData(AreaA_Row1, AreaB_Row1, _confirmedBarcode,
             CarrierSide, LowerLimit, UpperLimit, _runStartTime, simEndTime);
         // ProductId = 整個條碼；RecipeId = CarrierSide (R/L)
-        // 穩定性測試的第二輪起是對同一片板子重複量測，不再上傳 MES（跟實機流程一致）
-        if (IsAutoRunRepeatRound)
-        {
-            _logger.Info($"[AutoRun][SIM] 第 {_autoRunRound + 1} 輪為重複量測，略過 MES 結果上傳");
-        }
-        else
-        {
-            _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
-                    bumperList,
-                    _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
-                    simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"))
-                .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
-                    TaskScheduler.FromCurrentSynchronizationContext());
-        }
+        // 穩定性測試每一輪都照常上傳（跟實機流程一致）
+        _ = _mesClient.UploadResultAsync(_mesClient.EquipmentId, _confirmedBarcode, CarrierSide, pass,
+                bumperList,
+                _runStartTime.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                simEndTime.ToString("yyyy-MM-dd HH:mm:ss.fff"))
+            .ContinueWith(_ => MesStatus = _mesClient.LastStatus,
+                TaskScheduler.FromCurrentSynchronizationContext());
 
         StatusMessage = $"[SIM] 模擬流程完成  →  {(pass ? "✔ PASS" : "✘ FAIL")}";
 
