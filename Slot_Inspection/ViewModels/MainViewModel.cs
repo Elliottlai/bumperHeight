@@ -263,6 +263,7 @@ public sealed class MainViewModel : ObservableObject
                 OnPropertyChanged(nameof(CanToggleSimulationMode));
                 OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
                 OnPropertyChanged(nameof(CanToggleOnlineMode));
+                OnPropertyChanged(nameof(ShowOnlineModeToggle));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -290,6 +291,7 @@ public sealed class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(CanToggleSimulationMode));
         OnPropertyChanged(nameof(CanToggleAxisSettleDelay));
         OnPropertyChanged(nameof(CanToggleOnlineMode));
+        OnPropertyChanged(nameof(ShowOnlineModeToggle));
         CommandManager.InvalidateRequerySuggested();
     }
 
@@ -731,8 +733,13 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>Online 模式開關是否可操作：僅 Admin 可切換，且機台不在 RUN/DryRun 執行中。</summary>
-    public bool CanToggleOnlineMode => IsAdmin && !IsRunning && !IsDryRunning;
+    /// <summary>Online 模式開關是否可操作：Admin 永遠可以，Operator/Engineer 依「角色權限設定」決定，
+    /// 且機台不在 RUN/DryRun 執行中。</summary>
+    public bool CanToggleOnlineMode => HasPermission(Permission.ToggleOnlineMode) && !IsRunning && !IsDryRunning;
+
+    /// <summary>是否顯示 Online 勾選框（有切換權限的帳號看到勾選框，其餘角色只看到唯讀文字）。
+    /// 跟 <see cref="CanToggleOnlineMode"/> 分開：RUN 執行中有權限的人仍看得到勾選框，只是變灰不能點。</summary>
+    public bool ShowOnlineModeToggle => HasPermission(Permission.ToggleOnlineMode);
 
     /// <summary>
     /// Online/Offline 模式的顯示文字，給標題列「機台運行狀態指示燈」下方的醒目提示用——所有角色都

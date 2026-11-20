@@ -26,6 +26,7 @@ public enum Permission
     AxisSettleDelay,
     QcRecipe,
     AutoRun,
+    ToggleOnlineMode,
 }
 
 /// <summary>Operator / Engineer 各自的權限表，存放於 Config/RolePermissions.json。</summary>

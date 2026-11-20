@@ -265,7 +265,7 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- Online/Offline 模式：全員看得到目前狀態（顏色一眼分辨），僅 Admin 能切換。
+                        <!-- Online/Offline 模式：全員看得到目前狀態（顏色一眼分辨），有切換權限（Admin 或被授權的角色）才顯示勾選框。
                              Online＝橘底提醒「查不到料號會擋下 RUN」；Offline＝灰底，跟現行手動選 Recipe 一樣不受影響。 -->
                         <!-- 固定寬度：Online/Offline 文字長度不同，打勾/取消勾選時如果不固定寬度，
                              這個 Border 會跟著縮放，把旁邊的帳號按鈕一起擠著左右移動 -->
@@ -288,17 +288,17 @@
                                           HorizontalAlignment="Center" VerticalAlignment="Center"
                                           IsChecked="{Binding IsOnlineMode, Mode=TwoWay}"
                                           IsEnabled="{Binding CanToggleOnlineMode}"
-                                          Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}}"
+                                          Visibility="{Binding ShowOnlineModeToggle, Converter={StaticResource BoolToVisConverter}}"
                                           ToolTipService.InitialShowDelay="0"
                                           ToolTip="打勾(Online)：掃碼自動換檢測設定，查不到就不給做。&#10;取消(Offline)：跟現在一樣自己選。&#10;檢測中不能改。"/>
                                 <!-- 非 Admin：唯讀顯示目前狀態，不能切換，但一樣可以停在上面看說明 -->
                                 <TextBlock Text="{Binding OnlineModeStatusText}"
                                            FontSize="12" FontWeight="Bold" Foreground="White"
                                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisConverter}, ConverterParameter=invert}"
+                                           Visibility="{Binding ShowOnlineModeToggle, Converter={StaticResource BoolToVisConverter}, ConverterParameter=invert}"
                                            ToolTipService.ShowOnDisabled="True"
                                            ToolTipService.InitialShowDelay="0"
-                                           ToolTip="Online：自動換檢測設定，查不到不給做。&#10;Offline：跟平常一樣手動選。&#10;僅 Admin 能切換。"/>
+                                           ToolTip="Online：自動換檢測設定，查不到不給做。&#10;Offline：跟平常一樣手動選。&#10;需有切換權限的帳號才能切換。"/>
                             </Grid>
                         </Border>
                     </StackPanel>

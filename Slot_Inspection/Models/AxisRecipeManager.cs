@@ -16,9 +16,14 @@ public static class AxisRecipeManager
     private static readonly string ConfigDir = Path.Combine(
         AppDomain.CurrentDomain.BaseDirectory, "Config");
 
-    // Config 根目錄下這些是「設定檔」不是「演算法參數檔」，複製演算法JSON時要排除
+    // Config 根目錄下這些是「設定檔」不是「演算法參數檔」，複製演算法JSON時要排除。
+    // Users.json / MaterialRecipeMap.json / RolePermissions.json 是「使用者資料」（帳號、料號表、角色權限），
+    // 不屬於任何一組 Recipe：如果被拍進 Recipe 快照，之後套用 Recipe 就會用舊快照把現場新增的帳號/料號/權限蓋回去。
     private static readonly string[] NonAlgFileNames =
-        ["InspectionConfig.json", "SlotPositions.json", "CimApiSettings.json"];
+    [
+        "InspectionConfig.json", "SlotPositions.json", "CimApiSettings.json",
+        "Users.json", "MaterialRecipeMap.json", "RolePermissions.json",
+    ];
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
@@ -96,7 +101,12 @@ public static class AxisRecipeManager
         string dir = AlgFolderPath(name);
         if (!Directory.Exists(dir)) return false;
         foreach (var file in Directory.GetFiles(dir, "*.json"))
+        {
+            // 舊版程式存的快照裡可能夾帶 Users.json 等使用者資料（見 NonAlgFileNames 說明），套用時一律跳過，
+            // 不然會把現場新增的帳號/料號表/權限蓋回舊的。
+            if (NonAlgFileNames.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase)) continue;
             File.Copy(file, Path.Combine(ConfigDir, Path.GetFileName(file)), overwrite: true);
+        }
         return true;
     }
 

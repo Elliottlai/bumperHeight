@@ -24,6 +24,10 @@ public static class RolePermissionManager
         Permission.SlcReset, Permission.ToggleLightGateBypass, Permission.RecipeSwitch,
     ];
 
+    // 預設連 Engineer 也「不開放」的項目：這些功能原本是 Admin 專屬，客戶要自己決定要不要開放，
+    // 所以預設維持關閉。（缺項時也用這個判斷，舊的 RolePermissions.json 升級後才不會讓 Engineer 突然多出權限）
+    private static readonly Permission[] DefaultAdminOnly = [Permission.ToggleOnlineMode];
+
     private static RolePermissionMatrix? _cache;
 
     /// <summary>讀取權限表；檔案不存在或解析失敗時，建立並寫回預設值（對齊原本寫死的權限配置）。</summary>
@@ -60,7 +64,7 @@ public static class RolePermissionManager
         {
             bool basic = BasicOperations.Contains(p);
             matrix.Operator[p.ToString()] = basic;
-            matrix.Engineer[p.ToString()] = true; // Engineer 以上原本就擁有全部這些功能
+            matrix.Engineer[p.ToString()] = !DefaultAdminOnly.Contains(p); // Engineer 原本擁有這些功能（Admin專屬項目除外）
         }
         return matrix;
     }
@@ -82,6 +86,7 @@ public static class RolePermissionManager
         var dict = role == UserRole.Operator ? matrix.Operator : matrix.Engineer;
         if (dict.TryGetValue(permission.ToString(), out bool allowed)) return allowed;
 
+        if (DefaultAdminOnly.Contains(permission)) return false;
         return role == UserRole.Engineer || BasicOperations.Contains(permission);
     }
 

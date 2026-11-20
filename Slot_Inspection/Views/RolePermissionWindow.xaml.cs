@@ -46,6 +46,7 @@ public partial class RolePermissionWindow : Window
         (Permission.AxisSettleDelay, "ZL/ZR 安定延遲"),
         (Permission.QcRecipe, "QC 基準比對"),
         (Permission.AutoRun, "穩定性測試（連續重複量測同一片）"),
+        (Permission.ToggleOnlineMode, "Online/Offline 模式切換（預設僅 Admin）"),
         // SimulationMode 固定為 Admin 專屬，不開放角色設定
     ];
 
