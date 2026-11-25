@@ -1138,8 +1138,8 @@ public sealed class MainViewModel : ObservableObject
         if (emoNow && !_isEmoTriggered)
         {
             IsInitialized = false; // setter 會自動鎖上 _requireReinitAfterStop
-            // EMO 觸發後強制要求重新初始化（不只是原點復歸）：EMO 發生當下軸體 RS485 連線
-            // 常常已經不穩定（MotStop 逾時、收不到回應），只做原點復歸不會重新建立連線，
+            // EMO 觸發後強制要求重新初始化（不只是原點賦歸）：EMO 發生當下軸體 RS485 連線
+            // 常常已經不穩定（MotStop 逾時、收不到回應），只做原點賦歸不會重新建立連線，
             // 必須先走一次 S00 初始化。IsDeviceReady=false 會鎖住 HomeCommand、解鎖 InitAxesCommand。
             IsDeviceReady = false;
             // EMO 是硬停止：直接把「執行中」旗標清掉，不依賴當下流程方法的 finally。
